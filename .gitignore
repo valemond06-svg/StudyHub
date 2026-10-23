@@ -1,0 +1,18 @@
+# Dati personali: restano solo sul tuo PC
+studyhub.db*
+corsi.yaml
+config.yaml
+claude_desktop_mcp.json
+cloud_verified.json
+migration_log.json
+migration_plan.json
+media_migration_log.json
+PIANO.md
+backend/scripts/
+
+# Ambiente e cache
+__pycache__/
+*.pyc
+.venv/
+cache/
+.claude/

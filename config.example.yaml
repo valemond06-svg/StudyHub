@@ -1,0 +1,24 @@
+# Impostazioni di StudyHub. installa.ps1 crea config.yaml; qui ci sono tutte le voci possibili.
+
+# Anno di corso attuale: serve a dire quali corsi Moodle sono "di quest'anno" e quali già superati.
+current_year_of_study: 2
+
+# Corsi di anni precedenti non ancora superati (regex sul nome Moodle): restano attivi e prioritari.
+extra_active_courses:
+# - algebra\s+lineare
+# - analisi\s+(matematica\s+)?(2|ii)\b
+
+# Dove salvare i corsi (default: la cartella che contiene _StudyHub).
+# uni_root: C:/Users/nome/Università
+
+# AI: auto = Gemini (Antigravity) se installato, altrimenti Claude. Oppure: gemini | claude
+# ai_provider: auto
+
+# Trascrizione: auto = GPU NVIDIA se c'è, altrimenti CPU (più lenta). Oppure: cuda | cpu
+# whisper_device: auto
+
+# Video e audio pesanti su Google Drive (studyhub media-migrate --root ...). Facoltativo.
+# media_root: G:/Il mio Drive/StudyHub
+
+# Anno accademico: calcolato da solo (cambia a settembre). Forzalo solo se serve.
+# current_academic_year: 2026/27

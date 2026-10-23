@@ -1,0 +1,1476 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StudyHub</title>
+<link rel="icon" href="/favicon.png">
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
+<script src="/vendor/katex/katex.min.js"></script>
+<script src="/vendor/marked.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f4f1; --panel: #ffffff; --ink: #1c1c1e; --muted: #6e6e73; --faint: #a1a1a6; --line: #e6e4df;
+    --accent: #3159d6; --accent-ink: #ffffff; --accent-soft: #eaf0ff; --ok: #23874f; --ok-soft: #e5f4ea;
+    --warn: #b26a00; --warn-soft: #fff3dc; --stage: #0f0f10;
+    --r: 12px; --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121214; --panel: #1b1b1e; --ink: #ededf0; --muted: #a0a0a8; --faint: #6c6c74; --line: #2a2a2f;
+            --accent: #7d9bff; --accent-ink: #0d1020; --accent-soft: #1f2640; --ok: #5ccb8a; --ok-soft: #173024;
+            --warn: #f0b252; --warn-soft: #33270f; --shadow: none; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  [hidden] { display: none !important; }
+
+  /* --- Struttura --- */
+  .app { display: grid; grid-template-columns: 208px minmax(0, 1fr); height: 100vh; }
+  .rail { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 14px 10px; gap: 2px; }
+  .brand { font-weight: 700; font-size: 16px; padding: 4px 10px 14px; letter-spacing: -.01em; }
+  .nav { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; background: none; border-radius: 8px; cursor: pointer; text-align: left; color: var(--muted); }
+  .nav:hover { background: var(--bg); color: var(--ink); }
+  .nav.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .nav .ico { width: 18px; text-align: center; }
+  .nav .count { margin-left: auto; font-size: 11px; background: var(--accent); color: var(--accent-ink); border-radius: 10px; padding: 0 7px; font-weight: 600; }
+  .rail .foot { margin-top: auto; font-size: 12px; color: var(--muted); padding: 10px; display: grid; gap: 6px; }
+  .meter { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; background: var(--accent); }
+  .meter.hot > i { background: var(--warn); }
+
+  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .top { display: flex; align-items: center; gap: 12px; padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .top h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
+  .top .sub { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+  .searchbox { margin-left: auto; position: relative; width: min(360px, 38vw); flex: none; }
+  .searchbox input { width: 100%; padding: 7px 12px 7px 32px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+  .searchbox input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .searchbox::before { content: "⌕"; position: absolute; left: 11px; top: 5px; color: var(--faint); font-size: 16px; }
+  .searchbox kbd { position: absolute; right: 9px; top: 7px; font-size: 11px; color: var(--faint); }
+  .view { flex: 1; min-height: 0; overflow: auto; }
+
+  /* --- Elementi comuni --- */
+  .btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--faint); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn.ghost { border-color: transparent; background: none; color: var(--muted); }
+  .btn.ghost:hover { color: var(--ink); background: var(--bg); }
+  .btn:disabled { opacity: .55; cursor: default; }
+  .btn.sm { padding: 3px 9px; font-size: 13px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
+  .muted { color: var(--muted); } .small { font-size: 12px; } .faint { color: var(--faint); }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 10px; background: var(--bg); color: var(--muted); }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); } .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.ai { background: var(--accent-soft); color: var(--accent); }
+  .empty { color: var(--muted); text-align: center; padding: 28px 16px; }
+  select.sel { padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); max-width: 100%; }
+  .seg { display: inline-flex; background: var(--bg); border-radius: 9px; padding: 2px; }
+  .seg button { border: 0; background: none; padding: 5px 12px; border-radius: 7px; cursor: pointer; color: var(--muted); }
+  .seg button.on { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); font-weight: 600; }
+
+  /* --- Markdown --- */
+  .md { line-height: 1.6; }
+  .md h1 { font-size: 20px; letter-spacing: -.01em; } .md h2 { font-size: 16px; margin: 22px 0 8px; } .md h3 { font-size: 14px; margin: 16px 0 6px; }
+  .md p { margin: 6px 0 10px; } .md ul, .md ol { padding-left: 22px; }
+  .md .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+  .md details { margin: 4px 0 10px; } .md summary { cursor: pointer; color: var(--muted); }
+  .md table { border-collapse: collapse; } .md td, .md th { border: 1px solid var(--line); padding: 3px 7px; }
+  .ts { color: var(--accent); cursor: pointer; white-space: nowrap; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ts:hover { text-decoration: underline; }
+
+  /* --- Oggi --- */
+  .today { max-width: 1060px; margin: 0 auto; padding: 22px; display: grid; gap: 18px; }
+  .hero { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; }
+  .stat { padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; min-height: 128px; }
+  .stat .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat .v { font-size: 30px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .stat .v.warn { color: var(--warn); }
+  .stat .d { color: var(--muted); font-size: 13px; }
+  .stat .act { margin-top: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .sect h2 { font-size: 14px; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+  .tasks { padding: 4px 0; }
+  .task { display: flex; align-items: center; gap: 12px; padding: 11px 18px; border-top: 1px solid var(--line); }
+  .task:first-child { border-top: 0; }
+  .task .t { flex: 1; min-width: 0; } .task .t div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .courses { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .ccard { padding: 14px 16px; cursor: pointer; display: grid; gap: 8px; transition: border-color .15s; }
+  .ccard:hover { border-color: var(--accent); }
+  .ccard .n { font-weight: 600; line-height: 1.3; }
+  .ccard .row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .newsbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; cursor: pointer; }
+  .news { padding: 0 16px 10px; }
+  .news .it { display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; align-items: baseline; }
+  .exlist { display: grid; gap: 4px; margin-top: 6px; font-size: 13px; }
+  .exlist .e { display: flex; gap: 8px; align-items: center; }
+  .exlist .x { cursor: pointer; color: var(--faint); border: 0; background: none; }
+  .exform { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .exform select, .exform input { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); min-width: 0; }
+
+  /* --- Lezioni --- */
+  .lessons { display: grid; grid-template-columns: 248px minmax(0, 1fr); height: 100%; }
+  .llist { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .llist .hd { padding: 12px; border-bottom: 1px solid var(--line); }
+  .llist .hd select { width: 100%; }
+  .llist .items { overflow-y: auto; flex: 1; padding: 6px; }
+  .li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; gap: 10px; align-items: center; }
+  .li:hover { background: var(--bg); } .li.on { background: var(--accent-soft); }
+  .li .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex: none; }
+  .li .dot.media { background: var(--faint); } .li .dot.whisper { background: var(--accent); } .li .dot.notes { background: var(--ok); }
+  .li .tt { min-width: 0; } .li .tt div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .legend { padding: 8px 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
+  .player { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 38%); min-height: 0; height: 100%; }
+  .player.wide { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); }
+  .pmain { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .stage { flex: 1; background: var(--stage); display: flex; align-items: center; justify-content: center; min-height: 0; position: relative; }
+  .stage img, .stage video { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .stage .empty { color: #8a8a8f; }
+  .ctrl { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel); border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .play { width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; font-size: 14px; flex: none; }
+  .bar { position: relative; flex: 1; min-width: 160px; height: 20px; cursor: pointer; }
+  .bar .track { position: absolute; top: 8px; left: 0; right: 0; height: 4px; background: var(--line); border-radius: 2px; }
+  .bar .fill { position: absolute; top: 8px; left: 0; height: 4px; background: var(--accent); border-radius: 2px; }
+  .bar .tick { position: absolute; top: 5px; width: 1px; height: 10px; background: var(--faint); opacity: .6; }
+  .time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .strip { display: flex; gap: 6px; overflow-x: auto; padding: 8px 14px; background: var(--panel); border-top: 1px solid var(--line); }
+  .strip img { height: 64px; border: 2px solid transparent; border-radius: 4px; cursor: pointer; }
+  .strip img.cur { border-color: var(--accent); }
+  .side { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .side .tabs { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .pane { flex: 1; overflow-y: auto; min-height: 0; }
+  .pane.pad { padding: 6px 20px 28px; }
+  .tline { padding: 5px 16px; cursor: pointer; border-left: 3px solid transparent; }
+  .tline:hover { background: var(--bg); } .tline.cur { border-left-color: var(--accent); background: var(--accent-soft); }
+  .tline time { color: var(--faint); font-size: 11px; margin-right: 8px; font-variant-numeric: tabular-nums; }
+  .cta { margin: 28px 4px; padding: 22px; border: 1px dashed var(--line); border-radius: var(--r); text-align: center; }
+  .cta p { color: var(--muted); margin: 6px 0 14px; }
+  .fcards { display: grid; gap: 8px; }
+  .fc { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+  .fc .back { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+  .fc.open .back { display: block; }
+
+  /* --- Quiz / simulazioni --- */
+  .q { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 12px 0; }
+  .q label { display: flex; gap: 8px; padding: 4px 0; cursor: pointer; align-items: baseline; }
+  .q textarea { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); resize: vertical; }
+  .q.ok { border-color: var(--ok); } .q.ko { border-color: var(--warn); }
+  .q .fb { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 13px; }
+  .q .imgs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; } .q .imgs img { height: 64px; border-radius: 4px; border: 1px solid var(--line); }
+  .qitem { padding: 10px 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  .qitem:hover { background: var(--bg); }
+
+  /* --- Tutor --- */
+  .tutor { display: flex; flex-direction: column; height: 100%; max-width: 900px; margin: 0 auto; }
+  .tbar { display: flex; gap: 8px; align-items: center; padding: 12px 22px; flex-wrap: wrap; }
+  .tbar select { max-width: 260px; }
+  .chat { flex: 1; overflow-y: auto; padding: 8px 22px 20px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 92%; padding: 11px 15px; border-radius: 14px; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: var(--accent-ink); white-space: pre-wrap; border-bottom-right-radius: 4px; }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .cite { display: inline-block; font-size: 10px; min-width: 16px; text-align: center; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 0 5px; cursor: pointer; vertical-align: 2px; }
+  .srcs { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+  .srcs a { cursor: pointer; }
+  .ask { display: flex; gap: 8px; padding: 12px 22px 18px; }
+  .ask textarea { flex: 1; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); resize: none; }
+  .suggest { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
+
+  /* --- Ripasso --- */
+  .review { max-width: 720px; margin: 0 auto; padding: 26px 22px; display: grid; gap: 16px; }
+  .flash { padding: 28px; min-height: 220px; display: flex; flex-direction: column; gap: 10px; }
+  .flash hr { border: 0; border-top: 1px dashed var(--line); width: 100%; margin: 8px 0; }
+  .rates { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .rates .btn { padding: 10px 6px; }
+  .progress { display: flex; align-items: center; gap: 10px; }
+
+  /* --- Pannello laterale (corso) e modali --- */
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 20; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--panel); z-index: 21; display: flex; flex-direction: column; box-shadow: -8px 0 30px rgba(0,0,0,.12); }
+  .drawer .dh { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  .drawer .dh h2 { margin: 0; font-size: 16px; flex: 1; }
+  .drawer .db { overflow-y: auto; padding: 8px 22px 30px; flex: 1; }
+  .timer { font-variant-numeric: tabular-nums; font-weight: 700; }
+  .results { position: absolute; top: 40px; right: 0; width: min(560px, 90vw); max-height: 70vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 10px 40px rgba(0,0,0,.18); z-index: 30; }
+  .res { padding: 10px 14px; border-top: 1px solid var(--line); cursor: pointer; }
+  .res:first-child { border-top: 0; } .res:hover { background: var(--bg); }
+  .res .t { font-weight: 600; font-size: 13px; } .res .w { color: var(--muted); font-size: 11px; } .res .s { font-size: 12px; margin-top: 2px; color: var(--muted); }
+  .res mark { background: #ffe58a; color: inherit; padding: 0 1px; border-radius: 2px; }
+  @media (prefers-color-scheme: dark) { .res mark { background: #6b5a12; } }
+  .viewer { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: flex; align-items: center; justify-content: center; z-index: 40; }
+  .viewer .box { background: var(--panel); border-radius: var(--r); max-width: min(1000px, 96vw); max-height: 94vh; display: flex; flex-direction: column; overflow: hidden; }
+  .viewer .vh { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .viewer .vh .title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .viewer .pg { overflow: auto; background: #fff; } .viewer .pg img { max-width: 100%; display: block; margin: 0 auto; }
+
+  /* --- Studia --- */
+  .study { max-width: 1060px; margin: 0 auto; padding: 22px; display: grid; gap: 18px; }
+  .study.run { max-width: 820px; }
+  .study > * { min-width: 0; }
+  .study .task .t div.md { white-space: normal; overflow-wrap: anywhere; }
+  .study .task .t .katex-display { overflow-x: auto; }
+  .lvl0 { --lv: var(--line); } .lvl1 { --lv: #e5484d; } .lvl2 { --lv: #f0a33a; } .lvl3 { --lv: #3fb37f; } .lvl4 { --lv: #2f7d5b; }
+  .ring { --p: 0; width: 112px; height: 112px; border-radius: 50%; flex: none; display: grid; place-items: center;
+          background: conic-gradient(var(--ring, var(--accent)) calc(var(--p) * 1%), var(--line) 0); }
+  .ring > div { width: 88px; height: 88px; border-radius: 50%; background: var(--panel); display: grid; place-items: center; text-align: center; line-height: 1.1; }
+  .ring b { font-size: 26px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .ring.sm { width: 54px; height: 54px; } .ring.sm > div { width: 42px; height: 42px; } .ring.sm b { font-size: 13px; }
+  .shero { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 22px; padding: 20px 22px; align-items: center; }
+  .shero .nums { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .shero .nums b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .verdict { border-left: 4px solid var(--accent); padding: 14px 18px; }
+  .verdict.warn { border-left-color: var(--warn); } .verdict.ok { border-left-color: var(--ok); }
+  .verdict h3 { margin: 0 0 4px; font-size: 15px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { border: 1px solid var(--line); background: var(--panel); border-radius: 16px; padding: 3px 10px; font-size: 12px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+  .chip:hover { border-color: var(--accent); }
+  .chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--lv); flex: none; }
+  .go { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .go button { padding: 14px 12px; border-radius: var(--r); border: 1px solid var(--line); background: var(--panel); cursor: pointer; text-align: left; display: grid; gap: 2px; }
+  .go button b { font-size: 15px; } .go button span { color: var(--muted); font-size: 12px; }
+  .go button:hover { border-color: var(--accent); }
+  .go button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); } .go button.primary span { color: inherit; opacity: .85; }
+  .prep { padding: 14px 18px; display: grid; gap: 8px; }
+  .prep .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .map { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+  .tile { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; display: grid; gap: 6px; border-top: 3px solid var(--lv); }
+  .tile:hover { border-color: var(--accent); border-top-color: var(--lv); }
+  .tile .n { font-size: 13px; font-weight: 600; line-height: 1.3; }
+  .tile .meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  .w3::after { content: "●●●"; letter-spacing: -1px; color: var(--warn); } .w2::after { content: "●●"; color: var(--faint); } .w1::after { content: "●"; color: var(--faint); }
+  .cpick { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .cpick .card { padding: 14px 16px; display: flex; gap: 14px; align-items: center; cursor: pointer; }
+  .cpick .card:hover { border-color: var(--accent); }
+  .cpick .n { font-weight: 600; line-height: 1.3; }
+  .cpick .muted.small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  /* sessione */
+  .runbar { display: flex; align-items: center; gap: 12px; }
+  .runbar .meter { flex: 1; height: 6px; border-radius: 3px; }
+  .xp { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); white-space: nowrap; }
+  .combo { color: var(--warn); font-weight: 700; white-space: nowrap; }
+  .qcard { padding: 22px 24px; display: grid; gap: 14px; }
+  .qcard .tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .qcard .prompt { font-size: 16px; }
+  .opts { display: grid; gap: 8px; }
+  .opt { display: flex; gap: 10px; align-items: baseline; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; background: var(--panel); text-align: left; width: 100%; }
+  .opt:hover { border-color: var(--faint); } .opt.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .opt.right { border-color: var(--ok); background: var(--ok-soft); } .opt.wrong { border-color: #e5484d; }
+  .opt kbd { font-size: 11px; color: var(--faint); min-width: 12px; }
+  .qcard textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); resize: vertical; font-family: inherit; }
+  .conf { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .conf .btn { padding: 10px 6px; }
+  .outcome { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; }
+  .outcome.ok { color: var(--ok); } .outcome.mid { color: var(--warn); } .outcome.ko { color: #e5484d; }
+  .sol { border-top: 1px dashed var(--line); padding-top: 12px; }
+  .crit { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 4px; }
+  .crit li { display: flex; gap: 8px; align-items: baseline; }
+  .crit label { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
+  .scheda { padding: 22px 24px; display: grid; gap: 12px; border-top: 4px solid var(--accent); }
+  .endgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .endgrid .stat { min-height: 0; }
+  /* lezione interattiva */
+  .lsn { padding: 22px 24px; display: grid; gap: 14px; border-top: 4px solid var(--accent); }
+  .lsn h2 { margin: 0; font-size: 20px; letter-spacing: -.01em; }
+  .lsn .stepname { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); font-weight: 650; }
+  .dots { display: flex; gap: 5px; flex-wrap: wrap; }
+  .dots i { width: 22px; height: 5px; border-radius: 3px; background: var(--line); }
+  .dots i.done { background: var(--accent); } .dots i.cur { background: var(--accent); opacity: .5; }
+  .idea { background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; }
+  .idea b:first-child { color: var(--accent); }
+  .check { border: 1px dashed var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; }
+  .why { padding: 10px 12px; border-radius: 8px; background: var(--bg); }
+  .helper { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .askbox { display: grid; gap: 8px; }
+  .askbox textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); resize: vertical; font-family: inherit; }
+  .tutorans { border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--bg); border-radius: 0 8px 8px 0; }
+  .exstep { border-left: 3px solid var(--line); padding: 6px 0 6px 12px; display: grid; gap: 6px; }
+  .exstep.open { border-left-color: var(--ok); }
+  .errcard { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+  .errcard .fix { display: none; margin-top: 6px; color: var(--ok); } .errcard.open .fix { display: block; }
+  .learn { padding: 16px 18px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; border-left: 4px solid var(--accent); }
+  .learn .t { flex: 1; min-width: 220px; }
+  .learn .t b { font-size: 16px; }
+  .tile .ok { color: var(--ok); font-weight: 700; }
+  .chap { display: flex; align-items: baseline; gap: 10px; margin: 14px 0 6px; } .chap:first-of-type { margin-top: 2px; }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: sp 0.8s linear infinite; vertical-align: -2px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  @media (max-width: 760px) {
+    .study { padding: 16px; } .shero { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+    .go, .endgrid { grid-template-columns: minmax(0, 1fr); } .conf { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  @media (max-width: 1240px) {
+    .player, .player.wide { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(240px, 52%) minmax(0, 1fr); }
+    .side { border-left: 0; border-top: 1px solid var(--line); }
+    #widen { display: none; }
+  }
+  @media (max-width: 1000px) {
+    .hero { grid-template-columns: 1fr 1fr; } .hero .stat:first-child { grid-column: 1 / -1; }
+    .rail { width: auto; } .app { grid-template-columns: 64px minmax(0, 1fr); }
+    .brand { font-size: 0; padding: 4px 0 14px; } .brand::first-letter { font-size: 16px; }
+    .nav { justify-content: center; padding: 10px 0; font-size: 0; position: relative; } .nav .ico { font-size: 16px; }
+    .nav .count { position: absolute; top: 2px; right: 4px; font-size: 10px; }
+    .rail .foot { display: none; }
+  }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .rail { flex-direction: row; padding: 6px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .brand, .rail .foot { display: none; }
+    .nav { width: auto; }
+    .lessons { grid-template-columns: minmax(0, 1fr); grid-template-rows: 200px minmax(0, 1fr); }
+    .hero { grid-template-columns: minmax(0, 1fr); }
+    .top { padding: 10px 16px; } .top .sub { display: none; }
+    .today, .review { padding: 16px; }
+    .rates { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="brand">StudyHub</div>
+    <button class="nav" data-view="study"><span class="ico">◎</span>Studia</button>
+    <button class="nav" data-view="lessons"><span class="ico">▶</span>Video lezioni</button>
+    <button class="nav" data-view="tutor"><span class="ico">✦</span>Tutor</button>
+    <button class="nav" data-view="today"><span class="ico">☀</span>Novità</button>
+    <button class="nav" data-view="review" hidden><span class="ico">◧</span>Ripasso <span class="count" id="dueCount" hidden></span></button>
+    <div class="foot">
+      <div title="Utilizzo della finestra di 5 ore di Claude Pro (condivisa con tutto l'abbonamento)">
+        <div class="small" id="claudeTxt">Claude: —</div>
+        <div class="meter" id="claudeMeter"><i style="width:0"></i></div>
+      </div>
+      <div class="small" id="diskTxt" title="Spazio libero sul disco C: · archivio video su Google Drive">Disco: —</div>
+    </div>
+  </nav>
+
+  <div class="main">
+    <header class="top">
+      <h1 id="title">Oggi</h1><span class="sub" id="subtitle"></span>
+      <div class="searchbox">
+        <input id="q" type="search" placeholder="Cerca in tutto il materiale…" autocomplete="off"><kbd>Ctrl K</kbd>
+        <div class="results" id="results" hidden></div>
+      </div>
+    </header>
+
+    <!-- STUDIA -->
+    <section class="view" id="v-study"><div class="study" id="studyBody"></div></section>
+
+    <!-- OGGI -->
+    <section class="view" id="v-today"><div class="today" id="todayBody"></div></section>
+
+    <!-- LEZIONI -->
+    <section class="view" id="v-lessons" hidden>
+      <div class="lessons">
+        <div class="llist">
+          <div class="hd"><select class="sel" id="lCourse"></select></div>
+          <div class="items" id="lItems"></div>
+          <div class="legend"><span><i style="background:var(--faint)"></i>audio e slide</span><span><i style="background:var(--accent)"></i>trascritta</span><span><i style="background:var(--ok)"></i>appunti AI</span></div>
+        </div>
+        <div class="player" id="player">
+          <div class="pmain">
+            <div class="stage" id="stage"><div class="empty">Scegli una lezione dall'elenco</div></div>
+            <div class="ctrl">
+              <button class="play" id="play" title="Play/pausa (spazio)">▶</button>
+              <span class="time" id="time">0:00 / 0:00</span>
+              <div class="bar" id="bar"><div class="track"></div><div class="fill" id="fill"></div></div>
+              <select class="sel" id="rate" title="Velocità ([ e ])"></select>
+              <button class="btn sm" id="skip" title="Salta i silenzi">Salta silenzi</button>
+              <button class="btn sm ghost" id="stripBtn" title="Mostra le miniature delle slide">Slide</button>
+              <button class="btn sm ghost" id="videoBtn" hidden title="Guarda il video archiviato su Google Drive">Video</button>
+            </div>
+            <div class="strip" id="strip" hidden></div>
+          </div>
+          <div class="side">
+            <div class="tabs">
+              <div class="seg" id="ptabs"><button data-tab="notes">Appunti</button><button data-tab="transcript">Trascrizione</button><button data-tab="quiz">Quiz</button></div>
+              <span style="flex:1"></span>
+              <button class="btn sm ghost" id="widen" title="Allarga il pannello">⇔</button>
+            </div>
+            <div class="pane pad md" id="p-notes"></div>
+            <div class="pane" id="p-transcript" hidden></div>
+            <div class="pane pad" id="p-quiz" hidden></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TUTOR -->
+    <section class="view" id="v-tutor" hidden>
+      <div class="tutor">
+        <div class="tbar">
+          <select class="sel" id="tCourse"></select>
+          <div class="seg" id="tMode"><button data-mode="normale">Risposte</button><button data-mode="socratico">Socratico</button></div>
+          <span style="flex:1"></span>
+          <select class="sel" id="tThreads"><option value="">Conversazioni…</option></select>
+          <button class="btn sm" id="tNew">Nuova</button>
+        </div>
+        <div class="chat" id="tChat"></div>
+        <form class="ask" id="tForm">
+          <textarea id="tQ" rows="2" placeholder="Chiedi qualcosa sul materiale del corso…"></textarea>
+          <button class="btn primary" id="tSend">Chiedi</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- RIPASSO -->
+    <section class="view" id="v-review" hidden><div class="review" id="reviewBody"></div></section>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden>
+  <div class="dh"><h2 id="dTitle"></h2><button class="btn ghost" id="dClose">✕</button></div>
+  <div class="db" id="dBody"></div>
+</aside>
+
+<div class="viewer" id="viewer" hidden>
+  <div class="box">
+    <div class="vh">
+      <span class="title" id="vTitle"></span>
+      <button class="btn sm" id="vPrev">‹</button><span class="time" id="vPage"></span><button class="btn sm" id="vNext">›</button>
+      <a id="vOpen" target="_blank" rel="noopener">Apri PDF</a>
+      <button class="btn sm ghost" id="vClose">✕</button>
+    </div>
+    <div class="pg"><img id="vImg" alt=""></div>
+  </div>
+</div>
+<audio id="audio" preload="metadata"></audio>
+
+<script>
+// ============================================================== utilità
+const $ = (id) => document.getElementById(id);
+const audio = $("audio");
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (t) => { t = Math.max(0, Math.floor(t || 0)); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0"); };
+const shortName = (s) => (s || "").replace(/\s*\(20\d\d\/20\d\d\)/, "").replace(/\s*\[[^\]]*\]/, "");
+const getJ = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `Errore ${r.status}`); return r.json(); };
+async function postJ(url, body, method = "POST") {
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || `Errore ${r.status}`);
+  return data;
+}
+function find(arr, t) { let lo = 0, hi = arr.length - 1, r = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (arr[m].start <= t) { r = m; lo = m + 1; } else hi = m - 1; } return r; }
+// Markdown + LaTeX: formule tolte prima di marked (rovinerebbe _ e \), poi rese con KaTeX; "▶ mm:ss" diventa un link.
+function md(text) {
+  const math = [];
+  const keep = (tex, display) => { math.push({ tex, display }); return `\u0000${math.length - 1}\u0000`; };
+  let s = String(text || "").replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => keep(t, true)).replace(/\$([^\n$]+?)\$/g, (_, t) => keep(t, false));
+  let html = marked.parse(s, { mangle: false, headerIds: false });
+  html = html.replace(/\u0000(\d+)\u0000/g, (_, i) => { try { return katex.renderToString(math[i].tex, { displayMode: math[i].display, throwOnError: false }); } catch { return esc(math[i].tex); } });
+  return html.replace(/▶\s*(\d{1,2}(?::\d{2}){1,2})/g, (_, ts) => `<span class="ts" data-t="${ts.split(":").reduce((a, b) => a * 60 + +b, 0)}">▶ ${ts}</span>`);
+}
+const mdInline = (t) => md(t).replace(/^<p>|<\/p>\s*$/g, "");
+let COURSES = [];
+const activeCourses = () => COURSES.filter((c) => c.folder && c.active);
+
+// ============================================================== navigazione
+const TITLES = { study: "Studia", today: "Novità", lessons: "Video lezioni", tutor: "Tutor", review: "Ripasso" };
+let view = null;
+function setView(v, opts = {}) {
+  if (!TITLES[v]) v = "study";  // nomi delle viste della versione precedente
+  view = v; store.set("view", v);
+  document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
+  for (const k of Object.keys(TITLES)) $("v-" + k).hidden = k !== v;
+  $("title").textContent = TITLES[v]; $("subtitle").textContent = "";
+  if (v !== "lessons") audio.pause();
+  if (v !== "study") stopPrepPoll();
+  if (v === "study") initStudy(opts);
+  if (v === "today") loadToday();
+  if (v === "lessons") initLessons(opts);
+  if (v === "tutor") initTutor();
+  if (v === "review") loadReview();
+}
+document.querySelectorAll(".nav").forEach((b) => (b.onclick = () => setView(b.dataset.view)));
+
+const UI_VERSION = "__UI_VERSION__";
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });
+async function checkUpdate() {  // finestra aperta da giorni: se l'app è stata aggiornata, ricarica (mai a metà di una sessione o lezione)
+  try {
+    const v = (await getJ("/api/version?v=" + UI_VERSION)).ui;
+    if (v !== UI_VERSION && !run && !les) location.reload();
+  } catch {}
+}
+async function refreshFoot() {
+  checkUpdate();
+  try {
+    const st = await getJ("/api/ai/status"); const u = st.usage || {};
+    if (u.utilization != null) {
+      const pct = Math.round(u.utilization * 100);
+      const when = u.resets_at ? new Date(u.resets_at * 1000).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : "";
+      $("claudeTxt").textContent = `Claude 5h: ${pct}%${when ? " · reset " + when : ""}`;
+      $("claudeMeter").firstElementChild.style.width = pct + "%"; $("claudeMeter").classList.toggle("hot", pct >= 75);
+    }
+    const s = await getJ("/api/storage");
+    $("diskTxt").textContent = `Disco: ${s.free_gb} GB liberi · ${s.media_root ? "video su Drive ✓" : "Drive non collegato"}`;
+    const d = await getJ("/api/flashcards/due?limit=1");
+    $("dueCount").hidden = true;  // il ripasso vero è nelle sessioni di Studia: niente contatore che mette ansia
+  } catch {}
+}
+
+// ============================================================== ricerca (Ctrl+K)
+let searchSeq = 0, searchTimer = null;
+$("q").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 350); });
+$("q").addEventListener("keydown", (e) => { if (e.key === "Escape") { $("q").value = ""; $("results").hidden = true; $("q").blur(); } if (e.key === "Enter") runSearch(); });
+document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); $("q").focus(); $("q").select(); } });
+document.addEventListener("click", (e) => { if (!e.target.closest(".searchbox")) $("results").hidden = true; });
+async function runSearch() {
+  const q = $("q").value.trim(); if (q.length < 2) { $("results").hidden = true; return; }
+  const seq = ++searchSeq; $("results").hidden = false; $("results").innerHTML = '<div class="res muted">Cerco…</div>';
+  const res = await getJ("/api/search?" + new URLSearchParams({ q, limit: 12 }));
+  if (seq !== searchSeq) return;
+  const mark = (s) => esc(s).replace(/\[\[/g, "<mark>").replace(/\]\]/g, "</mark>");
+  $("results").innerHTML = res.results.length ? res.results.map((r, i) => {
+    const where = r.kind === "transcript" ? "▶ " + fmt(r.t_start) : r.page ? "p. " + r.page : r.kind;
+    return `<div class="res" data-i="${i}"><div class="t">${esc(r.title || r.path.split("/").pop())}</div><div class="w">${where} · ${esc(shortName(r.course))}</div><div class="s">${mark(r.snippet)}</div></div>`;
+  }).join("") : '<div class="res muted">Nessun risultato</div>';
+  $("results").onclick = (e) => { const el = e.target.closest(".res[data-i]"); if (el) { $("results").hidden = true; openSource(res.results[+el.dataset.i]); } };
+}
+async function openSource(s) {
+  if (s.lecture_id != null && s.t_start != null) { setView("lessons", { lecture: s.lecture_id, t: s.t_start }); }
+  else if (s.kind === "pdf") openViewer(s.doc_id, s.page || 1, s.title);
+  else window.open(`/api/docs/${s.doc_id}/file`, "_blank", "noopener");
+}
+
+// ============================================================== STUDIA
+// Scegli un corso → vedi dove sei davvero → parti con una sessione guidata a tempo.
+let sCourse = store.get("sCourse", null), prepTimer = null, run = null, runClock = null;
+const pct = (x) => Math.round((x || 0) * 100);
+const ringColor = (x) => x >= 0.8 ? "var(--ok)" : x >= 0.5 ? "var(--warn)" : "#e5484d";
+const KIND = { richiamo: "Richiamo", multipla: "Scelta multipla", vero_falso: "Vero o falso", aperta: "Domanda aperta", esercizio: "Esercizio" };
+const DIFF = ["", "base", "da esame", "difficile"];
+function stopPrepPoll() { clearInterval(prepTimer); prepTimer = null; }
+function srcLink(s) {
+  if (!s) return "";
+  if (s.lecture_id) return `<a class="small" data-src-lec="${s.lecture_id}" data-src-t="${s.t_start ?? 0}">▶ ${esc(s.lecture || "lezione")}${s.t_start != null ? " · " + fmt(s.t_start) : ""}</a>`;
+  if (s.doc_id) return `<a class="small" data-src-doc="${s.doc_id}" data-src-p="${s.page || 1}">📄 ${esc(s.doc || "documento")}${s.page ? " · p. " + s.page : ""}</a>`;
+  return "";
+}
+function bindSources(root) {
+  root.querySelectorAll("[data-src-lec]").forEach((a) => (a.onclick = () => setView("lessons", { lecture: +a.dataset.srcLec, t: +a.dataset.srcT })));
+  root.querySelectorAll("[data-src-doc]").forEach((a) => (a.onclick = () => openViewer(+a.dataset.srcDoc, +a.dataset.srcP)));
+}
+
+async function initStudy(opts = {}) {
+  if (opts.course) sCourse = opts.course;
+  if (run) return renderRun();
+  if (les) return renderLesson();
+  if (sCourse) return loadStudyCourse(sCourse);
+  return loadStudyPicker();
+}
+
+async function loadStudyPicker() {
+  sCourse = null; store.set("sCourse", null); stopPrepPoll();
+  $("title").textContent = "Studia"; $("subtitle").textContent = "Scegli il corso da preparare";
+  $("studyBody").className = "study"; $("studyBody").innerHTML = '<p class="muted">Carico…</p>';
+  const [list, fr, su] = await Promise.all([getJ("/api/study"), getJ("/api/fullrun").catch(() => ({})), getJ("/api/setup").catch(() => null)]);
+  const md_ = fr.media || {};
+  const full = fr.alive ? `<div class="card prep"><div class="row"><b><span class="spin"></span> Elaborazione completa di tutti i corsi</b><span class="muted small" style="flex:1">${esc(fr.phase || "")}</span></div>
+      ${md_.total ? `<div class="small">Registrazioni: ${md_.done || 0}/${md_.total}${md_.errors ? ` · ${md_.errors} con errori` : ""}${md_.current ? " · ora: " + esc(md_.current) : ""}</div><div class="meter"><i style="width:${100 * (md_.done || 0) / md_.total}%"></i></div>` : ""}
+      ${fr.login ? `<div class="row"><div class="small" style="color:var(--warn);flex:1">⚠ ${esc(fr.login)}</div><button class="btn" data-setup="login">Accedi a Moodle</button></div>` : ""}
+      ${fr.claude ? `<div class="small muted">${esc(fr.claude)}</div>` : ""}</div>` : "";
+  const last = list.find((c) => c.id === store.get("lastCourse", null) && c.n_items);
+  const resume = last ? `<div class="card learn"><div class="t"><div class="muted small">RIPRENDI DA DOVE ERI</div><b>${esc(shortName(last.name))}</b>
+      <div class="muted small">${last.next ? `Prossimo argomento: ${last.next[0]}. ${esc(last.next[1])}` : "Tutti gli argomenti imparati: allenati per l'esame"}</div></div>
+      <button class="btn primary" data-c="${last.id}">Continua →</button></div>` : "";
+  $("studyBody").innerHTML = setupHtml(su, list, fr) + full + resume + `<div class="cpick">${list.map((c) => {
+    const units = Object.values(c.units || {}).reduce((a, b) => a + b, 0);
+    const state = c.running ? '<span class="spin"></span> analisi in corso' : c.n_items ? `${c.learned}/${c.n_topics} argomenti imparati${c.next ? ` · prossimo: ${c.next[0]}. ${esc(c.next[1])}` : ""}` : units ? "da analizzare" : "non ancora analizzato";
+    return `<div class="card" data-c="${c.id}"><div class="ring sm" style="--p:${pct(c.ready_exam)};--ring:${ringColor(c.ready_exam)}"><div><b>${c.n_items ? pct(c.ready_exam) + "%" : "—"}</b></div></div>
+      <div style="min-width:0"><div class="n">${esc(shortName(c.name))}</div><div class="muted small">${state}</div>
+      <div class="small">${c.exam ? `<span class="pill ${c.exam.days_left <= 14 ? "warn" : ""}">esame tra ${c.exam.days_left} gg</span> ` : ""}${c.due ? `<span class="pill ai">${c.due} da ripassare</span>` : ""}</div></div></div>`;
+  }).join("")}</div>
+  <p class="muted small">La percentuale è la prontezza stimata <b>all'esame</b>: conta solo quello che hai dimostrato di sapere rispondendo, e scende se non ripassi.</p>`;
+  $("studyBody").querySelectorAll("[data-c]").forEach((el) => (el.onclick = () => loadStudyCourse(+el.dataset.c)));
+  bindSetup($("studyBody"));
+}
+
+// Primo avvio: i passi mancanti (login, corsi, elaborazione) con un pulsante ciascuno, senza terminale.
+function setupHtml(su, list, fr) {
+  if (!su) return "";
+  const empty = !list.some((c) => c.n_items || Object.keys(c.units || {}).length);
+  if (su.ready && !(empty && !fr.alive && !su.fullrun_running)) return "";
+  const by = Object.fromEntries(su.checks.map((c) => [c.id, c]));
+  const step = (n, ok, title, body, btn) => `<div class="row" style="align-items:flex-start"><b style="width:22px">${ok ? "✓" : n}</b>
+      <div style="flex:1;min-width:200px"><b>${title}</b><div class="muted small">${body}</div></div>${ok ? "" : btn || ""}</div>`;
+  const loginBtn = su.login_running ? '<span class="muted small"><span class="spin"></span> finestra di login aperta…</span>' : '<button class="btn primary" data-setup="login">Accedi a Moodle</button>';
+  const opt = su.checks.filter((c) => !c.required && !c.ok);
+  return `<div class="card prep"><b>Benvenuto in StudyHub: 3 passi e si parte</b>
+    ${step(1, by.login.ok, "Accedi a Moodle UniVR", "Si apre una finestra: fai il login d'ateneo come sempre. La password resta lì, StudyHub salva solo la sessione.", loginBtn)}
+    ${step(2, by.corsi.ok, "Trova i tuoi corsi", by.corsi.ok ? esc(by.corsi.detail) : "Legge da Moodle i corsi a cui sei iscritto e prepara le cartelle (classificazione in corsi.yaml).", by.login.ok ? '<button class="btn primary" data-setup="courses">Trova i miei corsi</button>' : "")}
+    ${step(3, !empty || fr.alive || su.fullrun_running, "Scarica ed elabora tutto", "Materiale Moodle, registrazioni (trascritte), appunti AI e domande per Studia. Ci vogliono ore: continua anche se chiudi l'app.", by.corsi.ok ? '<button class="btn primary" data-setup="fullrun">Avvia</button>' : "")}
+    ${opt.length ? `<details class="small"><summary class="muted">Facoltativo: ${opt.length} ${opt.length === 1 ? "cosa da migliorare" : "cose da migliorare"}</summary>${opt.map((c) => `<div style="margin-top:6px"><b>${esc(c.label)}</b>${c.detail ? ` · ${esc(c.detail)}` : ""}<div class="muted">${esc(c.fix)}</div></div>`).join("")}</details>` : ""}
+    <div class="small" id="setupMsg" style="color:var(--warn)"></div></div>`;
+}
+
+function bindSetup(root) {
+  root.querySelectorAll("[data-setup]").forEach((b) => (b.onclick = async () => {
+    const what = b.dataset.setup;
+    b.disabled = true; b.innerHTML = '<span class="spin"></span>';
+    try {
+      await postJ(`/api/setup/${what}`);
+      if (what === "login") {  // aspetto che la finestra di login si chiuda
+        for (let i = 0; i < 300; i++) { await new Promise((r) => setTimeout(r, 2000)); const s = await getJ("/api/setup"); if (!s.login_running) break; }
+      }
+    } catch (e) { const m = $("setupMsg"); if (m) m.textContent = e.message; }
+    if (view === "study" && !sCourse) loadStudyPicker();
+  }));
+}
+
+async function loadStudyCourse(cid, quiet = false) {
+  sCourse = cid; store.set("sCourse", cid); store.set("lastCourse", cid);
+  const body = $("studyBody"); body.className = "study";
+  if (!quiet) body.innerHTML = '<p class="muted">Carico…</p>';
+  let d = await getJ(`/api/study/${cid}`);
+  if (!Object.keys(d.prepare.units).length) {  // prima volta: guardo cosa c'è (senza AI)
+    body.innerHTML = '<p class="muted"><span class="spin"></span> Guardo tutto il materiale del corso fino a oggi…</p>';
+    await getJ(`/api/study/${cid}/scan`); d = await getJ(`/api/study/${cid}`);
+  } else if (!quiet) {
+    getJ(`/api/study/${cid}/scan`).then((s) => { if (s.added && view === "study" && !run && sCourse === cid) loadStudyCourse(cid, true); }).catch(() => {});
+  }
+  if (view !== "study" || run || les || sCourse !== cid) return;
+  renderStudyCourse(d);
+  if (d.prepare.running) startPrepPoll(cid, d.prepare.ready);
+}
+
+function renderStudyCourse(d) {
+  const cid = d.course.id, v = d.verdict, p = d.prepare;
+  $("title").textContent = shortName(d.course.fullname);
+  $("subtitle").textContent = d.exam ? `Appello ${d.exam.date} · tra ${d.exam.days_left} giorni` : "Nessun appello in calendario: stima a 14 giorni";
+  const nums = [
+    `Oggi <b>${pct(d.ready_now)}%</b>`, `Domande provate <b>${pct(d.coverage)}%</b> di ${d.n_items}`,
+    d.grade_estimate ? `Voto stimato <b>${esc(d.grade_estimate)}</b>` : "",
+    d.best_sim != null ? `Simulazione migliore <b>${d.best_sim}/30</b>` : "",
+    d.overconfidence != null ? `Sicuro ma sbagliato <b>${pct(d.overconfidence)}%</b>` : "",
+    `🔥 <b>${d.streak}</b> ${d.streak === 1 ? "giorno" : "giorni"} di fila`, `XP oggi <b>${d.xp_today}</b>`,
+  ].filter(Boolean).map((x) => `<span>${x}</span>`).join("");
+  const prep = p.todo || p.running ? `<div class="card prep" id="prep">${prepHtml(p)}</div>` : "";
+  const byLevel = [d.topics.filter((t) => !t.tried).length, ...[0, 1, 2, 3, 4].map((l) => d.topics.filter((t) => t.tried && t.level === l).length)];
+  const toLearn = d.topics.find((t) => !t.learned), learnN = d.topics.indexOf(toLearn) + 1, nLearned = d.topics.filter((t) => t.learned).length;
+  const learn = toLearn ? `<div class="card learn"><div class="t"><div class="muted small">① IMPARA · lezioni interattive in ordine · ${nLearned}/${d.topics.length} fatte</div>
+      <b>${learnN}. ${esc(toLearn.name)}</b><div class="muted small">${toLearn.lesson === "pronta" ? "Pronta: passi brevi con verifiche, un esempio da esame, errori da evitare." : '<span class="spin"></span> In preparazione da appunti, trascrizioni e PDF…'}</div></div>
+      <button class="btn primary" id="learnGo" data-learn="${toLearn.id}">${nLearned ? "Continua a imparare →" : "Inizia a imparare →"}</button></div>` : "";
+  const go = d.n_items ? `<div class="sect"><h2>② Allenati: sessione di oggi ${d.due ? `<span class="pill ai">${d.due} domande stanno per sfuggirti</span>` : ""}</h2>
+      <p class="muted small" style="margin:-4px 0 10px">Domande in ordine di corso: prima ripassi quello che stai per dimenticare, poi rinforzi i punti deboli; se resta tempo entra l'argomento nuovo con la sua lezione. Così la prontezza qui sopra misura cosa sai davvero.</p><div class="go">
+      <button data-min="25"><b>Breve · 25 min</b><span>ripasso e punti deboli</span></button>
+      <button data-min="45" class="primary"><b>Standard · 45 min</b><span>ripasso, argomenti nuovi, esercizio finale</span></button>
+      <button data-min="90"><b>Lunga · 90 min</b><span>come una mezza giornata di studio vero</span></button></div></div>` : "";
+  $("studyBody").innerHTML = `
+    <div><button class="btn sm ghost" id="sBack">← Tutti i corsi</button></div>
+    ${learn}
+    <div class="card shero">
+      <div class="ring" style="--p:${pct(d.ready_exam)};--ring:${ringColor(d.ready_exam)}"><div><b>${d.n_items ? pct(d.ready_exam) + "%" : "—"}</b><span class="small muted">all'esame</span></div></div>
+      <div style="min-width:0"><div class="verdict ${v.tone}" style="padding:0 0 0 12px"><h3>${esc(v.title)}</h3><div class="muted">${esc(v.text)}</div></div>
+        ${(v.gaps || []).length && d.coverage >= 0.3 ? `<div class="chips">${v.gaps.map((g) => `<span class="chip" data-focus="${g.id}" title="Allenati su questo argomento"><i class="lvl1"></i>${esc(g.name)}</span>`).join("")}</div>` : ""}
+        <div class="nums">${nums}</div>
+        <div class="small" style="margin-top:8px">${d.exam ? `📅 Appello <b>${d.exam.date}</b> (${esc(d.exam.kind)}) · tra ${d.exam.days_left} giorni <a id="exDel" data-ex="${d.exam.id}">rimuovi</a>`
+          : `<a id="exAdd">📅 Imposta la data dell'appello</a> <span class="muted">— la prontezza si calcola su quel giorno</span>`}
+          <form id="exF" hidden style="display:inline-flex;gap:6px;margin-left:6px"><input type="date" id="exD" required class="sel"><select id="exK" class="sel"><option>scritto</option><option>orale</option><option>parziale</option></select><button class="btn sm primary">Salva</button></form></div></div>
+    </div>
+    ${prep}${go}
+    ${d.topics.length ? `<div class="sect"><h2>Mappa del corso fino a oggi <span class="muted small" style="font-weight:400">${["mai provati", "da iniziare", "fragili", "in crescita", "solidi", "pronti"].map((n, l) => byLevel[l] ? `${byLevel[l]} ${n}` : "").filter(Boolean).join(" · ")}</span></h2>
+      ${chapters(d.topics).map((ch) => `${ch.title ? `<div class="chap"><b>${esc(ch.title)}</b><span class="muted small">${ch.items.filter((x) => x.t.learned).length}/${ch.items.length} imparati</span><span style="flex:1"></span><a class="small faint" data-exch="${esc(ch.title)}" title="Per le parti che non devi portare all'esame (es. già superate)">escludi capitolo</a></div>` : ""}
+      <div class="map">${ch.items.map(({ t, i }) => `<div class="tile lvl${t.level}" data-topic="${t.id}"><div class="n"><span class="faint">${i + 1}.</span> ${esc(t.name)}${t.learned ? ' <span class="ok" title="Lezione fatta">✓</span>' : ""}</div>
+        <div class="meta"><span>${esc(t.level_name)}${t.tried ? " · " + pct(t.m) + "%" : ""}</span><span class="w${t.weight}" title="Peso all'esame"></span></div></div>`).join("")}</div>`).join("")}
+      <p class="muted small" id="exclLine"></p>
+      <p class="muted small">Nell'ordine del corso. Colore = padronanza misurata (rosso fragile → verde pronto) · ✓ = lezione fatta · ●●● = pesa molto all'esame.</p></div>` : ""}`;
+  const b = $("studyBody");
+  $("sBack").onclick = loadStudyPicker;
+  b.querySelectorAll("[data-exch]").forEach((a) => (a.onclick = async () => {
+    if (!confirm(`Escludere il capitolo «${a.dataset.exch}»? Non entrerà più in lezioni, sessioni e prontezza. Puoi rimetterlo quando vuoi.`)) return;
+    await postJ(`/api/study/${cid}/chapters`, { chapter: a.dataset.exch, exclude: true }); loadStudyCourse(cid, true); }));
+  getJ(`/api/study/${cid}/chapters/excluded`).then((xs) => {
+    if (!xs.length || !$("exclLine")) return;
+    $("exclLine").innerHTML = "Capitoli esclusi: " + xs.map((c) => `${esc(c)} <a data-inch="${esc(c)}">rimetti</a>`).join(" · ");
+    $("exclLine").querySelectorAll("[data-inch]").forEach((a) => (a.onclick = async () => {
+      await postJ(`/api/study/${cid}/chapters`, { chapter: a.dataset.inch, exclude: false }); loadStudyCourse(cid, true); }));
+  }).catch(() => {});
+  $("exAdd")?.addEventListener("click", () => { $("exF").hidden = false; $("exF").style.display = "inline-flex"; $("exAdd").hidden = true; });
+  $("exF")?.addEventListener("submit", async (e) => { e.preventDefault();
+    try { await postJ("/api/exams", { course_id: cid, date: $("exD").value, kind: $("exK").value }); loadStudyCourse(cid, true); } catch (err) { alert(err.message); } });
+  $("exDel")?.addEventListener("click", async () => { await fetch(`/api/exams/${$("exDel").dataset.ex}`, { method: "DELETE" }); loadStudyCourse(cid, true); });
+  b.querySelectorAll("[data-min]").forEach((x) => (x.onclick = () => startRun(cid, +x.dataset.min)));
+  $("learnGo")?.addEventListener("click", () => openLesson(+$("learnGo").dataset.learn));
+  postJ(`/api/study/${cid}/lessons/prefetch?n=4`).catch(() => {});  // le prossime lezioni in ordine, pronte quando arrivi
+  b.querySelectorAll("[data-focus]").forEach((x) => (x.onclick = () => startRun(cid, 20, +x.dataset.focus)));
+  b.querySelectorAll("[data-topic]").forEach((x) => (x.onclick = () => openTopic(+x.dataset.topic, d.topics.find((t) => t.id === +x.dataset.topic))));
+  bindPrep(cid);
+}
+
+function chapters(topics) {  // argomenti consecutivi dello stesso capitolo (ordine didattico)
+  const out = [];
+  topics.forEach((t, i) => { const c = t.chapter || ""; if (!out.length || out[out.length - 1].title !== c) out.push({ title: c, items: [] }); out[out.length - 1].items.push({ t, i }); });
+  return out;
+}
+function prepHtml(p) {
+  const total = p.ready + p.todo, done = total ? p.ready / total : 0;
+  return `<div class="row"><b>${p.running ? '<span class="spin"></span> Sto studiando il corso per te' : "Materiale non ancora analizzato"}</b>
+      <span class="muted small" style="flex:1">${p.todo} contenuti fino a oggi${p.lectures_without_notes ? ` · ${p.lectures_without_notes} lezioni passano prima dagli appunti (Claude Sonnet)` : ""} · domande e schede con Gemini</span>
+      ${p.running ? '<button class="btn sm" id="prepStop">Ferma</button>' : '<button class="btn sm primary" id="prepGo">Analizza</button>'}</div>
+    <div class="meter"><i style="width:${pct(done)}%"></i></div>
+    <div class="muted small">${p.ready}/${total} pronti${p.current ? " · ora: " + esc(p.current) : ""}${p.stopped ? " · fermato: " + esc(p.stopped) : ""}${p.running && p.ready ? " · puoi già iniziare una sessione" : ""}</div>
+    ${(p.errors || []).map((e) => `<div class="small" style="color:var(--warn)">⚠ ${esc(e.title)}: ${esc(e.message || "")}</div>`).join("")}`;
+}
+function bindPrep(cid) {
+  $("prepGo")?.addEventListener("click", async () => { $("prepGo").disabled = true; const p = await postJ(`/api/study/${cid}/prepare`); $("prep").innerHTML = prepHtml(p); bindPrep(cid); startPrepPoll(cid, p.ready); });
+  $("prepStop")?.addEventListener("click", async () => { const p = await postJ(`/api/study/${cid}/prepare/stop`); $("prep").innerHTML = prepHtml(p); bindPrep(cid); });
+}
+function startPrepPoll(cid, lastReady) {
+  stopPrepPoll();
+  prepTimer = setInterval(async () => {
+    if (view !== "study" || run || les || sCourse !== cid) return stopPrepPoll();
+    const d = await getJ(`/api/study/${cid}`).catch(() => null); if (!d) return;
+    if (d.prepare.ready !== lastReady || !d.prepare.running) { lastReady = d.prepare.ready; renderStudyCourse(d); if (!d.prepare.running) stopPrepPoll(); }
+    else if ($("prep")) { $("prep").innerHTML = prepHtml(d.prepare); bindPrep(cid); }
+  }, 5000);
+}
+
+async function openTopic(tid, t) {
+  openDrawer(t ? t.name : "Argomento");
+  const d = await getJ(`/api/study/topics/${tid}`);
+  const src = d.lecture_id ? { lecture_id: d.lecture_id, t_start: d.t_start, lecture: (d.units.find((u) => u.kind === "lezione") || {}).title }
+    : d.doc_id ? { doc_id: d.doc_id, page: d.page, doc: (d.units[0] || {}).title } : null;
+  $("dBody").innerHTML = `<p>${t ? `<span class="pill">${esc(t.level_name)}${t.tried ? " · " + pct(t.m) + "%" : ""}</span> <span class="pill ${t.weight === 3 ? "warn" : ""}">peso ${["", "basso", "medio", "alto"][t.weight]}</span> <span class="muted small">${t.n_items} domande</span>` : ""}</p>
+    <div class="md">${md(d.summary_md || "")}</div>
+    <p>${srcLink(src)}</p><p class="muted small">Compare in: ${d.units.map((u) => esc(u.title)).join(" · ")}</p>
+    <p><button class="btn primary" id="tLearn">Impara: lezione interattiva</button> <button class="btn" id="tFocus">Allenati su questo argomento · 20 min</button></p>`;
+  bindSources($("dBody"));
+  $("tFocus").onclick = () => { closeDrawer(); startRun(d.course_id, 20, tid); };
+  $("tLearn").onclick = () => { closeDrawer(); openLesson(tid); };
+}
+
+// --- lezione interattiva: si impara qui, i video restano un link facoltativo ---
+// Passi: perché → (spiegazione + intuizione + mini-verifica) × N → esempio "indovina il passo" → errori tipici → riassunto.
+let les = null, lesPoll = null;
+async function openLesson(tid, opts = {}) {
+  // opts.head: HTML sopra la lezione (barra della sessione); opts.onDone: cosa fare alla fine
+  clearTimeout(lesPoll); stopPrepPoll();
+  les = { tid, phase: "intro", i: 0, sel: null, ex: 0, firstTry: 0, checks: 0, answers: {}, ...opts };
+  $("studyBody").className = "study run";
+  if (!opts.head) { $("title").textContent = "Lezione"; $("subtitle").textContent = ""; }
+  await loadLesson();
+}
+async function loadLesson() {
+  const d = await getJ(`/api/study/topics/${les.tid}/lesson`);
+  les.topic = d.topic; les.data = d.lesson; les.status = d.status; les.message = d.message;
+  if (!opts_inSession()) $("subtitle").textContent = d.topic.name;
+  renderLesson();
+  if (!les.data && d.status !== "errore") lesPoll = setTimeout(() => { if (les && !les.data && view === "study") loadLesson(); }, 6000);
+}
+const opts_inSession = () => !!(les && les.head);
+function lessonPhases() {
+  const L = les.data; return ["intro", ...L.passi.map((_, i) => "p" + i), "esempio", ...(L.errori_tipici.length ? ["errori"] : []), "fine"];
+}
+function lesNext() {
+  const ph = lessonPhases(), cur = les.phase === "passo" ? "p" + les.i : les.phase, k = ph.indexOf(cur) + 1;
+  const nx = ph[k] || "fine";
+  if (nx.startsWith("p")) { les.phase = "passo"; les.i = +nx.slice(1); } else les.phase = nx;
+  les.sel = null; les.helper = null;
+  renderLesson(); $("studyBody").scrollIntoView({ block: "start" });
+}
+function videoLink(t, label = "▶ Rivedi questo punto nella lezione (facoltativo)") {
+  if (!les.topic.lecture_id) return "";
+  return `<a class="small" data-src-lec="${les.topic.lecture_id}" data-src-t="${t ?? les.topic.t_start ?? 0}">${label}${t != null ? " · " + fmt(t) : ""}</a>`;
+}
+function helperHtml(context) {
+  const h = les.helper || {};
+  return `<div class="helper"><button class="btn sm" data-help="altro_modo">🔄 Spiegamelo in un altro modo</button><button class="btn sm ghost" data-help="domanda">❓ Ho una domanda</button></div>
+    ${h.open ? `<div class="askbox"><textarea id="lAsk" rows="2" placeholder="Chiedi qualsiasi cosa su questo passo…">${esc(h.q || "")}</textarea><div><button class="btn sm primary" id="lAskGo">Chiedi</button></div></div>` : ""}
+    ${h.loading ? '<div class="muted small"><span class="spin"></span> Ci penso…</div>' : ""}
+    ${h.answer ? `<div class="tutorans md">${md(h.answer)}</div>` : ""}${h.error ? `<div class="small" style="color:var(--warn)">${esc(h.error)}</div>` : ""}`;
+}
+function renderLesson() {
+  const body = $("studyBody"), t = les.topic, L = les.data;
+  const head = les.head || '<div><button class="btn sm ghost" id="lExit">← Torna al corso</button></div>';
+  if (!L) {
+    body.innerHTML = head + `<div class="card lsn"><div class="stepname">Argomento nuovo</div><h2>${esc(t.name)}</h2>
+      ${les.status === "errore" ? `<div class="small" style="color:var(--warn)">La lezione non si è potuta preparare: ${esc(les.message || "")}</div><div><button class="btn sm" id="lRetry">Riprova</button></div>`
+        : '<div class="muted"><span class="spin"></span> Sto preparando la lezione interattiva da appunti, trascrizioni e PDF (1-3 minuti). Intanto leggi la scheda:</div>'}
+      <div class="md">${md(t.summary_md || "")}</div><div>${videoLink(null)}</div>
+      <div><button class="btn" id="lSkip">${les.onDone ? "Salta la lezione e vai alle domande →" : "Torna al corso"}</button></div></div>`;
+    $("lSkip").onclick = () => { clearTimeout(lesPoll); const f = les.onDone || (() => loadStudyCourse(t.course_id)); les = null; f(); };
+    $("lRetry")?.addEventListener("click", async () => { await getJ(`/api/study/topics/${t.id}/lesson`); loadLesson(); });
+    $("lExit")?.addEventListener("click", () => { clearTimeout(lesPoll); les = null; loadStudyCourse(t.course_id); });
+    bindSources(body); return;
+  }
+  const ph = lessonPhases(), cur = les.phase === "passo" ? "p" + les.i : les.phase, ci = ph.indexOf(cur);
+  const dots = `<div class="dots">${ph.map((_, k) => `<i class="${k < ci ? "done" : k === ci ? "cur" : ""}"></i>`).join("")}</div>`;
+  let inner = "", ctx = "";
+  if (les.phase === "intro") {
+    inner = `<div class="stepname">Perché ti serve</div><h2>${esc(L.titolo || t.name)}</h2><div class="md">${md(L.perche_md)}</div>
+      ${L.prerequisiti.length ? `<div class="small muted">Ti serve sapere: ${L.prerequisiti.map(esc).join(" · ")}</div>` : ""}
+      <div class="muted small">${L.passi.length} passi brevi con una verifica ciascuno, un esempio da esame, errori da evitare. Circa ${4 + 2 * L.passi.length} minuti.</div>
+      <div><button class="btn primary" id="lNext">Iniziamo →</button></div>`;
+  } else if (les.phase === "passo") {
+    const p = L.passi[les.i], v = p.verifica, a = les.answers[les.i];
+    ctx = `${p.titolo}\n${p.spiegazione_md}`;
+    inner = `<div class="stepname">Passo ${les.i + 1} di ${L.passi.length}</div><h2>${esc(p.titolo)}</h2>
+      <div class="md">${md(p.spiegazione_md)}</div>
+      ${p.intuizione_md ? `<div class="idea md"><b>💡 Per capirlo al volo</b>${md(p.intuizione_md)}</div>` : ""}
+      ${p.inizio_s != null ? `<div>${videoLink(p.inizio_s, "▶ Il docente lo spiega qui")}</div>` : ""}
+      ${helperHtml()}
+      ${v ? `<div class="check"><b>Verifica veloce</b><div class="md">${md(v.testo_md)}</div><div class="opts">${v.opzioni.map((o, j) => {
+          let cls = ""; if (a != null) cls = j === v.corretta ? "right" : j === a ? "wrong" : "";
+          return `<button class="opt ${cls}" data-v="${j}" ${a != null ? "disabled" : ""}><kbd>${j + 1}</kbd><span>${mdInline(o)}</span></button>`; }).join("")}</div>
+        ${a != null ? `<div class="why md">${a === v.corretta ? "<b>✓ Esatto.</b> " : "<b>✗ Non proprio.</b> "}${md(v.spiegazione_md)}</div>
+          <div><button class="btn primary" id="lNext">Avanti →</button>${a !== v.corretta ? ' <span class="muted small">Se non ti torna, usa «Spiegamelo in un altro modo».</span>' : ""}</div>` : ""}</div>`
+        : `<div><button class="btn primary" id="lNext">Ho capito, avanti →</button></div>`}`;
+  } else if (les.phase === "esempio") {
+    const E = L.esempio;
+    ctx = E.testo_md;
+    inner = `<div class="stepname">Esempio da esame · prova a precedere la soluzione</div><div class="md">${md(E.testo_md)}</div>
+      ${E.passi.map((s, k) => k <= les.ex ? `<div class="exstep ${k < les.ex ? "open" : ""}"><div class="md"><b>${k + 1}.</b> ${md(s.domanda_md)}</div>
+        ${k < les.ex ? `<div class="md">${md(s.risposta_md)}</div>` : `<div><button class="btn sm primary" id="lReveal">Ci ho pensato: mostrami il passo</button></div>`}</div>` : "").join("")}
+      ${les.ex >= E.passi.length ? `<div class="why md"><b>Risultato.</b> ${md(E.risultato_md)}</div><div><button class="btn primary" id="lNext">Avanti →</button></div>` : ""}
+      ${helperHtml()}`;
+  } else if (les.phase === "errori") {
+    inner = `<div class="stepname">Errori che costano punti</div><div class="muted small">Prima di aprirli, chiediti perché sono sbagliati.</div>
+      ${L.errori_tipici.map((e) => `<div class="errcard"><div>✗ ${mdInline(e.errore)}</div><div class="fix">✓ ${mdInline(e.correzione)}</div></div>`).join("")}
+      <div><button class="btn primary" id="lNext">Avanti →</button></div>`;
+  } else {
+    const n = L.passi.filter((p) => p.verifica).length;
+    inner = `<div class="stepname">Da sapere a memoria</div><h2>${esc(L.titolo || t.name)}</h2><div class="md">${md(L.riassunto_md)}</div>
+      ${n ? `<div class="muted">Verifiche giuste al primo colpo: <b>${les.firstTry}/${n}</b>${les.firstTry < n ? " — le domande che seguono ti fanno consolidare proprio quei punti." : ""}</div>` : ""}
+      <div class="helper"><button class="btn primary" id="lDone">${les.onDone ? "Ora mettiti alla prova →" : "Mettiti alla prova · 10 min →"}</button>${les.onDone ? "" : '<button class="btn" id="lBack">Torna al corso</button>'}</div>`;
+  }
+  body.innerHTML = head + `<div class="card lsn">${dots}${inner}</div>`;
+  $("lExit")?.addEventListener("click", () => { clearTimeout(lesPoll); les = null; loadStudyCourse(t.course_id); });
+  $("lNext")?.addEventListener("click", lesNext);
+  body.querySelectorAll("[data-v]").forEach((b) => (b.onclick = () => {
+    const j = +b.dataset.v, v = L.passi[les.i].verifica; les.answers[les.i] = j; if (j === v.corretta) les.firstTry++; renderLesson(); }));
+  $("lReveal")?.addEventListener("click", () => { les.ex++; renderLesson(); });
+  body.querySelectorAll(".errcard").forEach((c) => (c.onclick = () => c.classList.toggle("open")));
+  body.querySelectorAll("[data-help]").forEach((b) => (b.onclick = () => {
+    if (b.dataset.help === "domanda") { les.helper = { ...(les.helper || {}), open: true }; renderLesson(); $("lAsk")?.focus(); }
+    else askTutor_(ctx, "altro_modo", ""); }));
+  $("lAskGo")?.addEventListener("click", () => askTutor_(ctx, "domanda", $("lAsk").value));
+  $("lDone")?.addEventListener("click", async () => {
+    await postJ(`/api/study/topics/${t.id}/lesson/done`).catch(() => {});
+    const f = les.onDone; les = null;
+    if (f) f(); else startRun(t.course_id, 10, t.id);
+  });
+  $("lBack")?.addEventListener("click", async () => { await postJ(`/api/study/topics/${t.id}/lesson/done`).catch(() => {}); les = null; loadStudyCourse(t.course_id); });
+  bindSources(body);
+  if ($("rStop")) $("rStop").onclick = () => { if (confirm("Terminare la sessione? Quello che hai risposto resta salvato.")) { les = null; finishRun(); } };
+}
+async function askTutor_(context, mode, q) {
+  if (mode === "domanda" && !q.trim()) return;
+  const t = les.topic; les.helper = { ...(les.helper || {}), q, loading: true, answer: null, error: null }; renderLesson();
+  try { const r = await postJ(`/api/study/topics/${t.id}/ask`, { question: q, context, mode }); if (les) { les.helper = { ...les.helper, loading: false, answer: r.answer_md }; renderLesson(); } }
+  catch (e) { if (les) { les.helper = { ...les.helper, loading: false, error: e.message }; renderLesson(); } }
+}
+
+// --- sessione guidata ---
+async function startRun(cid, minutes, focus = null) {
+  stopPrepPoll();
+  $("studyBody").innerHTML = '<p class="muted"><span class="spin"></span> Preparo la sessione…</p>';
+  try {
+    const s = await postJ(`/api/study/${cid}/sessions`, { minutes, focus_topic: focus });
+    run = { ...s, i: 0, combo: 0, t0: Date.now(), phase: "ask", sel: null, res: null, askedAt: Date.now() };
+    renderRun();
+  } catch (e) { alert(e.message); loadStudyCourse(cid); }
+}
+function runNext() {
+  run.i++; run.phase = "ask"; run.sel = null; run.res = null; run.paper = false; run.askedAt = Date.now();
+  if (run.i >= run.entries.length) return finishRun();
+  renderRun();
+}
+function runHead() {
+  const n = run.entries.length, el = Math.floor((Date.now() - run.t0) / 1000);
+  return `<div class="runbar"><button class="btn sm ghost" id="rStop">Termina</button>
+    <div class="meter"><i style="width:${100 * run.i / n}%"></i></div><span class="muted small">${Math.min(run.i + 1, n)}/${n}</span>
+    <span class="time" id="runT">${fmt(el)} / ${run.minutes}:00</span>${run.combo >= 3 ? `<span class="combo">🔥 ×${run.combo}</span>` : ""}<span class="xp">${run.xp} XP</span></div>`;
+}
+function renderRun() {
+  const e = run.entries[run.i], body = $("studyBody");
+  body.className = "study run";
+  $("title").textContent = "Sessione"; $("subtitle").textContent = shortName((COURSES.find((c) => c.id === run.course_id) || {}).fullname || "");
+  clearInterval(runClock); runClock = setInterval(() => { const t = $("runT"); if (!t || !run) return clearInterval(runClock); t.textContent = `${fmt((Date.now() - run.t0) / 1000)} / ${run.minutes}:00`; }, 1000);
+  if (e.t === "scheda") {  // argomento nuovo: lezione interattiva, poi le domande della sessione
+    if (les && les.tid === e.topic) { les.head = runHead(); return renderLesson(); }
+    return openLesson(e.topic, { head: runHead(), onDone: runNext });
+  } else {
+    const q = e.question, t = run.topics[q.topic_id] || {};
+    const tag = e.boss ? '<span class="pill warn">⚔ Boss finale · XP doppi</span>' : e.retry ? '<span class="pill warn">Riprova: l\'avevi sbagliata</span>' : "";
+    const opts = q.kind === "multipla" ? q.options : q.kind === "vero_falso" ? ["Vero", "Falso"] : null;
+    const val = (j) => q.kind === "vero_falso" ? (j === 0 ? 1 : 0) : j;
+    const r = run.res, done = run.phase === "result";
+    let answerUi;
+    if (opts) {
+      answerUi = `<div class="opts">${opts.map((o, j) => {
+        let cls = run.sel === val(j) ? "sel" : "";
+        if (done && r && r.correct != null) cls = val(j) === r.correct ? "right" : run.sel === val(j) ? "wrong" : "";
+        return `<button class="opt ${cls}" data-o="${val(j)}" ${done ? "disabled" : ""}><kbd>${j + 1}</kbd><span>${mdInline(o)}</span></button>`; }).join("")}</div>`;
+    } else if (!run.paper) {
+      answerUi = `<textarea id="rText" rows="${q.kind === "esercizio" ? 8 : q.kind === "aperta" ? 6 : 3}" ${done ? "disabled" : ""} placeholder="${q.kind === "esercizio" ? "Scrivi passaggi e risultato (le formule anche in testo semplice: x^2, sqrt(2), int_0^1 …)" : "Rispondi con parole tue, come all'esame"}">${esc(run.text || "")}</textarea>
+        ${done ? "" : '<div class="small"><a id="rPaper">Ho svolto su carta / a mente: confronto io con la soluzione</a></div>'}`;
+    } else answerUi = '<div class="muted small">Svolgi su carta, poi scegli quanto sei sicuro: vedrai la soluzione e ti valuterai sui criteri.</div>';
+    const conf = done ? "" : `<div class="muted small">Quanto sei sicuro? (invia la risposta)</div><div class="conf">
+      <button class="btn" data-conf="3">Sicuro</button><button class="btn" data-conf="2">Credo di sì</button><button class="btn" data-conf="1">Tiro a indovinare</button></div>`;
+    body.innerHTML = runHead() + `<div class="card qcard"><div class="tags"><span class="pill">${KIND[q.kind]}</span><span class="pill">${DIFF[q.difficulty]}</span>${tag}<span class="muted small">${esc(t.name || "")}</span></div>
+      <div class="md prompt">${md(q.prompt_md)}</div>${answerUi}${conf}<div id="rOut">${done ? resultHtml() : ""}</div></div>`;
+    body.querySelectorAll("[data-o]").forEach((b) => (b.onclick = () => { run.sel = +b.dataset.o; renderRun(); }));
+    body.querySelectorAll("[data-conf]").forEach((b) => (b.onclick = () => submitRun(+b.dataset.conf)));
+    $("rText")?.addEventListener("input", (ev) => (run.text = ev.target.value));
+    $("rPaper")?.addEventListener("click", () => { run.paper = true; renderRun(); });
+    bindResult();
+  }
+  $("rStop").onclick = () => { if (confirm("Terminare la sessione? Quello che hai risposto resta salvato.")) finishRun(); };
+}
+async function submitRun(conf) {
+  const e = run.entries[run.i], q = e.question, idx = run.i, seconds = (Date.now() - run.askedAt) / 1000;
+  const isChoice = q.kind === "multipla" || q.kind === "vero_falso";
+  if (isChoice && run.sel == null) return alert("Scegli prima una risposta.");
+  if (!isChoice && !run.paper && !(run.text || "").trim()) return alert("Scrivi la risposta, oppure scegli «Ho svolto su carta».");
+  run.conf = conf; run.phase = "result";
+  if (isChoice) {
+    run.res = { pending: true }; renderRun();
+    run.res = await postJ(`/api/study/sessions/${run.id}/answer`, { idx, choice: run.sel, confidence: conf, seconds });
+    return afterAnswer();
+  }
+  run.res = { pending: true, ...(await postJ(`/api/study/sessions/${run.id}/reveal/${idx}`)) };
+  if (run.paper) { run.res.self = true; return renderRun(); }
+  renderRun();
+  try { run.res = await postJ(`/api/study/sessions/${run.id}/answer`, { idx, text: run.text, confidence: conf, seconds }); afterAnswer(); }
+  catch (err) { run.res = { ...run.res, pending: false, self: true, error: err.message }; renderRun(); }
+}
+async function submitSelf() {
+  const idx = run.i, boxes = [...document.querySelectorAll("[data-crit]")];
+  const body = { idx, confidence: run.conf, seconds: (Date.now() - run.askedAt) / 1000 };
+  if (boxes.length) body.self_criteria = boxes.map((b) => b.checked); else body.self_score = +document.querySelector("[name=selfScore]:checked")?.value || 0;
+  run.res = await postJ(`/api/study/sessions/${run.id}/answer`, body); afterAnswer();
+}
+function afterAnswer() {
+  const r = run.res; run.xp += r.xp; run.entries[run.i].done = true;
+  run.combo = r.score >= 0.7 ? run.combo + 1 : 0;
+  if (r.retry) run.entries.push({ ...run.entries[run.i], done: false, retry: true, boss: false });
+  renderRun();
+}
+function resultHtml() {
+  const r = run.res;
+  if (r.pending && !r.answer_md) return '<p class="muted"><span class="spin"></span> Correggo…</p>';
+  const crit = (r.rubric || []);
+  let head = "";
+  if (r.self && !r.score && r.score !== 0) {  // autovalutazione sui criteri
+    head = `<div class="outcome mid">Confronta con la soluzione e valutati onestamente</div>${r.error ? `<div class="small" style="color:var(--warn)">Correzione automatica non disponibile: ${esc(r.error)}</div>` : ""}`;
+    const self = crit.length ? `<ul class="crit">${crit.map((c, i) => `<li><label><input type="checkbox" data-crit="${i}"><span>${mdInline(c)}</span></label></li>`).join("")}</ul>`
+      : `<div class="conf"><label class="btn"><input type="radio" name="selfScore" value="0"> Sbagliata</label><label class="btn"><input type="radio" name="selfScore" value="0.5"> Parziale</label><label class="btn"><input type="radio" name="selfScore" value="1"> Giusta</label></div>`;
+    return `<div class="sol">${head}<div class="md">${md(r.answer_md)}</div>${crit.length ? '<div class="small muted">Spunta solo i criteri che la tua risposta soddisfa davvero:</div>' : ""}${self}
+      <p><button class="btn primary" id="rSelf">Conferma</button> <span class="muted small">L'autovalutazione conta al massimo l'85%.</span></p>${srcLink(r.source)}</div>`;
+  }
+  if (r.pending) head = '<div class="outcome"><span class="spin"></span> Correggo la tua risposta… intanto confrontala con la soluzione</div>';
+  else {
+    const s = r.score, cls = s >= 0.85 ? "ok" : s >= 0.5 ? "mid" : "ko";
+    const label = s >= 0.85 ? "✓ Corretta" : s >= 0.5 ? "◐ Parziale" : "✗ Sbagliata";
+    const calib = run.conf === 3 && s < 0.5 ? " · eri sicuro: questo è un punto cieco" : run.conf === 1 && s >= 0.85 ? " · la sapevi più di quanto pensi" : "";
+    head = `<div class="outcome ${cls}">${label} <span class="muted small" style="font-weight:400">${Math.round(s * 100)}%${calib}</span><span style="flex:1"></span><span class="xp">+${r.xp} XP</span></div>
+      ${r.feedback_md ? `<div class="md">${md(r.feedback_md)}</div>` : ""}${r.retry ? '<div class="small muted">Tornerà alla fine della sessione.</div>' : ""}`;
+  }
+  const critList = crit.length ? `<div class="small muted" style="margin-top:8px">Cosa doveva esserci:</div><ul class="crit">${crit.map((c, i) => `<li><span>${r.criteria_ok && r.criteria_ok.length ? (r.criteria_ok[i] ? "✅" : "❌") : "•"}</span><span>${mdInline(c)}</span></li>`).join("")}</ul>` : "";
+  return `<div class="sol">${head}<div class="md">${md(r.answer_md)}</div>${critList}<div style="display:flex;gap:12px;align-items:center;margin-top:10px">${srcLink(r.source)}<span style="flex:1"></span>
+    ${r.pending ? "" : '<button class="btn primary" id="rNext">Avanti → <span style="opacity:.7">Invio</span></button>'}</div></div>`;
+}
+function bindResult() {
+  $("rNext")?.addEventListener("click", runNext);
+  $("rSelf")?.addEventListener("click", submitSelf);
+  bindSources($("studyBody"));
+}
+async function finishRun() {
+  clearInterval(runClock);
+  const sid = run.id, cid = run.course_id; run = null;
+  $("studyBody").innerHTML = '<p class="muted"><span class="spin"></span> Calcolo i progressi…</p>';
+  const f = await postJ(`/api/study/sessions/${sid}/finish`);
+  const delta = pct(f.ready_after) - pct(f.ready_before);
+  $("title").textContent = "Sessione finita";
+  $("studyBody").className = "study run";
+  $("studyBody").innerHTML = `<div class="endgrid">
+      <div class="card stat"><span class="k">Risposte</span><span class="v">${f.correct}/${f.answered}</span><span class="d">corrette (≥70%)</span></div>
+      <div class="card stat"><span class="k">Esperienza</span><span class="v">+${f.xp}</span><span class="d">XP · 🔥 ${f.streak} giorni di fila</span></div>
+      <div class="card stat"><span class="k">Prontezza all'esame</span><span class="v">${pct(f.ready_after)}%</span><span class="d">${delta >= 0 ? "+" : ""}${delta} punti in questa sessione</span></div></div>
+    ${f.topics_up.length ? `<div class="sect"><h2>Argomenti che sono saliti</h2><div class="chips">${f.topics_up.map((u) => `<span class="chip">${esc(u.name)} · ${pct(u.from)}→${pct(u.to)}% · ${esc(u.level_name)}</span>`).join("")}</div></div>` : ""}
+    ${f.wrong.length ? `<div class="sect"><h2>Da rivedere stasera (le hai sbagliate)</h2><div class="card tasks">${f.wrong.map((w) => `<div class="task"><div class="t"><div class="md">${mdInline(w.prompt_md.slice(0, 220))}</div><div class="muted small">${esc(w.topic)}</div></div>${srcLink({ lecture_id: w.lecture_id, t_start: w.t_start, lecture: "lezione", doc_id: w.doc_id, page: w.page, doc: "documento" })}</div>`).join("")}</div>
+      <p class="muted small">Le ritroverai nelle prossime sessioni finché non le recuperi a memoria.</p></div>` : ""}
+    <div class="card verdict ${f.verdict.tone}"><h3>${esc(f.verdict.title)}</h3><div class="muted">${esc(f.verdict.text)}</div></div>
+    <div style="display:flex;gap:10px"><button class="btn primary" id="eAgain">Un'altra sessione · 25 min</button><button class="btn" id="eBack">Torna al corso</button></div>`;
+  bindSources($("studyBody"));
+  $("eAgain").onclick = () => startRun(cid, 25);
+  $("eBack").onclick = () => loadStudyCourse(cid);
+}
+document.addEventListener("keydown", (e) => {  // tasti nella lezione: 1-4 risponde, Invio va avanti
+  if (view !== "study" || !les || !les.data || !$("drawer").hidden || !$("viewer").hidden || ["TEXTAREA", "INPUT"].includes(e.target.tagName)) return;
+  if (e.key === "Enter") { e.preventDefault(); ($("lNext") || $("lReveal"))?.click(); }
+  else if (/^[1-4]$/.test(e.key)) document.querySelector(`[data-v="${+e.key - 1}"]`)?.click();
+});
+document.addEventListener("keydown", (e) => {
+  if (view !== "study" || !run || les || !$("drawer").hidden || !$("viewer").hidden) return;
+  if (e.target.tagName === "TEXTAREA") { if (e.key === "Enter" && e.ctrlKey) submitRun(2); return; }
+  if (e.key === "Enter") { if ($("rGo")) runNext(); else if ($("rNext")) runNext(); }
+  const q = run.entries[run.i]?.question;
+  if (q && run.phase === "ask" && /^[1-4]$/.test(e.key)) {
+    const n = +e.key - 1, opts = q.kind === "multipla" ? q.options.length : q.kind === "vero_falso" ? 2 : 0;
+    if (n < opts) { run.sel = q.kind === "vero_falso" ? (n === 0 ? 1 : 0) : n; renderRun(); }
+  }
+});
+
+// ============================================================== OGGI
+async function loadToday() {
+  const [p, news] = await Promise.all([getJ("/api/plan"), getJ("/api/notifications")]);
+  $("subtitle").textContent = new Date().toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+  const ex = p.exams[0];
+  const dueN = p.flashcards.da_ripassare;
+  const st = await getJ("/api/ai/status"); const util = st.usage?.utilization;
+  const exList = p.exams.map((e) => `<div class="e"><span class="pill ${e.days_left <= 7 ? "warn" : ""}">${e.days_left} gg</span>${esc(shortName(e.course))}<span class="faint small">${e.date}</span><button class="x" data-del="${e.id}" title="Rimuovi">✕</button></div>`).join("");
+  const tasks = p.tasks.filter((t) => t.kind !== "flashcard").slice(0, 4);
+  const courses = p.courses;
+  $("todayBody").innerHTML = `
+    <div class="hero">
+      <div class="card stat">
+        <span class="k">Prossimo appello</span>
+        ${ex ? `<span class="v ${ex.days_left <= 7 ? "warn" : ""}">${ex.days_left === 0 ? "Oggi" : ex.days_left + " giorni"}</span><span class="d">${esc(shortName(ex.course))} · ${ex.date} · ${esc(ex.kind)}</span>`
+             : `<span class="v faint">—</span><span class="d">Aggiungi le date degli appelli: il piano si adatta.</span>`}
+        <div class="exlist" ${p.exams.length > 1 ? "" : "hidden"}>${exList}</div>
+        <div class="act"><button class="btn sm" id="exToggle">+ Appello</button>${ex ? `<button class="btn sm ghost" data-course="${ex.course_id}">Preparati →</button>` : ""}</div>
+        <form class="exform" id="exForm" hidden><select id="exCourse"></select><input type="date" id="exDate" required>
+          <select id="exKind"><option>scritto</option><option>orale</option><option>parziale</option></select><button class="btn sm primary">Salva</button></form>
+      </div>
+      <div class="card stat">
+        <span class="k">Ripasso</span><span class="v">${dueN}</span><span class="d">flashcard da ripassare</span>
+        <div class="act"><button class="btn sm ${dueN ? "primary" : ""}" id="goReview" ${dueN ? "" : "disabled"}>Inizia</button></div>
+      </div>
+      <div class="card stat">
+        <span class="k">Claude Pro (5 ore)</span><span class="v">${util != null ? Math.round(util * 100) + "%" : "—"}</span>
+        <span class="d">${util == null ? "Nessuna chiamata recente" : util >= .9 ? "Quasi esaurita: le attività AI sono in pausa" : "Le attività AI partono solo quando le chiedi tu"}</span>
+      </div>
+    </div>
+
+    ${news.length ? `<div class="card"><div class="newsbar" id="newsBar"><span class="pill ai">${news.length}</span><b>Novità dai corsi</b><span class="muted small" style="flex:1">${esc(news[0].title)}</span><span class="muted">▾</span></div>
+      <div class="news" id="newsList" hidden>${news.map((n) => `<div class="it"><span>${{ file: "📄", lezione: "🎬", avviso: "📢", errore: "⚠" }[n.kind] || "•"}</span><div style="flex:1"><div>${esc(n.title)}</div><div class="muted small">${esc(n.body || "")}</div></div>${n.kind === "lezione" ? `<button class="btn sm" data-lec="${esc(n.ref)}">Apri</button>` : ""}</div>`).join("")}
+      <div style="text-align:right;padding-top:6px"><button class="btn sm ghost" id="newsRead">Segna come lette</button></div></div></div>` : ""}
+
+    <div class="sect"><h2>Da fare oggi ${tasks.some((t) => t.ai) ? '<span class="pill ai">AI max 3 al giorno</span>' : ""}</h2>
+      <div class="card tasks">${tasks.length ? tasks.map((t, i) => `<div class="task"><div class="t"><div>${esc(t.title)} ${t.ai ? '<span class="pill ai">AI</span>' : ""}</div><div class="muted small">${esc(t.detail || "")}</div></div><button class="btn sm" data-task="${i}">Vai</button></div>`).join("")
+        : '<div class="empty">Niente in programma. Aggiungi un appello o apri una lezione.</div>'}</div></div>
+
+    <div class="sect"><h2>Corsi attivi</h2><div class="courses">${courses.map((c) => {
+      const pct = c.lectures ? Math.round(100 * c.with_notes / c.lectures) : 0;
+      return `<div class="card ccard" data-course="${c.course_id}"><div class="n">${esc(shortName(c.course))}</div>
+        <div class="meter"><i style="width:${pct}%"></i></div>
+        <div class="row"><span>${c.lectures ? `${c.with_notes}/${c.lectures} lezioni studiate` : "nessuna registrazione"}</span><span>${c.days_left != null ? c.days_left + " gg" : ""}</span></div>
+        <div class="row"><span>${c.profile ? '<span class="pill ok">profilo esame</span>' : ""} ${c.best_grade != null ? `<span class="pill">${c.best_grade}/30</span>` : ""}</span></div></div>`;
+    }).join("")}</div></div>`;
+
+  const body = $("todayBody");
+  $("exToggle").onclick = () => { $("exForm").hidden = !$("exForm").hidden; body.querySelector(".exlist").hidden = false; };
+  $("exCourse").innerHTML = activeCourses().map((c) => `<option value="${c.id}">${esc(shortName(c.fullname))}</option>`).join("");
+  $("exForm").onsubmit = async (e) => { e.preventDefault();
+    try { await postJ("/api/exams", { course_id: +$("exCourse").value, date: $("exDate").value, kind: $("exKind").value }); loadToday(); } catch (err) { alert(err.message); } };
+  body.querySelectorAll("[data-del]").forEach((x) => (x.onclick = async () => { await fetch(`/api/exams/${x.dataset.del}`, { method: "DELETE" }); loadToday(); }));
+  body.querySelectorAll("[data-course]").forEach((el) => (el.onclick = () => openCourse(+el.dataset.course)));
+  body.querySelectorAll("[data-task]").forEach((b) => (b.onclick = () => runTask(tasks[+b.dataset.task])));
+  body.querySelectorAll("[data-lec]").forEach((b) => (b.onclick = () => setView("lessons", { lecture: +b.dataset.lec })));
+  $("goReview")?.addEventListener("click", () => setView("review"));
+  $("newsBar")?.addEventListener("click", () => ($("newsList").hidden = !$("newsList").hidden));
+  $("newsRead")?.addEventListener("click", async () => { await postJ("/api/notifications/read"); loadToday(); });
+  refreshFoot();
+}
+function runTask(t) {
+  if (t.kind === "profile" || t.kind === "sim") return openCourse(t.course_id);
+  setView("lessons", { lecture: t.lecture_id, tab: t.kind === "quiz" ? "quiz" : "notes" });
+}
+
+// ============================================================== pannello corso (esame, simulazioni, export)
+function openDrawer(title) { $("dTitle").textContent = title; $("drawer").hidden = $("scrim").hidden = false; $("dBody").innerHTML = '<p class="muted">Carico…</p>'; }
+function closeDrawer() { clearInterval(simTimer); $("drawer").hidden = $("scrim").hidden = true; }
+$("dClose").onclick = closeDrawer; $("scrim").onclick = closeDrawer;
+async function openCourse(cid) {
+  const name = shortName((COURSES.find((c) => c.id === cid) || {}).fullname || "Corso");
+  openDrawer(name);
+  const d = await getJ(`/api/courses/${cid}/exam`);
+  $("dBody").innerHTML = `
+    <div class="seg" id="cTabs" style="margin:10px 0 6px"><button data-ct="profile" class="on">Profilo d'esame</button><button data-ct="sims">Simulazioni (${d.sims.length})</button><button data-ct="export">Export</button></div>
+    <div id="ct-profile" class="md">${d.profile_md ? md(d.profile_md) + '<p><button class="btn sm" id="pRe">Rigenera profilo</button></p>'
+      : `<div class="cta"><b>Profilo d'esame non ancora creato</b><p>Analizza regole ufficiali e appelli passati (cartella appelli/): formato, argomenti per frequenza, esercizi tipo. Una chiamata Sonnet.</p><button class="btn primary" id="pGen">Crea profilo</button></div>`}</div>
+    <div id="ct-sims" hidden>${d.sims.map((s) => `<div class="qitem" data-sim="${s.id}"><span>${esc(s.title)}</span><span class="muted small">${s.duration_min} min${s.best != null ? " · " + s.best + "/30" : ""}</span></div>`).join("") || '<p class="muted">Nessuna simulazione.</p>'}
+      ${d.profile ? '<p><button class="btn primary" id="sGen">Nuova simulazione d\'esame</button></p>' : '<p class="muted small">Serve prima il profilo d\'esame.</p>'}</div>
+    <div id="ct-export" hidden><p><a href="/api/courses/${cid}/dispensa.pdf">⬇ Dispensa PDF</a> <span class="muted small">profilo + appunti di tutte le lezioni</span></p>
+      <p><a href="/api/flashcards/anki.apkg?course_id=${cid}">⬇ Flashcard per Anki (.apkg)</a></p></div>`;
+  $("cTabs").onclick = (e) => { const b = e.target.closest("button"); if (!b) return;
+    $("cTabs").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    for (const k of ["profile", "sims", "export"]) $("ct-" + k).hidden = k !== b.dataset.ct; };
+  const gen = async (btn, url, label, after) => { btn.disabled = true; btn.textContent = label; try { await after(await postJ(url)); } catch (e) { alert(e.message); openCourse(cid); } };
+  $("pGen")?.addEventListener("click", (e) => gen(e.target, `/api/courses/${cid}/exam/profile`, "⏳ Analizzo regole e appelli…", () => openCourse(cid)));
+  $("pRe")?.addEventListener("click", (e) => { if (confirm("Rigenerare il profilo? Usa una chiamata Sonnet.")) gen(e.target, `/api/courses/${cid}/exam/profile?force=true`, "⏳ Rigenero…", () => openCourse(cid)); });
+  $("sGen")?.addEventListener("click", (e) => gen(e.target, `/api/courses/${cid}/exam/sims`, "⏳ Preparo la prova…", (r) => openSim(r.id, name)));
+  $("dBody").querySelectorAll("[data-sim]").forEach((el) => (el.onclick = () => openSim(+el.dataset.sim, name)));
+}
+function shrinkImage(file) {  // foto ridotte nel browser: lato lungo 1568 px, JPEG
+  return new Promise((ok, ko) => { const img = new Image(); img.onload = () => {
+    const k = Math.min(1, 1568 / Math.max(img.width, img.height)); const c = document.createElement("canvas");
+    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    ok(c.toDataURL("image/jpeg", 0.85)); URL.revokeObjectURL(img.src); }; img.onerror = ko; img.src = URL.createObjectURL(file); });
+}
+let simTimer = null;
+async function openSim(sid, courseName) {
+  const s = await getJ(`/api/sims/${sid}`); const photos = s.domande.map(() => []); const t0 = Date.now();
+  $("dTitle").innerHTML = `${esc(s.titolo)} <span class="timer" id="simT"></span>`;
+  $("dBody").innerHTML = `<div class="md">${md(s.istruzioni_md)}</div>` + s.domande.map((q, i) => `<div class="q" id="sq${i}"><div class="muted small">${i + 1} · ${esc(q.parte)} · ${q.punti} punti</div><div class="md">${md(q.testo_md)}</div>
+      ${q.tipo === "multipla" ? q.opzioni.map((o, j) => `<label><input type="radio" name="s${i}" value="${j}"><span>${mdInline(o)}</span></label>`).join("")
+        : `<textarea name="s${i}" rows="${q.tipo === "esercizio" ? 6 : 4}" placeholder="Risposta ($LaTeX$ ammesso) — oppure allega le foto del foglio"></textarea>
+           <label class="small muted">📷 Foto <input type="file" accept="image/*" multiple data-ph="${i}"></label><div class="imgs" id="ph${i}"></div>`}</div>`).join("") +
+    `<p><button class="btn primary" id="simSend">Consegna e correggi</button></p>`;
+  clearInterval(simTimer);
+  simTimer = setInterval(() => { const el = $("simT"); if (!el) return clearInterval(simTimer);
+    const left = s.durata_min * 60 - (Date.now() - t0) / 1000; el.textContent = (left < 0 ? "−" : "") + fmt(Math.abs(left)); el.style.color = left < 0 ? "var(--warn)" : ""; }, 1000);
+  $("dBody").querySelectorAll("[data-ph]").forEach((inp) => (inp.onchange = async () => { const i = +inp.dataset.ph;
+    for (const f of inp.files) { const url = await shrinkImage(f); photos[i].push(url); $("ph" + i).insertAdjacentHTML("beforeend", `<img src="${url}">`); } inp.value = ""; }));
+  $("simSend").onclick = async () => {
+    if (!confirm("Consegnare la prova? La correzione usa una chiamata Sonnet.")) return;
+    const box = $("dBody");
+    const answers = s.domande.map((q, i) => { if (q.tipo === "multipla") { const c = box.querySelector(`input[name=s${i}]:checked`); return { scelta: c ? +c.value : null }; }
+      return { testo: box.querySelector(`textarea[name=s${i}]`).value, immagini: photos[i] }; });
+    $("simSend").disabled = true; $("simSend").textContent = "⏳ Il docente sta correggendo…"; clearInterval(simTimer);
+    try {
+      const r = await postJ(`/api/sims/${sid}/submit`, { answers, elapsed_min: Math.round((Date.now() - t0) / 600) / 100 });
+      r.valutazioni.forEach((v) => { const el = $("sq" + v.indice); if (!el) return; const sol = r.soluzioni[v.indice];
+        el.classList.add(v.punti >= sol.punti_max - 1e-6 ? "ok" : "ko");
+        el.insertAdjacentHTML("beforeend", `<div class="fb md"><b>${v.punti} / ${sol.punti_max} punti</b>${md(v.feedback_md)}<details><summary>Soluzione</summary>${md(sol.soluzione_md)}</details></div>`); });
+      $("simSend").outerHTML = `<div class="card" style="padding:16px;margin-top:12px"><h2 style="margin:0 0 6px">Voto: ${r.voto_30}/30 · ${r.superato ? "superato" : "non superato"}</h2><div class="md">${md(r.commento_md)}</div>
+        ${r.da_ripassare.length ? "<b>Da ripassare</b><ul>" + r.da_ripassare.map((x) => `<li>${esc(x)}</li>`).join("") + "</ul>" : ""}</div>`;
+      refreshFoot();
+    } catch (e) { alert(e.message); $("simSend").disabled = false; $("simSend").textContent = "Consegna e correggi"; }
+  };
+}
+
+// ============================================================== LEZIONI (player)
+let lec = null, segs = [], slides = [], silences = [], skipSilences = store.get("skip", true), lInit = false;
+async function initLessons(opts = {}) {
+  if (!lInit) {
+    lInit = true;
+    const withLectures = COURSES.filter((c) => c.lectures);
+    $("lCourse").innerHTML = withLectures.map((c) => `<option value="${c.id}">${esc(shortName(c.fullname))}</option>`).join("") ||
+      '<option value="">Nessun corso con registrazioni</option>';
+    $("lCourse").onchange = () => { store.set("lCourse", +$("lCourse").value); loadLectureList(); };
+    const saved = store.get("lCourse"); if (saved && withLectures.some((c) => c.id === saved)) $("lCourse").value = saved;
+  }
+  if (opts.lecture) {
+    const l = await getJ(`/api/lectures/${opts.lecture}`);
+    if (+$("lCourse").value !== l.course_id) { $("lCourse").value = l.course_id; store.set("lCourse", l.course_id); }
+    await loadLectureList();
+    await openLecture(opts.lecture);
+    if (opts.t != null) { seek(opts.t); audio.play().catch(() => {}); }
+    if (opts.tab) setTab(opts.tab);
+  } else {
+    await loadLectureList();
+    if (!lec && store.get("lecture")) { try { await openLecture(store.get("lecture")); } catch {} }
+  }
+  if (lec) $("subtitle").textContent = lec.title;
+}
+async function loadLectureList() {
+  const cid = $("lCourse").value; if (!cid) { $("lItems").innerHTML = '<div class="empty">Nessuna registrazione</div>'; return; }
+  const list = await getJ(`/api/courses/${cid}/lectures`);
+  const notes = new Set((await getJ(`/api/courses/${cid}/notes-index`).catch(() => [])));
+  $("lItems").innerHTML = list.map((l) => {
+    const cls = notes.has(l.id) ? "notes" : l.status === "trascritta" ? "whisper" : l.status === "media_ok" ? "media" : "";
+    const sub = [l.date ? new Date(l.date).toLocaleDateString("it-IT", { day: "numeric", month: "short" }) : "", l.duration ? Math.round(l.duration / 60) + " min" : "", l.status === "nuova" ? "da elaborare" : l.status === "errore" ? "errore" : ""].filter(Boolean).join(" · ");
+    return `<div class="li ${lec && lec.id === l.id ? "on" : ""}" data-id="${l.id}" title="${esc(l.title)}"><span class="dot ${cls}"></span><div class="tt"><div>${esc(l.title)}</div><div class="faint small">${sub}</div></div></div>`;
+  }).join("") || '<div class="empty">Nessuna registrazione</div>';
+  $("lItems").onclick = (e) => { const el = e.target.closest(".li"); if (el) openLecture(+el.dataset.id); };
+}
+async function openLecture(id) {
+  if (lec) store.set("pos:" + lec.id, audio.currentTime);
+  lec = await getJ(`/api/lectures/${id}`); store.set("lecture", id);
+  $("subtitle").textContent = lec.title;
+  document.querySelectorAll(".li").forEach((e) => e.classList.toggle("on", +e.dataset.id === id));
+  segs = lec.transcript.segments || []; slides = lec.slides || []; silences = lec.silences || [];
+  $("p-transcript").innerHTML = segs.length
+    ? `<div class="faint small" style="padding:8px 16px">Trascrizione ${esc(lec.transcript.source || "")}</div>` + segs.map((s, i) => `<div class="tline" data-i="${i}"><time>${fmt(s.start)}</time>${esc(s.text)}</div>`).join("")
+    : '<div class="empty">Nessuna trascrizione</div>';
+  $("strip").innerHTML = slides.map((s, i) => `<img loading="lazy" data-i="${i}" src="/media/${id}/slides/${s.file}" title="${fmt(s.start)}">`).join("");
+  $("stage").innerHTML = slides.length ? '<img id="slide" alt="">' : '<div class="empty">Nessuna slide</div>';
+  $("videoBtn").hidden = !(lec.videos && lec.videos.length);
+  audio.src = lec.has_audio ? `/media/${id}/audio.opus` : "";
+  audio.playbackRate = +$("rate").value || 1.25;
+  audio.currentTime = store.get("pos:" + id, 0);
+  drawTicks(); update(true);
+  loadNotes(); if (!$("p-quiz").hidden) loadQuiz();
+}
+$("p-transcript").onclick = (e) => { const s = e.target.closest(".tline"); if (s) seek(segs[+s.dataset.i].start); };
+$("strip").onclick = (e) => { const im = e.target.closest("img"); if (im) seek(slides[+im.dataset.i].start); };
+$("stripBtn").onclick = () => { $("strip").hidden = !$("strip").hidden; $("stripBtn").classList.toggle("on", !$("strip").hidden); store.set("strip", !$("strip").hidden); };
+if (store.get("strip", false)) { $("strip").hidden = false; }
+$("videoBtn").onclick = () => {
+  if (!lec?.videos?.length) return;
+  const kind = lec.videos.includes("screen") ? "screen" : lec.videos.includes("video") ? "video" : lec.videos[0];
+  const showing = $("stage").querySelector("video");
+  if (showing) { showing.pause(); $("stage").innerHTML = slides.length ? '<img id="slide" alt="">' : ""; update(true); $("videoBtn").textContent = "Video"; return; }
+  audio.pause();
+  $("stage").innerHTML = `<video src="/video/${lec.id}/${kind}" controls autoplay></video>`;
+  const v = $("stage").querySelector("video"); v.currentTime = audio.currentTime; v.playbackRate = audio.playbackRate;
+  $("videoBtn").textContent = "Slide";
+};
+function drawTicks() {
+  const bar = $("bar"); bar.querySelectorAll(".tick").forEach((t) => t.remove());
+  const dur = lec?.duration || audio.duration; if (!dur) return;
+  for (const s of slides) { const t = document.createElement("div"); t.className = "tick"; t.style.left = (100 * s.start / dur) + "%"; bar.append(t); }
+}
+let lastSeg = -1, lastSlide = -1;
+function update(force) {
+  if (!lec) return;
+  const t = audio.currentTime, dur = audio.duration || lec.duration || 0;
+  $("time").textContent = `${fmt(t)} / ${fmt(dur)}`;
+  $("fill").style.width = dur ? (100 * t / dur) + "%" : "0";
+  const si = find(slides, t);
+  if (si !== lastSlide || force) {
+    lastSlide = si; const img = $("slide"); if (img && si >= 0) img.src = `/media/${lec.id}/slides/${slides[si].file}`;
+    if (!$("strip").hidden) { $("strip").querySelectorAll("img").forEach((e) => e.classList.toggle("cur", +e.dataset.i === si)); $("strip").querySelector("img.cur")?.scrollIntoView({ block: "nearest", inline: "center" }); }
+  }
+  const gi = find(segs, t);
+  if ((gi !== lastSeg || force) && !$("p-transcript").hidden) {
+    lastSeg = gi; $("p-transcript").querySelector(".tline.cur")?.classList.remove("cur");
+    const el = $("p-transcript").querySelector(`.tline[data-i="${gi}"]`);
+    if (el) { el.classList.add("cur"); el.scrollIntoView({ block: "center", behavior: force ? "auto" : "smooth" }); }
+  }
+}
+(function tick() {  // salto dei silenzi, controllato a ogni frame
+  if (!audio.paused && skipSilences && silences.length) {
+    const t = audio.currentTime;
+    for (const [a, b] of silences) { if (a > t) break; if (t >= a + 0.25 && t < b - 0.35) { audio.currentTime = b - 0.25; break; } }
+  }
+  requestAnimationFrame(tick);
+})();
+function seek(t) { audio.currentTime = Math.max(0, t); update(true); }
+audio.ontimeupdate = () => update(false);
+audio.onloadedmetadata = () => { drawTicks(); update(true); };
+audio.onplay = () => ($("play").textContent = "❚❚");
+audio.onpause = () => { $("play").textContent = "▶"; if (lec) store.set("pos:" + lec.id, audio.currentTime); };
+$("play").onclick = () => { if (lec) audio.paused ? audio.play() : audio.pause(); };
+$("bar").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); seek((e.clientX - r.left) / r.width * (audio.duration || 0)); };
+const RATES = [1, 1.25, 1.5, 1.75, 2, 2.5];
+$("rate").innerHTML = RATES.map((r) => `<option value="${r}">${r}×</option>`).join("");
+$("rate").value = store.get("rate", 1.25);
+$("rate").onchange = () => { audio.playbackRate = +$("rate").value; store.set("rate", +$("rate").value); };
+function setSkip(v) { skipSilences = v; store.set("skip", v); $("skip").classList.toggle("primary", v); }
+$("skip").onclick = () => setSkip(!skipSilences); setSkip(skipSilences);
+$("widen").onclick = () => { const w = !$("player").classList.contains("wide"); $("player").classList.toggle("wide", w); store.set("wide", w); };
+$("player").classList.toggle("wide", store.get("wide", false));
+function setTab(name) {
+  $("ptabs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  for (const t of ["notes", "transcript", "quiz"]) $("p-" + t).hidden = t !== name;
+  store.set("tab", name);
+  if (name === "quiz") loadQuiz();
+  if (name === "transcript") update(true);
+}
+$("ptabs").onclick = (e) => { const b = e.target.closest("button"); if (b) setTab(b.dataset.tab); };
+setTab(store.get("tab", "notes"));
+for (const id of ["p-notes", "p-quiz"]) $(id).addEventListener("click", (e) => {
+  const ts = e.target.closest(".ts"); if (ts) { seek(+ts.dataset.t); if (audio.paused) audio.play(); return; }
+  const fc = e.target.closest(".fc"); if (fc) fc.classList.toggle("open");
+});
+document.addEventListener("keydown", (e) => {
+  if (view !== "lessons" || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || !$("drawer").hidden || !$("viewer").hidden) return;
+  if (e.code === "Space") { e.preventDefault(); $("play").click(); }
+  else if (e.key === "ArrowLeft") seek(audio.currentTime - 10);
+  else if (e.key === "ArrowRight") seek(audio.currentTime + 10);
+  else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); const i = find(slides, audio.currentTime) + (e.key === "ArrowUp" ? 1 : -1); if (slides[i]) seek(slides[i].start); }
+  else if (e.key === "]" || e.key === "[") { const i = RATES.indexOf(+$("rate").value) + (e.key === "]" ? 1 : -1); if (RATES[i]) { $("rate").value = RATES[i]; $("rate").onchange(); } }
+});
+window.addEventListener("beforeunload", () => { if (lec) store.set("pos:" + lec.id, audio.currentTime); });
+
+// --- Appunti AI della lezione
+async function loadNotes() {
+  if (!lec) return;
+  const id = lec.id;
+  const [n, st, tops] = await Promise.all([getJ(`/api/lectures/${id}/notes`), getJ("/api/ai/status"), getJ(`/api/lectures/${id}/topics`).catch(() => [])]);
+  if (!lec || lec.id !== id) return;
+  const learnBar = tops.length ? `<div class="card learn" style="margin-top:12px;padding:12px 14px"><div class="t"><div class="muted small">IMPARA QUESTA LEZIONE IN MODO INTERATTIVO</div>
+      <div class="chips" style="margin-top:6px">${tops.map((t) => `<span class="chip" data-learn-t="${t.id}">${t.learned ? "✓ " : ""}${esc(t.name)}</span>`).join("")}</div></div></div>` : "";
+  const job = st.jobs.find((j) => j.target_id === id && (j.status === "in_coda" || j.status === "in_corso"));
+  const err = st.jobs.find((j) => j.target_id === id && j.status === "errore");
+  if (n.exists) {
+    $("p-notes").innerHTML = learnBar + `<div class="faint small" style="margin-top:10px">${esc(n.model)} · ${n.created_at.slice(0, 10)} · <a href="/api/lectures/${id}/notes.pdf">PDF</a></div>` + md(n.md) +
+      (n.flashcard.length ? `<h2>Flashcard (${n.flashcard.length})</h2><div class="fcards">${n.flashcard.map((c) => `<div class="fc"><div>${mdInline(c.fronte)}</div><div class="back">${md(c.retro)}</div></div>`).join("")}</div>` : "");
+  } else if (job) {
+    $("p-notes").innerHTML = `<div class="cta"><b>${job.status === "in_corso" ? "⏳ Claude sta elaborando la lezione" : "In coda"}</b><p>Di solito 1-3 minuti.${st.paused_reason ? " Coda in pausa: " + esc(st.paused_reason) : ""}</p></div>`;
+  } else {
+    $("p-notes").innerHTML = `<div class="cta"><b>Appunti non ancora generati</b><p>Claude legge trascrizione e appunti scritti e prepara appunti, flashcard e domande. Circa il 5-7% della finestra di 5 ore.</p>
+      ${err ? `<p class="small" style="color:var(--warn)">Ultimo tentativo fallito: ${esc(err.message || "")}</p>` : ""}<button class="btn primary" id="gen">Genera appunti</button></div>`;
+    $("gen").onclick = async () => { await postJ(`/api/lectures/${id}/notes`); loadNotes(); };
+  }
+  $("p-notes").querySelectorAll("[data-learn-t]").forEach((c) => (c.onclick = () => { setView("study"); openLesson(+c.dataset.learnT); }));
+  clearTimeout(loadNotes.timer);
+  if (job) loadNotes.timer = setTimeout(() => { loadNotes(); refreshFoot(); if (view === "lessons") loadLectureList(); }, 4000);
+}
+
+// --- Quiz della lezione
+async function loadQuiz() {
+  if (!lec) { $("p-quiz").innerHTML = '<div class="empty">Apri una lezione.</div>'; return; }
+  const id = lec.id, list = await getJ(`/api/lectures/${id}/quizzes`);
+  if (!lec || lec.id !== id) return;
+  $("p-quiz").innerHTML = (list.length ? list.map((q) => `<div class="qitem" data-q="${q.id}"><span>${esc(q.title)}</span><span class="muted small">${q.best != null ? Math.round(q.best * 100) + "%" : "da fare"}</span></div>`).join("") : "") +
+    `<div class="cta"><b>Quiz di 10 domande</b><p>Generato dagli appunti AI. Crocette corrette in locale, risposte aperte con Haiku.</p><button class="btn primary" id="qGen">Genera quiz</button></div>`;
+  $("qGen").onclick = async () => { $("qGen").disabled = true; $("qGen").textContent = "⏳ Preparo le domande…";
+    try { const r = await postJ(`/api/lectures/${id}/quiz?n=10`); openQuiz(r.id); } catch (e) { alert(e.message); loadQuiz(); } };
+  $("p-quiz").querySelectorAll("[data-q]").forEach((el) => (el.onclick = () => openQuiz(+el.dataset.q)));
+}
+async function openQuiz(qid) {
+  const q = await getJ(`/api/quizzes/${qid}`), box = $("p-quiz");
+  box.innerHTML = `<p><button class="btn sm ghost" id="qBack">← Quiz</button></p><h3>${esc(q.title)}</h3>` + q.questions.map((d, i) => {
+    const body = d.tipo === "multipla" ? d.opzioni.map((o, j) => `<label><input type="radio" name="q${i}" value="${j}"><span>${mdInline(o)}</span></label>`).join("")
+      : d.tipo === "vero_falso" ? `<label><input type="radio" name="q${i}" value="1"> Vero</label><label><input type="radio" name="q${i}" value="0"> Falso</label>`
+      : `<textarea name="q${i}" rows="${d.tipo === "esercizio" ? 5 : 3}" placeholder="La tua risposta"></textarea>`;
+    return `<div class="q" id="qq${i}"><div class="muted small">${i + 1} · ${d.tipo.replace("_", "/")}</div><div class="md">${md(d.testo_md)}</div>${body}</div>`;
+  }).join("") + `<button class="btn primary" id="qSubmit">Consegna</button>`;
+  $("qBack").onclick = loadQuiz;
+  $("qSubmit").onclick = async () => {
+    const answers = q.questions.map((d, i) => d.tipo === "multipla" || d.tipo === "vero_falso"
+      ? ((c) => (c ? +c.value : null))(box.querySelector(`input[name=q${i}]:checked`)) : box.querySelector(`textarea[name=q${i}]`).value);
+    $("qSubmit").disabled = true; $("qSubmit").textContent = "⏳ Correggo…";
+    try {
+      const r = await postJ(`/api/quizzes/${qid}/submit`, { answers });
+      r.results.forEach((res, i) => { const el = $("qq" + i), d = q.questions[i];
+        el.classList.add(res.punteggio >= 0.99 ? "ok" : "ko");
+        el.insertAdjacentHTML("beforeend", `<div class="fb md"><b>${res.punteggio >= 0.99 ? "Corretta" : res.punteggio > 0 ? res.punteggio + " punti" : "Sbagliata"}</b>` +
+          (d.tipo === "multipla" && res.corretta >= 0 ? ` · giusta: ${String.fromCharCode(65 + res.corretta)}` : "") + (d.tipo === "vero_falso" ? ` · era ${res.corretta ? "vero" : "falso"}` : "") +
+          (res.feedback_md ? md(res.feedback_md) : "") + md(res.soluzione_md) + (d.inizio_s != null ? ` <span class="ts" data-t="${d.inizio_s}">▶ ${fmt(d.inizio_s)}</span>` : "") + "</div>"); });
+      $("qSubmit").outerHTML = `<div class="card" style="padding:14px"><b>${r.score} / ${r.max_score}</b> · ${Math.round(100 * r.score / r.max_score)}%</div>`;
+    } catch (e) { alert(e.message); $("qSubmit").disabled = false; $("qSubmit").textContent = "Consegna"; }
+  };
+}
+
+// ============================================================== TUTOR
+let tThread = null, tInit = false, tMode = store.get("tMode", "normale");
+const EXAMPLES = ["Spiegami il teorema dei residui con un esempio", "Qual è la differenza tra media e mediana?", "Come si trova una base di U∩V?"];
+function setMode(m) { tMode = m; store.set("tMode", m); $("tMode").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.mode === m)); }
+async function initTutor() {
+  if (!tInit) {
+    tInit = true;
+    $("tCourse").innerHTML = '<option value="">Tutti i corsi</option>' + activeCourses().map((c) => `<option value="${c.id}">${esc(shortName(c.fullname))}</option>`).join("");
+    $("tCourse").value = store.get("tCourse", "");
+    $("tCourse").onchange = () => { store.set("tCourse", $("tCourse").value); tThread = null; renderChat(null); };
+    $("tMode").onclick = (e) => { const b = e.target.closest("button"); if (b) { setMode(b.dataset.mode); tThread = null; renderChat(null); } };
+    setMode(tMode);
+    $("tNew").onclick = () => { tThread = null; renderChat(null); $("tQ").focus(); };
+    $("tThreads").onchange = async () => { const id = $("tThreads").value; if (id) { tThread = await getJ(`/api/tutor/threads/${id}`); renderChat(tThread); } };
+    $("tForm").onsubmit = (e) => { e.preventDefault(); askTutor(); };
+    $("tQ").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askTutor(); } };
+    $("tChat").onclick = (e) => { const c = e.target.closest("[data-src]"); if (c && c._src) openSource(c._src);
+      const ex = e.target.closest("[data-ex]"); if (ex) { $("tQ").value = ex.dataset.ex; askTutor(); } };
+    renderChat(null);
+  }
+  const ths = await getJ("/api/tutor/threads");
+  $("tThreads").innerHTML = '<option value="">Conversazioni…</option>' + ths.filter((t) => t.n).map((t) => `<option value="${t.id}">${esc((t.title || "Senza titolo").slice(0, 50))}</option>`).join("");
+}
+function botBubble(text, sources, cited, outside) {
+  const box = document.createElement("div"); box.className = "msg bot md";
+  box.innerHTML = (outside ? '<div class="small" style="color:var(--warn)">Il materiale del corso non copre del tutto la domanda.</div>' : "") +
+    md(text).replace(/\[(\d{1,2})\]/g, (m, n) => sources.find((s) => s.n === +n) ? `<span class="cite" data-src="${n}">${n}</span>` : m);
+  const used = sources.filter((s) => cited.includes(s.n));
+  if (used.length) box.insertAdjacentHTML("beforeend", `<div class="srcs">${used.map((s) => `<a data-src="${s.n}">[${s.n}] ${esc(s.title || "")} · ${esc(s.where)}</a>`).join("")}</div>`);
+  box.querySelectorAll("[data-src]").forEach((el) => (el._src = sources.find((s) => s.n === +el.dataset.src)));
+  return box;
+}
+function renderChat(th) {
+  const chat = $("tChat"); chat.innerHTML = "";
+  if (!th || !th.messages.length) {
+    chat.innerHTML = `<div class="empty" style="margin:auto"><div style="font-size:15px;color:var(--ink);font-weight:600">Chiedi al tuo materiale</div>
+      <p>Risponde solo da appunti, PDF e trascrizioni, con le fonti cliccabili.${tMode === "socratico" ? " In modalità socratica ti guida con domande." : ""}</p>
+      <div class="suggest">${EXAMPLES.map((e) => `<button class="btn sm" data-ex="${esc(e)}">${esc(e)}</button>`).join("")}</div></div>`;
+    return;
+  }
+  for (const m of th.messages) {
+    if (m.role === "user") { const d = document.createElement("div"); d.className = "msg user"; d.textContent = m.content; chat.append(d); }
+    else chat.append(botBubble(m.content, m.citations, [...m.content.matchAll(/\[(\d{1,2})\]/g)].map((x) => +x[1])));
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+async function askTutor() {
+  const q = $("tQ").value.trim(); if (!q || $("tSend").disabled) return;
+  $("tSend").disabled = true; $("tQ").value = "";
+  const chat = $("tChat");
+  if (chat.querySelector(".empty")) chat.innerHTML = "";
+  const u = document.createElement("div"); u.className = "msg user"; u.textContent = q; chat.append(u);
+  const wait = document.createElement("div"); wait.className = "msg bot muted"; wait.textContent = "Cerco nel materiale…"; chat.append(wait);
+  chat.scrollTop = chat.scrollHeight;
+  try {
+    if (!tThread) { const cid = $("tCourse").value; tThread = await postJ("/api/tutor/threads", { course_id: cid ? +cid : null, mode: tMode }); }
+    const r = await postJ(`/api/tutor/threads/${tThread.id}/ask`, { question: q });
+    wait.replaceWith(botBubble(r.answer, r.sources, r.cited, r.outside));
+    tThread = await getJ(`/api/tutor/threads/${tThread.id}`);
+    refreshFoot();
+  } catch (e) { wait.className = "msg bot"; wait.innerHTML = `<span style="color:var(--warn)">${esc(e.message)}</span>`; $("tQ").value = q; }
+  finally { $("tSend").disabled = false; chat.scrollTop = chat.scrollHeight; }
+}
+
+// ============================================================== RIPASSO (FSRS)
+let rCards = [], rDone = 0, rCourse = store.get("rCourse", "");
+async function loadReview() {
+  const r = await getJ("/api/flashcards/due" + (rCourse ? "?course_id=" + rCourse : ""));
+  rCards = r.cards; rDone = 0;
+  $("subtitle").textContent = `${r.stats.da_ripassare} da ripassare · ${r.stats.totale} carte`;
+  showCard(false);
+}
+function showCard(revealed) {
+  const c = rCards[0], total = rDone + rCards.length;
+  const opts = '<option value="">Tutti i corsi</option>' + activeCourses().map((x) => `<option value="${x.id}" ${String(x.id) === String(rCourse) ? "selected" : ""}>${esc(shortName(x.fullname))}</option>`).join("");
+  const head = `<div class="progress"><select class="sel" id="rCourse">${opts}</select><div class="meter" style="flex:1"><i style="width:${total ? 100 * rDone / total : 0}%"></i></div><span class="muted small">${rDone}/${total}</span></div>`;
+  if (!c) {
+    $("reviewBody").innerHTML = head + `<div class="card flash" style="align-items:center;justify-content:center;text-align:center"><div style="font-size:18px;font-weight:600">Tutto ripassato</div>
+      <div class="muted">Le carte nascono dagli appunti AI delle lezioni.</div><div class="small"><a href="/api/flashcards/anki.apkg${rCourse ? "?course_id=" + rCourse : ""}">Esporta per Anki</a></div></div>`;
+  } else {
+    $("reviewBody").innerHTML = head + `<div class="card flash">
+      ${c.lecture_id ? `<a class="small" id="rSrc">${esc(c.lecture_title || "lezione")}${c.t_start != null ? " · ▶ " + fmt(c.t_start) : ""}</a>` : ""}
+      <div class="md" style="font-size:16px">${md(c.front)}</div>${revealed ? `<hr><div class="md">${md(c.back)}</div>` : ""}</div>` +
+      (revealed ? `<div class="rates"><button class="btn" data-r="1">Di nuovo <span class="faint">1</span></button><button class="btn" data-r="2">Difficile <span class="faint">2</span></button><button class="btn primary" data-r="3">Bene <span class="faint">3</span></button><button class="btn" data-r="4">Facile <span class="faint">4</span></button></div>`
+        : `<button class="btn primary" id="rShow" style="padding:11px">Mostra risposta <span style="opacity:.7">(spazio)</span></button>`);
+    $("rShow")?.addEventListener("click", () => showCard(true));
+    $("reviewBody").querySelectorAll("[data-r]").forEach((b) => (b.onclick = () => rate(+b.dataset.r)));
+    $("rSrc")?.addEventListener("click", () => setView("lessons", { lecture: c.lecture_id, t: c.t_start ?? 0 }));
+  }
+  $("rCourse").onchange = () => { rCourse = $("rCourse").value; store.set("rCourse", rCourse); loadReview(); };
+}
+async function rate(r) {
+  const c = rCards.shift(); if (!c) return;
+  const res = await postJ(`/api/flashcards/${c.id}/review`, { rating: r });
+  if (new Date(res.due) <= new Date(Date.now() + 10 * 60 * 1000)) rCards.push({ ...c, due: res.due }); else rDone++;
+  showCard(false); refreshFoot();
+}
+document.addEventListener("keydown", (e) => {
+  if (view !== "review" || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+  if (e.code === "Space") { e.preventDefault(); if ($("rShow")) showCard(true); }
+  else if (["1", "2", "3", "4"].includes(e.key) && !$("rShow") && rCards.length) rate(+e.key);
+});
+
+// ============================================================== visualizzatore PDF
+let vDoc = null, vPage = 1, vPages = 1;
+async function openViewer(docId, page, title) {
+  const d = await getJ(`/api/docs/${docId}`);
+  vDoc = docId; vPages = d.n_pages || 1; $("vTitle").textContent = title || d.title;
+  showPage(page); $("viewer").hidden = false;
+}
+function showPage(p) { vPage = Math.min(vPages, Math.max(1, p)); $("vImg").src = `/api/docs/${vDoc}/page/${vPage}.png`;
+  $("vPage").textContent = `${vPage} / ${vPages}`; $("vOpen").href = `/api/docs/${vDoc}/file#page=${vPage}`; }
+$("vPrev").onclick = () => showPage(vPage - 1); $("vNext").onclick = () => showPage(vPage + 1);
+$("vClose").onclick = () => ($("viewer").hidden = true);
+$("viewer").onclick = (e) => { if (e.target.id === "viewer") $("viewer").hidden = true; };
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { if (!$("viewer").hidden) $("viewer").hidden = true; else if (!$("drawer").hidden) closeDrawer(); }
+  if (!$("viewer").hidden && (e.key === "PageDown" || e.key === "ArrowRight")) showPage(vPage + 1);
+  if (!$("viewer").hidden && (e.key === "PageUp" || e.key === "ArrowLeft")) showPage(vPage - 1);
+});
+
+// ============================================================== avvio
+(async () => {
+  COURSES = await getJ("/api/courses");
+  setView("study");  // l'app si apre sempre su Studia (corso e punto in cui eri restano ricordati)
+  refreshFoot(); setInterval(refreshFoot, 60000);
+})();
+</script>
+</body>
+</html>
