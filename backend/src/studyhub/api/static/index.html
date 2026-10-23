@@ -587,7 +587,8 @@ async function loadStudyPicker() {
       <div style="min-width:0"><div class="n">${esc(shortName(c.name))}</div><div class="muted small">${state}</div>
       <div class="small">${c.exam ? `<span class="pill ${c.exam.days_left <= 14 ? "warn" : ""}">esame tra ${c.exam.days_left} gg</span> ` : ""}${c.due ? `<span class="pill ai">${c.due} da ripassare</span>` : ""}</div></div></div>`;
   }).join("")}</div>
-  <p class="muted small">La percentuale è la prontezza stimata <b>all'esame</b>: conta solo quello che hai dimostrato di sapere rispondendo, e scende se non ripassi.</p>`;
+  ${list.length ? "" : '<p class="muted">Nessun corso ancora: segui i passi qui sopra.</p>'}
+  <p class="muted small" ${list.length ? "" : "hidden"}>La percentuale è la prontezza stimata <b>all'esame</b>: conta solo quello che hai dimostrato di sapere rispondendo, e scende se non ripassi.</p>`;
   $("studyBody").querySelectorAll("[data-c]").forEach((el) => (el.onclick = () => loadStudyCourse(+el.dataset.c)));
   bindSetup($("studyBody"));
 }

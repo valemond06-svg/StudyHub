@@ -69,7 +69,9 @@ if (-not $claude -and (Test-Path "$env:USERPROFILE\.local\bin\claude.exe")) { $c
 if ($claude) {
   $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
   & $claude mcp get studyhub *> $null
-  if ($LASTEXITCODE -ne 0) { & $claude mcp add --scope user studyhub -e PYTHONUTF8=1 -- $Py -m studyhub.mcp_server }
+  # argomenti in un array: PowerShell 5.1 altrimenti si mangia il "--"
+  $add = @("mcp", "add", "--scope", "user", "studyhub", "-e", "PYTHONUTF8=1", "--", $Py, "-m", "studyhub.mcp_server")
+  if ($LASTEXITCODE -ne 0) { & $claude @add }
   else { Write-Host "Già registrato in Claude Code." }
   $ErrorActionPreference = $prev
 } else {

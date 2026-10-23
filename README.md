@@ -22,6 +22,12 @@ Tutto resta sul tuo PC. Il repository contiene solo il programma: nessun dato pe
 
 ## Installazione
 
+**Il modo più semplice**: scrivi a Claude (Claude Code o la scheda Code di Claude Desktop):
+
+> Installa StudyHub sul mio PC seguendo le istruzioni in https://github.com/valemond06-svg/StudyHub/blob/main/SETUP_CON_CLAUDE.md
+
+**A mano:**
+
 1. Scarica il programma in una cartella dedicata. La cartella che contiene `_StudyHub` diventa la cartella dei corsi:
 
    ```powershell
