@@ -566,18 +566,35 @@ async function initStudy(opts = {}) {
   return loadStudyPicker();
 }
 
+function fullrunHtml(fr) {
+  const md_ = fr.media || {};
+  return fr.alive ? `<div class="card prep"><div class="row"><b><span class="spin"></span> Elaborazione completa di tutti i corsi</b><span class="muted small" style="flex:1">${esc(fr.phase || "")}</span></div>
+      ${md_.total ? `<div class="small">Registrazioni: ${md_.done || 0}/${md_.total}${md_.errors ? ` · ${md_.errors} con errori` : ""}${md_.current ? " · ora: " + esc(md_.current) : ""}</div><div class="meter"><i style="width:${100 * (md_.done || 0) / md_.total}%"></i></div>` : ""}
+      ${fr.login ? `<div class="row"><div class="small" style="color:var(--warn);flex:1">⚠ ${esc(fr.login)}</div><button class="btn" data-setup="login">Accedi a Moodle</button></div>` : ""}
+      ${fr.claude ? `<div class="small muted">${esc(fr.claude)}</div>` : ""}</div>`
+    : fr.started_at && !fr.finished_at ? `<div class="card prep"><div class="row"><b style="flex:1">Elaborazione completa interrotta</b><button class="btn primary" data-setup="fullrun">Riprendi</button></div>
+      <div class="muted small">Si è fermata (PC spento o in sospensione)${md_.total ? ` con ${md_.done || 0}/${md_.total} registrazioni fatte` : ""}. Riprende da dove era, senza rifare il lavoro già fatto.</div></div>` : "";
+}
+
+// Il riquadro dell'elaborazione si aggiorna da solo finché resti sulla scelta del corso.
+let fullTimer = null;
+function pollFullrun() {
+  clearTimeout(fullTimer);
+  fullTimer = setTimeout(async () => {
+    const box = $("fullBox");
+    if (!box || view !== "study" || sCourse || run || les || document.hidden) return pollFullrun();
+    try { box.innerHTML = fullrunHtml(await getJ("/api/fullrun")); bindSetup(box); } catch {}
+    pollFullrun();
+  }, 15000);
+}
+
 async function loadStudyPicker() {
   sCourse = null; store.set("sCourse", null); stopPrepPoll();
   $("title").textContent = "Studia"; $("subtitle").textContent = "Scegli il corso da preparare";
   $("studyBody").className = "study"; $("studyBody").innerHTML = '<p class="muted">Carico…</p>';
   const [list, fr, su] = await Promise.all([getJ("/api/study"), getJ("/api/fullrun").catch(() => ({})), getJ("/api/setup").catch(() => null)]);
   const md_ = fr.media || {};
-  const full = fr.alive ? `<div class="card prep"><div class="row"><b><span class="spin"></span> Elaborazione completa di tutti i corsi</b><span class="muted small" style="flex:1">${esc(fr.phase || "")}</span></div>
-      ${md_.total ? `<div class="small">Registrazioni: ${md_.done || 0}/${md_.total}${md_.errors ? ` · ${md_.errors} con errori` : ""}${md_.current ? " · ora: " + esc(md_.current) : ""}</div><div class="meter"><i style="width:${100 * (md_.done || 0) / md_.total}%"></i></div>` : ""}
-      ${fr.login ? `<div class="row"><div class="small" style="color:var(--warn);flex:1">⚠ ${esc(fr.login)}</div><button class="btn" data-setup="login">Accedi a Moodle</button></div>` : ""}
-      ${fr.claude ? `<div class="small muted">${esc(fr.claude)}</div>` : ""}</div>`
-    : fr.started_at && !fr.finished_at ? `<div class="card prep"><div class="row"><b style="flex:1">Elaborazione completa interrotta</b><button class="btn primary" data-setup="fullrun">Riprendi</button></div>
-      <div class="muted small">Si è fermata (PC spento o in sospensione)${md_.total ? ` con ${md_.done || 0}/${md_.total} registrazioni fatte` : ""}. Riprende da dove era, senza rifare il lavoro già fatto.</div></div>` : "";
+  const full = `<div id="fullBox">${fullrunHtml(fr)}</div>`;
   const last = list.find((c) => c.id === store.get("lastCourse", null) && c.n_items);
   const resume = last ? `<div class="card learn"><div class="t"><div class="muted small">RIPRENDI DA DOVE ERI</div><b>${esc(shortName(last.name))}</b>
       <div class="muted small">${last.next ? `Prossimo argomento: ${last.next[0]}. ${esc(last.next[1])}` : "Tutti gli argomenti imparati: allenati per l'esame"}</div></div>
@@ -593,6 +610,7 @@ async function loadStudyPicker() {
   <p class="muted small" ${list.length ? "" : "hidden"}>La percentuale è la prontezza stimata <b>all'esame</b>: conta solo quello che hai dimostrato di sapere rispondendo, e scende se non ripassi.</p>`;
   $("studyBody").querySelectorAll("[data-c]").forEach((el) => (el.onclick = () => loadStudyCourse(+el.dataset.c)));
   bindSetup($("studyBody"));
+  pollFullrun();
 }
 
 // Primo avvio: i passi mancanti (login, corsi, elaborazione) con un pulsante ciascuno, senza terminale.
