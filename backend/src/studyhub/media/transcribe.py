@@ -24,7 +24,7 @@ COMPUTE_TYPE = {"cuda": "int8_float16", "cpu": "int8"}  # su GPU entra in 4 GB d
 def device() -> str:
     """config.yaml → whisper_device: auto | cuda | cpu. auto = GPU NVIDIA se il driver c'è."""
     from ..config import settings
-    pref = (settings.whisper_device or "auto").lower()
+    pref = (os.environ.get("STUDYHUB_WHISPER_DEVICE") or settings.whisper_device or "auto").lower()
     if pref in ("cuda", "cpu"):
         return pref
     return "cuda" if shutil.which("nvidia-smi") else "cpu"
@@ -83,15 +83,25 @@ def transcribe(audio: Path, out: Path, prompt: str | None = None, on_progress=No
     cmd = [sys.executable, "-m", "studyhub.media.transcribe", str(audio), str(out)]
     if prompt:
         cmd += ["--prompt", prompt]
-    with gpu_lock(f"whisper {audio.name}"):
+    def attempt(dev: str) -> tuple[int, str]:
+        env = {**os.environ, "STUDYHUB_WHISPER_DEVICE": dev}
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                encoding="utf-8", errors="replace")
+                                encoding="utf-8", errors="replace", env=env, stdin=subprocess.DEVNULL)
         for line in proc.stdout:
             if line.startswith("PROGRESS") and on_progress:
                 on_progress(float(line.split()[1]))
         err = proc.stderr.read()
-        if proc.wait() != 0:
-            raise RuntimeError(f"Whisper fallito: {err[-1500:]}")
+        return proc.wait(), err
+
+    with gpu_lock(f"whisper {audio.name}"):
+        dev = device()
+        code, err = attempt(dev)
+        if code != 0 and dev == "cuda":
+            # Crash nativo di CUDA (es. 0xC0000409 con la VRAM contesa): la lezione si trascrive lo stesso, su CPU.
+            print(f"    Whisper su GPU terminato con codice {code & 0xFFFFFFFF:#x}: riprovo su CPU…", flush=True)
+            code, err = attempt("cpu")
+        if code != 0:
+            raise RuntimeError(f"Whisper fallito (codice {code & 0xFFFFFFFF:#x}): {err[-1500:].strip() or 'nessun messaggio'}")
     return json.loads(out.read_text(encoding="utf-8"))
 
 

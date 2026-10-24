@@ -575,7 +575,9 @@ async function loadStudyPicker() {
   const full = fr.alive ? `<div class="card prep"><div class="row"><b><span class="spin"></span> Elaborazione completa di tutti i corsi</b><span class="muted small" style="flex:1">${esc(fr.phase || "")}</span></div>
       ${md_.total ? `<div class="small">Registrazioni: ${md_.done || 0}/${md_.total}${md_.errors ? ` · ${md_.errors} con errori` : ""}${md_.current ? " · ora: " + esc(md_.current) : ""}</div><div class="meter"><i style="width:${100 * (md_.done || 0) / md_.total}%"></i></div>` : ""}
       ${fr.login ? `<div class="row"><div class="small" style="color:var(--warn);flex:1">⚠ ${esc(fr.login)}</div><button class="btn" data-setup="login">Accedi a Moodle</button></div>` : ""}
-      ${fr.claude ? `<div class="small muted">${esc(fr.claude)}</div>` : ""}</div>` : "";
+      ${fr.claude ? `<div class="small muted">${esc(fr.claude)}</div>` : ""}</div>`
+    : fr.started_at && !fr.finished_at ? `<div class="card prep"><div class="row"><b style="flex:1">Elaborazione completa interrotta</b><button class="btn primary" data-setup="fullrun">Riprendi</button></div>
+      <div class="muted small">Si è fermata (PC spento o in sospensione)${md_.total ? ` con ${md_.done || 0}/${md_.total} registrazioni fatte` : ""}. Riprende da dove era, senza rifare il lavoro già fatto.</div></div>` : "";
   const last = list.find((c) => c.id === store.get("lastCourse", null) && c.n_items);
   const resume = last ? `<div class="card learn"><div class="t"><div class="muted small">RIPRENDI DA DOVE ERI</div><b>${esc(shortName(last.name))}</b>
       <div class="muted small">${last.next ? `Prossimo argomento: ${last.next[0]}. ${esc(last.next[1])}` : "Tutti gli argomenti imparati: allenati per l'esame"}</div></div>

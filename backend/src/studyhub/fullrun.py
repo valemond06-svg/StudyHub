@@ -258,12 +258,24 @@ def study_track(media_done: threading.Event) -> None:
 
 # --- Avvio -----------------------------------------------------------------------------------
 
+def _keep_awake(on: bool) -> None:
+    """Il PC non va in sospensione per inattività finché l'elaborazione lavora (come un video in riproduzione).
+    Chiudere il coperchio o spegnere resta possibile: si riprende con «Riprendi» in Studia."""
+    try:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
+    except Exception:
+        pass
+
+
 def run() -> None:
     LOCAL_DIR.mkdir(parents=True, exist_ok=True)
     if is_running():
         console.print("[yellow]L'elaborazione completa è già in corso.[/]")
         return
     lock = open(LOCK_FILE, "w")  # tenuto aperto: segnala agli altri processi che sto lavorando
+    _keep_awake(True)
     try:
         state.clear()
         _save(started_at=_now(), finished_at=None, phase="Avvio", media={}, study={})
@@ -289,3 +301,4 @@ def run() -> None:
     finally:
         lock.close()
         LOCK_FILE.unlink(missing_ok=True)
+        _keep_awake(False)
