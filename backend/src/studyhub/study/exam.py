@@ -23,7 +23,8 @@ from ..paths import uni_path
 
 MODEL = "sonnet"
 PROFILE_VERSION = "profile-v1"
-MAX_EXAM_IMAGES = 8
+MAX_EXAM_IMAGES = 16
+MAX_EXAM_DOCS = 16
 SYLLABUS_SECTION = re.compile(r"registro|programma|diario|argomenti|syllabus", re.I)
 
 
@@ -115,10 +116,12 @@ def _syllabus(db, course_id: int) -> str:
 
 
 def _past_exams(db, course: dict) -> list[dict]:
-    prefix = course["folder"].rstrip("/") + "/appelli/"
+    """Testi d'esame ovunque stiano nel corso (doc_tags): i più recenti prima, con le soluzioni in coda."""
     return [dict(r) for r in db.execute(
-        "SELECT * FROM documents WHERE path LIKE ? AND kind='pdf' AND duplicate_of IS NULL ORDER BY path",
-        (prefix + "%",))]
+        """SELECT d.* FROM documents d JOIN doc_tags t ON t.doc_id=d.id
+           WHERE d.course_id=? AND d.kind='pdf' AND d.duplicate_of IS NULL AND t.category IN ('appello','soluzione')
+           ORDER BY t.category='soluzione', t.exam_date IS NULL, t.exam_date DESC, d.path LIMIT ?""",
+        (course["id"], MAX_EXAM_DOCS))]
 
 
 def _exam_docs_content(db, docs: list[dict], max_images: int) -> tuple[list[dict], list[str]]:

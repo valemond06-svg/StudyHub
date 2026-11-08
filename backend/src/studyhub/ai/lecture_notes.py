@@ -163,8 +163,13 @@ def _exam_rules(db, course_id: int) -> str:
             f = uni_path(s["folder"]) / "_sezione.md"
             if f.exists():
                 parts.append(f.read_text(encoding="utf-8").strip())
+    # PDF con le regole (Course Info, regole d'esame, promemoria): prima pagine, dove stanno formato e voto.
+    for r in db.execute(
+            """SELECT c.text FROM chunks c JOIN doc_tags t ON t.doc_id=c.doc_id
+               WHERE c.course_id=? AND t.category='regole_esame' ORDER BY c.doc_id, c.page LIMIT 12""", (course_id,)):
+        parts.append(r[0])
     course = db.execute("SELECT folder FROM courses WHERE id=?", (course_id,)).fetchone()
-    avvisi = uni_path(course["folder"]) / "moodle" / "_avvisi.md" if course and course["folder"] else None
+    avvisi =uni_path(course["folder"]) / "moodle" / "_avvisi.md" if course and course["folder"] else None
     if avvisi and avvisi.exists():
         lines = [ln for ln in avvisi.read_text(encoding="utf-8").split("\n\n") if EXAM_LINE.search(ln)]
         if lines:

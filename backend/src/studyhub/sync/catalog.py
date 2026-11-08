@@ -14,7 +14,7 @@ from ..db import session
 from ..paths import folder_name
 from .moodle import Moodle
 
-USER_FIELDS = ("anno", "semestre", "superato", "attivo", "priorita", "cartella", "sync")
+USER_FIELDS = ("anno", "semestre", "superato", "attivo", "priorita", "cartella", "sync", "stato", "nota")
 
 
 def _academic_year(*texts: str) -> str | None:
@@ -93,13 +93,14 @@ def apply_catalog() -> None:
         for e in load_catalog():
             db.execute(
                 """INSERT INTO courses (id, fullname, category, academic_year, year_of_study, semester,
-                                        passed, active, priority, folder, url)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                                        passed, active, priority, folder, url, stage)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET fullname=excluded.fullname, category=excluded.category,
                      academic_year=excluded.academic_year, year_of_study=excluded.year_of_study,
                      semester=excluded.semester, passed=excluded.passed, active=excluded.active,
-                     priority=excluded.priority, folder=excluded.folder, url=excluded.url""",
+                     priority=excluded.priority, folder=excluded.folder, url=excluded.url, stage=excluded.stage""",
                 (e["id"], e["nome"], e.get("categoria"), e.get("anno_accademico"), e.get("anno"),
                  e.get("semestre"), int(bool(e.get("superato"))), int(bool(e.get("attivo"))),
-                 e.get("priorita") or 0, e.get("cartella"), e.get("url")),
+                 e.get("priorita") or 0, e.get("cartella"), e.get("url"),
+                 e.get("stato") or ("corrente" if e.get("attivo") else "archivio")),
             )

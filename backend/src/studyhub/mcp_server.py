@@ -55,11 +55,38 @@ def list_courses() -> list[dict]:
     """Corsi con anno, stato (attivo/superato) e quante lezioni hanno registrazioni e appunti."""
     with session() as db:
         rows = db.execute(
-            """SELECT c.id, c.fullname, c.year_of_study, c.passed, c.active,
+            """SELECT c.id, c.fullname, c.year_of_study, c.passed, c.active, c.stage AS stato,
                       (SELECT COUNT(*) FROM lectures l WHERE l.course_id=c.id) AS lezioni,
                       (SELECT COUNT(DISTINCT target_id) FROM ai_outputs a WHERE a.course_id=c.id AND a.kind='lecture_notes') AS con_appunti
                FROM courses c WHERE c.folder IS NOT NULL ORDER BY c.active DESC, c.year_of_study DESC, c.fullname""")
         return [dict(r) for r in rows]
+
+
+@server.tool()
+def list_documents(course: str, category: str | None = None) -> list[dict]:
+    """Documenti di un corso per categoria: calendario, regole_esame, programma, appello, soluzione, esiti, formulario,
+    appunti, esercizi, slide, avvisi, forum, materiale. Senza `category` dà il conteggio per categoria."""
+    c = _course(course)
+    with session() as db:
+        if not category:
+            return [dict(r) for r in db.execute(
+                """SELECT t.category AS categoria, COUNT(*) AS documenti FROM doc_tags t JOIN documents d ON d.id=t.doc_id
+                   WHERE d.course_id=? AND d.duplicate_of IS NULL GROUP BY t.category ORDER BY 2 DESC""", (c["id"],))]
+        return [dict(r) for r in db.execute(
+            """SELECT d.id AS doc_id, d.title AS titolo, d.path AS percorso, d.n_pages AS pagine, t.exam_date AS data_appello
+               FROM doc_tags t JOIN documents d ON d.id=t.doc_id
+               WHERE d.course_id=? AND t.category=? AND d.duplicate_of IS NULL
+               ORDER BY t.exam_date DESC, d.path""", (c["id"], category))]
+
+
+@server.tool()
+def read_announcements(course: str, last: int = 5) -> str:
+    """Ultimi avvisi Moodle del docente per il corso (cambi d'aula, lezioni annullate, date d'esame)."""
+    c = _course(course)
+    p = uni_path(c["folder"]) / "moodle" / "_avvisi.md"
+    if not p.exists():
+        return "Nessun avviso."
+    return "\n\n---\n\n".join(p.read_text(encoding="utf-8").split("\n\n---\n\n")[:max(1, min(last, 30))])
 
 
 @server.tool()
@@ -126,7 +153,11 @@ def get_document_page(doc_id: int, page: int) -> str:
         text = doc[page - 1].get_text("text").strip()
     finally:
         doc.close()
-    return text or "(pagina senza testo: probabilmente una scansione o una figura)"
+    if text:
+        return text
+    with session() as db:  # scansione: vale la trascrizione salvata nell'indice
+        rows = db.execute("SELECT text FROM chunks WHERE doc_id=? AND page=? ORDER BY id", (doc_id, page)).fetchall()
+    return "\n".join(r[0] for r in rows) or "(pagina senza testo: probabilmente una scansione o una figura)"
 
 
 @server.tool()

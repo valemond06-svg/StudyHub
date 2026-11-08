@@ -61,7 +61,7 @@ Domande (in italiano, formule in LaTeX con $...$):
 - esercizio: calcolo o problema nello stile dell'esame, con soluzione completa passo per passo.
 - Mescola difficoltà 1 (base), 2 (da esame), 3 (difficile). Almeno metà a livello 2 o 3.
 - criteri: 2-5 punti che una risposta completa DEVE contenere (per aperta ed esercizio; per gli altri lista vuota).
-- Niente domande banali o sul formato del corso; niente domande che dipendono da figure non descritte.
+- Niente domande banali o sul formato del corso. Quando proponi un esercizio su circuiti o reti elettriche (es. nodi, maglie, partitori, Thevenin/Norton), includi SEMPRE nel testo della domanda lo schema circuitale grafico (in diagramma ASCII/Unicode dettagliato con nodi e rami ben definiti, o SVG inline) oppure indica chiaramente la pagina del PDF con lo schema da guardare.
 - Basati SOLO sul materiale fornito. Indica minuto (secondi) o pagina quando li conosci."""
 
 SCHEMA = {
@@ -317,7 +317,15 @@ def _store(unit: dict, course_id: int, data: dict, refs: dict) -> int:
             tid = ids.get(q["argomento"].strip().lower()) or fallback
             if tid is None or q["tipo"] not in KINDS:
                 continue
-            if q["tipo"] == "multipla" and not (len(q["opzioni"]) >= 2 and 0 <= q["corretta"] < len(q["opzioni"])):
+            if q["tipo"] == "multipla":
+                if not (len(q["opzioni"]) >= 2 and 0 <= q["corretta"] < len(q["opzioni"])):
+                    continue
+                import random
+                _opts = list(q["opzioni"])
+                _val = _opts[q["corretta"]]
+                random.shuffle(_opts)
+                q["opzioni"] = _opts
+                q["corretta"] = _opts.index(_val)
                 continue
             if q["tipo"] == "vero_falso" and q["corretta"] not in (0, 1):
                 continue

@@ -96,7 +96,13 @@ class Moodle:
         return self.ws("core_course_get_contents", courseid=course_id)
 
     def news_discussions(self, forum_id: int) -> list[dict]:
-        return self.ws("mod_forum_get_forum_discussions", forumid=forum_id, perpage=100)["discussions"]
+        out: list[dict] = []
+        for page in range(50):  # i forum «Argomenti trattati» superano le 100 discussioni
+            got = self.ws("mod_forum_get_forum_discussions", forumid=forum_id, perpage=100, page=page)["discussions"]
+            out += got
+            if len(got) < 100:
+                break
+        return out
 
     def file_url(self, url: str) -> str:
         """Gli URL pluginfile del web service vogliono il token come parametro."""

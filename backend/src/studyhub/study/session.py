@@ -46,7 +46,7 @@ def _now() -> str:
 
 def _public(it: dict) -> dict:
     """La domanda senza soluzione, per mostrarla prima della risposta."""
-    out = {k: it[k] for k in ("id", "kind", "difficulty", "prompt_md", "topic_id")}
+    out = {k: it[k] for k in ("id", "kind", "difficulty", "prompt_md", "topic_id", "doc_id", "page", "lecture_id", "t_start")}
     out["options"] = json.loads(it["options"]) if it.get("options") else None
     out["n_criteria"] = len(json.loads(it["rubric"] or "[]"))
     return out

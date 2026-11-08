@@ -324,6 +324,101 @@
     .today, .review { padding: 16px; }
     .rates { grid-template-columns: 1fr 1fr; }
   }
+    
+  /* --- Schemi e Riferimenti Visivi Immersivi --- */
+  .q-visual-frame { background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; margin: 14px 0; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+  .q-visual-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: 12px; }
+  .q-visual-badge { font-weight: 700; color: var(--accent); letter-spacing: 0.04em; font-size: 11px; display: inline-flex; align-items: center; gap: 6px; }
+  .q-img-wrap { padding: 12px; background: #ffffff; text-align: center; }
+  .q-circuit-img { max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; display: block; margin: 0 auto; box-shadow: 0 2px 12px rgba(0,0,0,0.08); cursor: zoom-in; }
+  
+  .q-video-pill { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 1.5px solid var(--accent); background: var(--accent-soft); border-radius: 10px; cursor: pointer; margin: 12px 0; transition: all 0.2s ease; }
+  .q-video-pill:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(49,89,214,0.18); }
+  .q-video-icon { font-size: 22px; }
+  .q-video-info { flex: 1; min-width: 0; line-height: 1.35; }
+  .q-video-info b { font-size: 13px; color: var(--ink); }
+
+  /* In-Lesson Media Player & Slide Preview */
+  .lsn-media-player { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 10px; margin: 12px 0; flex-wrap: wrap; }
+  .lsn-play-btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px; padding: 7px 14px; font-weight: 600; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.15s; }
+  .lsn-play-btn:hover { transform: scale(1.02); box-shadow: 0 2px 10px rgba(49,89,214,0.25); }
+  .lsn-slide-box { border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; margin: 14px 0; background: var(--panel); box-shadow: 0 4px 14px rgba(0,0,0,0.05); }
+  .lsn-slide-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); }
+  .lsn-slide-img { max-width: 100%; max-height: 420px; display: block; margin: 0 auto; padding: 10px; background: #ffffff; object-fit: contain; cursor: zoom-in; }
+
+  /* Circuit Box Styling */
+  .circuit-box, pre.circuit { font-family: "Cascadia Code", "Consolas", "Courier New", monospace; background: #0f172a; color: #38bdf8; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.38; overflow-x: auto; margin: 12px 0; box-shadow: inset 0 2px 8px rgba(0,0,0,0.5); }
+
+
+  /* --- Pomodoro Timer --- */
+  .pomo { max-width: 560px; margin: 0 auto; padding: 32px 22px; display: grid; gap: 24px; justify-items: center; }
+  .pomo-timer { position: relative; width: 260px; height: 260px; }
+  .pomo-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .pomo-svg .track { fill: none; stroke: var(--line); stroke-width: 8; }
+  .pomo-svg .progress { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.8s linear, stroke 0.4s; }
+  .pomo-svg .progress.study { stroke: var(--accent); }
+  .pomo-svg .progress.brk { stroke: var(--ok); }
+  .pomo-center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+  .pomo-time { font-size: 52px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .pomo-phase { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 6px; }
+  .pomo-phase.study { color: var(--accent); }
+  .pomo-phase.brk { color: var(--ok); }
+  .pomo-controls { display: flex; gap: 14px; justify-content: center; align-items: center; }
+  .pomo-btn { width: 52px; height: 52px; border-radius: 50%; border: 2px solid var(--line); background: var(--panel); cursor: pointer; font-size: 18px; display: grid; place-items: center; transition: all 0.2s; }
+  .pomo-btn:hover { border-color: var(--accent); transform: scale(1.08); }
+  .pomo-btn.main { width: 68px; height: 68px; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-size: 24px; }
+  .pomo-btn.main:hover { transform: scale(1.1); box-shadow: 0 4px 20px rgba(49,89,214,0.3); }
+  .pomo-btn.main.running { background: var(--warn); border-color: var(--warn); }
+  .pomo-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; width: 100%; }
+  .pomo-stat { padding: 14px; text-align: center; }
+  .pomo-stat .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .pomo-stat .v { font-size: 24px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .pomo-config { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; align-items: center; }
+  .pomo-config label { font-size: 13px; color: var(--muted); display: flex; gap: 4px; align-items: center; }
+  .pomo-config input[type="number"] { width: 52px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); text-align: center; font: inherit; }
+  .pomo-dots { display: flex; gap: 8px; justify-content: center; }
+  .pomo-dots i { width: 12px; height: 12px; border-radius: 50%; background: var(--line); transition: all 0.3s; }
+  .pomo-dots i.done { background: var(--accent); }
+  .pomo-dots i.active { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pomoPulse 2s ease-in-out infinite; }
+  @keyframes pomoPulse { 0%, 100% { box-shadow: 0 0 0 3px var(--accent-soft); } 50% { box-shadow: 0 0 0 7px var(--accent-soft); } }
+  .pomo-msg { font-size: 15px; color: var(--muted); min-height: 24px; text-align: center; }
+  .pomo-tip { background: var(--accent-soft); border-radius: 10px; padding: 12px 16px; font-size: 13px; width: 100%; text-align: center; }
+  .pomo-tip b { color: var(--accent); }
+  .pomo-nav-time { font-size: 11px; margin-left: auto; font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+
+  /* --- Toast Notifications --- */
+  .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 50; display: flex; flex-direction: column-reverse; gap: 8px; pointer-events: none; }
+  .toast { pointer-events: auto; padding: 12px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,0.12); font-size: 13px; display: flex; gap: 10px; align-items: center; animation: toastIn 0.35s cubic-bezier(.22,.68,0,1.2); max-width: 380px; }
+  .toast.ok { border-left: 4px solid var(--ok); }
+  .toast.warn { border-left: 4px solid var(--warn); }
+  .toast.info { border-left: 4px solid var(--accent); }
+  @keyframes toastIn { from { transform: translateY(20px) scale(0.96); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+
+  /* --- Design Polish --- */
+  .nav { transition: all 0.15s ease; }
+  .card { transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease; }
+  .ccard:hover, .cpick .card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.08); transform: translateY(-2px); }
+  .cpick .card, .ccard { transition: all 0.2s ease; }
+  .tile { transition: all 0.15s ease; }
+  .tile:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+  .btn { transition: all 0.15s ease; }
+  .btn.primary:hover:not(:disabled) { box-shadow: 0 2px 12px rgba(49,89,214,0.25); transform: translateY(-1px); }
+  .view { animation: viewIn 0.25s ease; }
+  @keyframes viewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .learn { transition: all 0.2s ease; }
+  .learn:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+  .opt { transition: all 0.15s ease; }
+  .opt:hover:not(:disabled) { transform: translateX(3px); }
+  .fc { transition: all 0.15s ease; }
+  .fc:hover { border-color: var(--accent); }
+  .go button { transition: all 0.2s ease; }
+  .go button:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+  .errcard { transition: all 0.15s ease; }
+  .errcard:hover { border-color: var(--accent); }
+  .chip { transition: all 0.15s ease; }
+  .chip:hover { transform: translateY(-1px); }
+  .pomo-btn:active { transform: scale(0.95); }
+  .pomo-btn.main:active { transform: scale(0.93); }
 </style>
 </head>
 <body>
@@ -335,6 +430,7 @@
     <button class="nav" data-view="tutor"><span class="ico">✦</span>Tutor</button>
     <button class="nav" data-view="today"><span class="ico">☀</span>Novità</button>
     <button class="nav" data-view="review" hidden><span class="ico">◧</span>Ripasso <span class="count" id="dueCount" hidden></span></button>
+    <button class="nav" data-view="pomodoro"><span class="ico">🍅</span>Pomodoro<span class="pomo-nav-time" id="pomoNavTime"></span></button>
     <div class="foot">
       <div title="Utilizzo della finestra di 5 ore di Claude Pro (condivisa con tutto l'abbonamento)">
         <div class="small" id="claudeTxt">Claude: —</div>
@@ -415,6 +511,9 @@
 
     <!-- RIPASSO -->
     <section class="view" id="v-review" hidden><div class="review" id="reviewBody"></div></section>
+
+    <!-- POMODORO -->
+    <section class="view" id="v-pomodoro" hidden><div class="pomo" id="pomoBody"></div></section>
   </div>
 </div>
 
@@ -436,6 +535,7 @@
   </div>
 </div>
 <audio id="audio" preload="metadata"></audio>
+<div class="toast-container" id="toasts"></div>
 
 <script>
 // ============================================================== utilità
@@ -465,6 +565,9 @@ function md(text) {
   let s = String(text || "").replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => keep(t, true)).replace(/\$([^\n$]+?)\$/g, (_, t) => keep(t, false));
   let html = marked.parse(s, { mangle: false, headerIds: false });
   html = html.replace(/\u0000(\d+)\u0000/g, (_, i) => { try { return katex.renderToString(math[i].tex, { displayMode: math[i].display, throwOnError: false }); } catch { return esc(math[i].tex); } });
+  html = html.replace(/<pre><code class="language-circuit">([\s\S]*?)<\/code><\/pre>/g, (_, code) =>
+    `<div class="circuit-box"><div class="small" style="font-weight:700;margin-bottom:8px;color:#38bdf8;letter-spacing:0.04em">⚡ SCHEMA DEL CIRCUITO</div><pre class="circuit">${code}</pre></div>`
+  );
   return html.replace(/▶\s*(\d{1,2}(?::\d{2}){1,2})/g, (_, ts) => `<span class="ts" data-t="${ts.split(":").reduce((a, b) => a * 60 + +b, 0)}">▶ ${ts}</span>`);
 }
 const mdInline = (t) => md(t).replace(/^<p>|<\/p>\s*$/g, "");
@@ -472,7 +575,7 @@ let COURSES = [];
 const activeCourses = () => COURSES.filter((c) => c.folder && c.active);
 
 // ============================================================== navigazione
-const TITLES = { study: "Studia", today: "Novità", lessons: "Video lezioni", tutor: "Tutor", review: "Ripasso" };
+const TITLES = { study: "Studia", today: "Novità", lessons: "Video lezioni", tutor: "Tutor", review: "Ripasso", pomodoro: "Pomodoro" };
 let view = null;
 function setView(v, opts = {}) {
   if (!TITLES[v]) v = "study";  // nomi delle viste della versione precedente
@@ -487,6 +590,7 @@ function setView(v, opts = {}) {
   if (v === "lessons") initLessons(opts);
   if (v === "tutor") initTutor();
   if (v === "review") loadReview();
+  if (v === "pomodoro") renderPomo();
 }
 document.querySelectorAll(".nav").forEach((b) => (b.onclick = () => setView(b.dataset.view)));
 
@@ -553,6 +657,57 @@ function srcLink(s) {
   if (s.doc_id) return `<a class="small" data-src-doc="${s.doc_id}" data-src-p="${s.page || 1}">📄 ${esc(s.doc || "documento")}${s.page ? " · p. " + s.page : ""}</a>`;
   return "";
 }
+
+function qMediaBoxHtml(q) {
+  if (!q) return "";
+  let videoPill = "";
+  if (q.lecture_id && q.t_start != null) {
+    videoPill = `<div class="q-video-pill" data-q-lec="${q.lecture_id}" data-q-t="${q.t_start}">
+      <span class="q-video-icon">🎬</span>
+      <div class="q-video-info">
+        <b>Spiegazione del docente (▶ ${fmt(q.t_start)})</b>
+        <div class="small muted">Clicca per aprire la videolezione nel punto esatto</div>
+      </div>
+      <button type="button" class="btn sm primary">Apri Video →</button>
+    </div>`;
+  }
+  let frame = "";
+  if (q.doc_id && q.page) {
+    frame = `<div class="q-visual-frame" id="qFrame">
+      <div class="q-visual-header">
+        <span class="q-visual-badge">📐 SCHEMA / FIGURA D'ESAME (Pagina ${q.page})</span>
+        <span style="flex:1"></span>
+        <button type="button" class="btn sm" data-q-doc="${q.doc_id}" data-q-page="${q.page}" title="Ingrandisci a schermo intero">🔍 Schermo intero</button>
+        <button type="button" class="btn sm ghost" data-q-toggle="1">− Riduci</button>
+      </div>
+      <div class="q-img-wrap" id="qImgWrap">
+        <img src="/api/docs/${q.doc_id}/page/${q.page}.png" alt="Schema pagina ${q.page}" loading="lazy" data-q-doc="${q.doc_id}" data-q-page="${q.page}" class="q-circuit-img">
+      </div>
+    </div>`;
+  }
+  if (!videoPill && !frame) return "";
+  return `<div class="q-visual-container">${frame}${videoPill}</div>`;
+}
+
+function bindQMedia(root) {
+  root.querySelectorAll("[data-q-doc]").forEach((b) => (b.onclick = () => openViewer(+b.dataset.qDoc, +b.dataset.qPage)));
+  root.querySelectorAll("[data-q-lec]").forEach((b) => (b.onclick = () => {
+    if (confirm("Vuoi aprire la video lezione al momento spiegato? La sessione rimarrà salvata.")) {
+      setView("lessons", { lecture: +b.dataset.qLec, t: +b.dataset.qT });
+    }
+  }));
+  const toggleBtn = root.querySelector("[data-q-toggle]");
+  if (toggleBtn) {
+    toggleBtn.onclick = () => {
+      const wrap = root.querySelector("#qImgWrap");
+      if (wrap) {
+        wrap.hidden = !wrap.hidden;
+        toggleBtn.textContent = wrap.hidden ? "+ Mostra schema" : "− Riduci";
+      }
+    };
+  }
+}
+
 function bindSources(root) {
   root.querySelectorAll("[data-src-lec]").forEach((a) => (a.onclick = () => setView("lessons", { lecture: +a.dataset.srcLec, t: +a.dataset.srcT })));
   root.querySelectorAll("[data-src-doc]").forEach((a) => (a.onclick = () => openViewer(+a.dataset.srcDoc, +a.dataset.srcP)));
@@ -807,6 +962,59 @@ function helperHtml(context) {
     ${h.loading ? '<div class="muted small"><span class="spin"></span> Ci penso…</div>' : ""}
     ${h.answer ? `<div class="tutorans md">${md(h.answer)}</div>` : ""}${h.error ? `<div class="small" style="color:var(--warn)">${esc(h.error)}</div>` : ""}`;
 }
+
+function lessonMediaHtml(t, p) {
+  if (!t) return "";
+  let parts = [];
+  const startSec = (p && p.inizio_s != null) ? p.inizio_s : (t.t_start != null ? t.t_start : null);
+  if (t.lecture_id && startSec != null) {
+    parts.push(`<div class="lsn-media-player">
+      <button type="button" class="lsn-play-btn" data-play-sec="${startSec}">
+        ▶ Ascolta spiegazione audio (▶ ${fmt(startSec)})
+      </button>
+      <span class="small muted" style="flex:1">${esc(t.lecture || "Registrazione docente")}</span>
+      <button type="button" class="btn sm ghost" data-open-lec="${t.lecture_id}" data-t="${startSec}">🎬 Apri Videolezione</button>
+    </div>`);
+  }
+  if (t.doc_id && t.page) {
+    parts.push(`<div class="lsn-slide-box">
+      <div class="lsn-slide-bar">
+        <span>📐 SCHEMA / SLIDE UFFICIALE (Pagina ${t.page})</span>
+        <button type="button" class="btn sm" data-open-doc="${t.doc_id}" data-p="${t.page}">🔍 Ingrandisci</button>
+      </div>
+      <img src="/api/docs/${t.doc_id}/page/${t.page}.png" class="lsn-slide-img" data-open-doc="${t.doc_id}" data-p="${t.page}" alt="Slide del corso" loading="lazy">
+    </div>`);
+  }
+  return parts.join("");
+}
+
+function bindLessonMedia(root, t) {
+  if (!root || !t) return;
+  root.querySelectorAll("[data-open-doc]").forEach((b) => (b.onclick = () => openViewer(+b.dataset.openDoc, +b.dataset.p)));
+  root.querySelectorAll("[data-open-lec]").forEach((b) => (b.onclick = () => {
+    if (confirm("Vuoi aprire la video lezione completa al minuto indicato?")) {
+      setView("lessons", { lecture: +b.dataset.openLec, t: +b.dataset.t });
+    }
+  }));
+  root.querySelectorAll("[data-play-sec]").forEach((b) => {
+    b.onclick = () => {
+      const sec = +b.dataset.playSec;
+      if (audio.src.includes(`/media/${t.lecture_id}/audio.opus`) && !audio.paused) {
+        audio.pause();
+        b.innerHTML = `▶ Ascolta spiegazione audio (▶ ${fmt(sec)})`;
+      } else {
+        audio.src = `/media/${t.lecture_id}/audio.opus`;
+        audio.currentTime = sec;
+        audio.play().then(() => {
+          b.innerHTML = `❚❚ In riproduzione (▶ ${fmt(sec)})`;
+        }).catch(() => {
+          alert("Audio non disponibile per questa lezione.");
+        });
+      }
+    };
+  });
+}
+
 function renderLesson() {
   const body = $("studyBody"), t = les.topic, L = les.data;
   const head = les.head || '<div><button class="btn sm ghost" id="lExit">← Torna al corso</button></div>';
@@ -819,13 +1027,15 @@ function renderLesson() {
     $("lSkip").onclick = () => { clearTimeout(lesPoll); const f = les.onDone || (() => loadStudyCourse(t.course_id)); les = null; f(); };
     $("lRetry")?.addEventListener("click", async () => { await getJ(`/api/study/topics/${t.id}/lesson`); loadLesson(); });
     $("lExit")?.addEventListener("click", () => { clearTimeout(lesPoll); les = null; loadStudyCourse(t.course_id); });
-    bindSources(body); return;
+    bindSources(body);
+  bindLessonMedia(body, t); return;
   }
   const ph = lessonPhases(), cur = les.phase === "passo" ? "p" + les.i : les.phase, ci = ph.indexOf(cur);
   const dots = `<div class="dots">${ph.map((_, k) => `<i class="${k < ci ? "done" : k === ci ? "cur" : ""}"></i>`).join("")}</div>`;
   let inner = "", ctx = "";
   if (les.phase === "intro") {
     inner = `<div class="stepname">Perché ti serve</div><h2>${esc(L.titolo || t.name)}</h2><div class="md">${md(L.perche_md)}</div>
+      ${lessonMediaHtml(t, null)}
       ${L.prerequisiti.length ? `<div class="small muted">Ti serve sapere: ${L.prerequisiti.map(esc).join(" · ")}</div>` : ""}
       <div class="muted small">${L.passi.length} passi brevi con una verifica ciascuno, un esempio da esame, errori da evitare. Circa ${4 + 2 * L.passi.length} minuti.</div>
       <div><button class="btn primary" id="lNext">Iniziamo →</button></div>`;
@@ -835,7 +1045,7 @@ function renderLesson() {
     inner = `<div class="stepname">Passo ${les.i + 1} di ${L.passi.length}</div><h2>${esc(p.titolo)}</h2>
       <div class="md">${md(p.spiegazione_md)}</div>
       ${p.intuizione_md ? `<div class="idea md"><b>💡 Per capirlo al volo</b>${md(p.intuizione_md)}</div>` : ""}
-      ${p.inizio_s != null ? `<div>${videoLink(p.inizio_s, "▶ Il docente lo spiega qui")}</div>` : ""}
+      ${lessonMediaHtml(t, p)}
       ${helperHtml()}
       ${v ? `<div class="check"><b>Verifica veloce</b><div class="md">${md(v.testo_md)}</div><div class="opts">${v.opzioni.map((o, j) => {
           let cls = ""; if (a != null) cls = j === v.corretta ? "right" : j === a ? "wrong" : "";
@@ -847,6 +1057,7 @@ function renderLesson() {
     const E = L.esempio;
     ctx = E.testo_md;
     inner = `<div class="stepname">Esempio da esame · prova a precedere la soluzione</div><div class="md">${md(E.testo_md)}</div>
+      ${lessonMediaHtml(t, null)}
       ${E.passi.map((s, k) => k <= les.ex ? `<div class="exstep ${k < les.ex ? "open" : ""}"><div class="md"><b>${k + 1}.</b> ${md(s.domanda_md)}</div>
         ${k < les.ex ? `<div class="md">${md(s.risposta_md)}</div>` : `<div><button class="btn sm primary" id="lReveal">Ci ho pensato: mostrami il passo</button></div>`}</div>` : "").join("")}
       ${les.ex >= E.passi.length ? `<div class="why md"><b>Risultato.</b> ${md(E.risultato_md)}</div><div><button class="btn primary" id="lNext">Avanti →</button></div>` : ""}
@@ -879,6 +1090,7 @@ function renderLesson() {
   });
   $("lBack")?.addEventListener("click", async () => { await postJ(`/api/study/topics/${t.id}/lesson/done`).catch(() => {}); les = null; loadStudyCourse(t.course_id); });
   bindSources(body);
+  bindLessonMedia(body, t);
   if ($("rStop")) $("rStop").onclick = () => { if (confirm("Terminare la sessione? Quello che hai risposto resta salvato.")) { les = null; finishRun(); } };
 }
 async function askTutor_(context, mode, q) {
@@ -936,12 +1148,13 @@ function renderRun() {
     const conf = done ? "" : `<div class="muted small">Quanto sei sicuro? (invia la risposta)</div><div class="conf">
       <button class="btn" data-conf="3">Sicuro</button><button class="btn" data-conf="2">Credo di sì</button><button class="btn" data-conf="1">Tiro a indovinare</button></div>`;
     body.innerHTML = runHead() + `<div class="card qcard"><div class="tags"><span class="pill">${KIND[q.kind]}</span><span class="pill">${DIFF[q.difficulty]}</span>${tag}<span class="muted small">${esc(t.name || "")}</span></div>
-      <div class="md prompt">${md(q.prompt_md)}</div>${answerUi}${conf}<div id="rOut">${done ? resultHtml() : ""}</div></div>`;
+      <div class="md prompt">${md(q.prompt_md)}</div>${qMediaBoxHtml(q)}${answerUi}${conf}<div id="rOut">${done ? resultHtml() : ""}</div></div>`;
     body.querySelectorAll("[data-o]").forEach((b) => (b.onclick = () => { run.sel = +b.dataset.o; renderRun(); }));
     body.querySelectorAll("[data-conf]").forEach((b) => (b.onclick = () => submitRun(+b.dataset.conf)));
     $("rText")?.addEventListener("input", (ev) => (run.text = ev.target.value));
     $("rPaper")?.addEventListener("click", () => { run.paper = true; renderRun(); });
     bindResult();
+    bindQMedia(body);
   }
   $("rStop").onclick = () => { if (confirm("Terminare la sessione? Quello che hai risposto resta salvato.")) finishRun(); };
 }
@@ -1484,6 +1697,199 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if (!$("viewer").hidden) $("viewer").hidden = true; else if (!$("drawer").hidden) closeDrawer(); }
   if (!$("viewer").hidden && (e.key === "PageDown" || e.key === "ArrowRight")) showPage(vPage + 1);
   if (!$("viewer").hidden && (e.key === "PageUp" || e.key === "ArrowLeft")) showPage(vPage - 1);
+});
+
+// ============================================================== TOAST NOTIFICATIONS
+function toast(msg, type = 'info') {
+  const c = $("toasts"); if (!c) return;
+  const t = document.createElement("div"); t.className = `toast ${type}`; t.textContent = msg; c.append(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateY(20px)'; t.style.transition = 'all 0.3s'; setTimeout(() => t.remove(), 300); }, 4500);
+}
+
+// ============================================================== POMODORO TIMER
+const POMO_CIRC = 2 * Math.PI * 120;
+let pomoState = {
+  running: false, phase: 'study', timeLeft: 25 * 60, totalTime: 25 * 60, interval: null,
+  completed: store.get('pomoToday', { count: 0, date: '', minutes: 0 }),
+  studyMin: store.get('pomoStudy', 25), breakMin: store.get('pomoBreak', 5), longBreakMin: store.get('pomoLong', 15),
+};
+if (pomoState.completed.date !== new Date().toISOString().slice(0, 10))
+  pomoState.completed = { count: 0, date: new Date().toISOString().slice(0, 10), minutes: 0 };
+pomoState.timeLeft = pomoState.studyMin * 60; pomoState.totalTime = pomoState.studyMin * 60;
+
+function pomoBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.3, 0.6].forEach((delay) => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = pomoState.phase === 'study' ? [523, 659, 784][Math.round(delay / 0.3)] : [784, 659, 523][Math.round(delay / 0.3)];
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.8);
+      osc.start(ctx.currentTime + delay); osc.stop(ctx.currentTime + delay + 0.8);
+    });
+  } catch {}
+  // Browser notification if tab hidden
+  if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+    const msg = pomoState.phase === 'study' ? '🍅 Pomodoro completato! Pausa.' : '⏰ Pausa finita! Studia.';
+    new Notification('StudyHub', { body: msg, icon: '/favicon.png' });
+  }
+}
+
+function pomoTick() {
+  const p = pomoState;
+  p.timeLeft--;
+  // Update document title with timer
+  const m = Math.floor(p.timeLeft / 60), s = p.timeLeft % 60;
+  document.title = `${m}:${String(s).padStart(2, '0')} ${p.phase === 'study' ? '📚' : '☕'} StudyHub`;
+  // Update nav indicator
+  const navT = $("pomoNavTime");
+  if (navT) navT.textContent = `${m}:${String(s).padStart(2, '0')}`;
+  if (p.timeLeft <= 0) {
+    clearInterval(p.interval); p.running = false;
+    pomoBeep();
+    if (p.phase === 'study') {
+      p.completed.count++; p.completed.minutes += p.studyMin;
+      p.completed.date = new Date().toISOString().slice(0, 10);
+      store.set('pomoToday', p.completed);
+      toast(`🍅 Pomodoro #${p.completed.count} completato! Tempo di pausa.`, 'ok');
+      if (p.completed.count % 4 === 0) {
+        p.phase = 'long_break'; p.timeLeft = p.longBreakMin * 60; p.totalTime = p.longBreakMin * 60;
+      } else {
+        p.phase = 'break'; p.timeLeft = p.breakMin * 60; p.totalTime = p.breakMin * 60;
+      }
+    } else {
+      toast('⏰ Pausa finita! Torna a studiare.', 'info');
+      p.phase = 'study'; p.timeLeft = p.studyMin * 60; p.totalTime = p.studyMin * 60;
+    }
+    document.title = 'StudyHub';
+    const navT = $("pomoNavTime"); if (navT) navT.textContent = '';
+  }
+  if (view === 'pomodoro') renderPomo();
+}
+
+function pomoToggle() {
+  const p = pomoState;
+  if (p.running) {
+    clearInterval(p.interval); p.running = false; document.title = 'StudyHub';
+    const navT = $("pomoNavTime"); if (navT) navT.textContent = '';
+  } else {
+    // Ask notification permission on first start
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    p.running = true;
+    p.interval = setInterval(pomoTick, 1000);
+  }
+  renderPomo();
+}
+
+function pomoReset() {
+  const p = pomoState;
+  clearInterval(p.interval); p.running = false; p.phase = 'study';
+  p.timeLeft = p.studyMin * 60; p.totalTime = p.studyMin * 60;
+  document.title = 'StudyHub';
+  const navT = $("pomoNavTime"); if (navT) navT.textContent = '';
+  renderPomo();
+}
+
+function pomoSkip() {
+  const p = pomoState;
+  clearInterval(p.interval); p.running = false;
+  if (p.phase === 'study') {
+    const isLong = p.completed.count > 0 && p.completed.count % 4 === 3;
+    p.phase = isLong ? 'long_break' : 'break';
+    p.timeLeft = (isLong ? p.longBreakMin : p.breakMin) * 60;
+    p.totalTime = p.timeLeft;
+  } else {
+    p.phase = 'study'; p.timeLeft = p.studyMin * 60; p.totalTime = p.studyMin * 60;
+  }
+  document.title = 'StudyHub';
+  const navT = $("pomoNavTime"); if (navT) navT.textContent = '';
+  renderPomo();
+}
+
+const POMO_TIPS = [
+  'Chiudi le notifiche del telefono durante lo studio.',
+  'Bevi un bicchiere d\'acqua ad ogni pausa.',
+  'Dopo 4 pomodori, fai una pausa lunga di 15 minuti.',
+  'Scrivi cosa vuoi fare PRIMA di avviare il timer.',
+  'Se ti viene un\'idea, annotala e torna a studiare.',
+  'Alzati e stretcha durante le pause!',
+  'Se 25 minuti sono troppi, inizia con 15.',
+  'L\'obiettivo non è la perfezione, è la costanza.',
+];
+
+function renderPomo() {
+  const body = $("pomoBody"); if (!body) return;
+  const p = pomoState, m = Math.floor(p.timeLeft / 60), s = p.timeLeft % 60;
+  const timeStr = `${m}:${String(s).padStart(2, '0')}`;
+  const progress = 1 - (p.timeLeft / p.totalTime);
+  const offset = POMO_CIRC * (1 - progress);
+  const phCls = p.phase === 'study' ? 'study' : 'brk';
+  const phLabel = p.phase === 'study' ? '📚 Studio' : p.phase === 'long_break' ? '🏖️ Pausa lunga' : '☕ Pausa';
+  const phMsg = p.phase === 'study'
+    ? (p.running ? 'Concentrati! Niente distrazioni.' : 'Pronto per studiare?')
+    : (p.running ? 'Rilassati, te lo meriti!' : p.phase === 'long_break' ? 'Hai fatto 4 pomodori! Riposati bene.' : 'Pronto per la pausa?');
+  const cyclePos = p.completed.count % 4;
+  const dots = Array.from({length: 4}, (_, i) => {
+    if (i < cyclePos) return '<i class="done"></i>';
+    if (i === cyclePos && p.phase === 'study') return `<i class="${p.running ? 'active' : ''}"></i>`;
+    return '<i></i>';
+  }).join('');
+  const tip = POMO_TIPS[p.completed.count % POMO_TIPS.length];
+  const goalPct = Math.min(100, Math.round(p.completed.count / 8 * 100));
+
+  body.innerHTML = `
+    <div class="pomo-timer">
+      <svg class="pomo-svg" viewBox="0 0 260 260">
+        <circle class="track" cx="130" cy="130" r="120"/>
+        <circle class="progress ${phCls}" cx="130" cy="130" r="120"
+          stroke-dasharray="${POMO_CIRC}" stroke-dashoffset="${offset}"/>
+      </svg>
+      <div class="pomo-center">
+        <div>
+          <div class="pomo-time">${timeStr}</div>
+          <div class="pomo-phase ${phCls}">${phLabel}</div>
+        </div>
+      </div>
+    </div>
+    <div class="pomo-dots">${dots}</div>
+    <div class="pomo-msg">${esc(phMsg)}</div>
+    <div class="pomo-controls">
+      <button class="pomo-btn" id="pomoSkip" title="Salta alla fase successiva">⏭</button>
+      <button class="pomo-btn main ${p.running ? 'running' : ''}" id="pomoToggle" title="${p.running ? 'Pausa' : 'Avvia'}">${p.running ? '❚❚' : '▶'}</button>
+      <button class="pomo-btn" id="pomoReset" title="Ricomincia da capo">↺</button>
+    </div>
+    <div class="pomo-stats">
+      <div class="card pomo-stat"><div class="k">Pomodori oggi</div><div class="v">🍅 ${p.completed.count}</div></div>
+      <div class="card pomo-stat"><div class="k">Minuti studio</div><div class="v">${p.completed.minutes}</div></div>
+      <div class="card pomo-stat"><div class="k">Obiettivo giornaliero</div><div class="v">${p.completed.count >= 8 ? '✅' : goalPct + '%'}</div>
+        <div class="meter" style="margin-top:6px"><i style="width:${goalPct}%"></i></div></div>
+    </div>
+    <div class="pomo-config">
+      <label>Studio <input type="number" id="cfgStudy" value="${p.studyMin}" min="1" max="90"> min</label>
+      <label>Pausa <input type="number" id="cfgBreak" value="${p.breakMin}" min="1" max="30"> min</label>
+      <label>Pausa lunga <input type="number" id="cfgLong" value="${p.longBreakMin}" min="1" max="60"> min</label>
+    </div>
+    <div class="pomo-tip"><b>💡 Consiglio:</b> ${esc(tip)}</div>`;
+  $("pomoToggle").onclick = pomoToggle;
+  $("pomoReset").onclick = () => { if (p.running && !confirm('Vuoi resettare il timer?')) return; pomoReset(); };
+  $("pomoSkip").onclick = pomoSkip;
+  const cfgHandler = (id, key, phase, min, max) => {
+    $(id).onchange = (e) => { const v = Math.max(min, Math.min(max, +e.target.value || pomoState[key]));
+      pomoState[key] = v; store.set({studyMin:'pomoStudy',breakMin:'pomoBreak',longBreakMin:'pomoLong'}[key], v);
+      if (!p.running && ((key === 'studyMin' && p.phase === 'study') || (key === 'breakMin' && p.phase === 'break') || (key === 'longBreakMin' && p.phase === 'long_break')))
+        { p.timeLeft = v * 60; p.totalTime = v * 60; renderPomo(); } };
+  };
+  cfgHandler('cfgStudy', 'studyMin', 'study', 1, 90);
+  cfgHandler('cfgBreak', 'breakMin', 'break', 1, 30);
+  cfgHandler('cfgLong', 'longBreakMin', 'long_break', 1, 60);
+}
+// Keyboard: Space to start/pause Pomodoro
+document.addEventListener("keydown", (e) => {
+  if (view !== "pomodoro" || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+  if (e.code === "Space") { e.preventDefault(); pomoToggle(); }
+  else if (e.key === "r" || e.key === "R") { if (!pomoState.running) pomoReset(); }
+  else if (e.key === "s" || e.key === "S") pomoSkip();
 });
 
 // ============================================================== avvio

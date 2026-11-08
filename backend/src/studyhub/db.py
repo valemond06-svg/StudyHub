@@ -360,6 +360,17 @@ MIGRATIONS = [
     ALTER TABLE study_topics ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;  -- es. "struttura del corso", "regole d'esame"
     ALTER TABLE courses ADD COLUMN topics_order_key TEXT;                    -- argomenti già ordinati (hash dei nomi)
     """,
+    # Stato reale del corso e natura di ogni documento (calendario, appello, soluzione...).
+    """
+    ALTER TABLE courses ADD COLUMN stage TEXT NOT NULL DEFAULT 'archivio';   -- corrente | arretrato | futuro | archivio
+    CREATE TABLE IF NOT EXISTS doc_tags (
+        doc_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+        category TEXT NOT NULL,
+        exam_date TEXT,
+        updated_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_doc_tags_category ON doc_tags(category);
+    """,
 ]
 
 

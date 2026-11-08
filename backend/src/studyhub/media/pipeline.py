@@ -129,7 +129,10 @@ def discover(sess: MoodleSession, course: dict) -> list[dict]:
         for s in found:
             num, date = _parse_title(s.title)
             prefix = f"L{num:02d}_" if num else ""
-            folder = Path(course["folder"]) / "lezioni" / safe_name(f"{prefix}{date or ''}_{s.title}".replace("__", "_"), 70)
+            # Senza numero né data nel titolo molte registrazioni si chiamano uguali (es. «2025/2026 - ALG - GRIGIO»):
+            # l'id Panopto le tiene in cartelle diverse, altrimenti si sovrascrivono e se ne scarica una sola.
+            suffix = "" if (num or date) else f"_{s.id[:8]}"
+            folder = Path(course["folder"]) / "lezioni" / (safe_name(f"{prefix}{date or ''}_{s.title}".replace("__", "_"), 60) + suffix)
             db.execute(
                 """INSERT INTO lectures (course_id, panopto_id, title, date, number, folder, viewer_url, updated_at)
                    VALUES (?,?,?,?,?,?,?,?)
@@ -263,9 +266,13 @@ def process_lecture(lec: dict, course: dict, panopto: Panopto, whisper: bool = T
         _update(lec["id"], has_audio=1, duration=ff.probe(audio)["duration"])
 
         if not (ldir / "slides.json").exists():
-            src, is_tmp = source("screen")
+            if "screen" not in local:
+                ensure_info()
+            # Registrazioni Zoom: un solo flusso con la condivisione dello schermo dentro, le slide si leggono da lì.
+            kind = "screen" if "screen" in local or "screen" in streams else "camera"
+            src, is_tmp = source(kind)
             slides = extract_slides(src, ldir / "slides")
-            _dispose_video(src, ldir, "screen", is_tmp)
+            _dispose_video(src, ldir, kind, is_tmp)
             _update(lec["id"], n_slides=len(slides))
             console.print(f"    slide estratte: {len(slides)}")
         shutil.rmtree(tmp, ignore_errors=True)

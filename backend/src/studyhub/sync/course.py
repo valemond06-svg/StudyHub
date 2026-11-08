@@ -226,6 +226,42 @@ class CourseSync:
         if desc_md:
             lines.append("  " + desc_md.replace("\n", "\n  "))
 
+    # --- allegati fuori dalle sezioni ---------------------------------------------
+
+    def _attachments(self, item: dict, folder: Path) -> list[Path]:
+        """Allegati e immagini di un post o di un compito: core_course_get_contents non li elenca."""
+        saved = []
+        for c in [*(item.get("attachments") or []), *(item.get("messageinlinefiles") or []),
+                  *(item.get("introattachments") or []), *(item.get("introfiles") or [])]:
+            if c.get("fileurl") and c.get("filename"):
+                saved.append(self._fetch_file(c, folder / safe_name(unquote(c["filename"])), None))
+        return saved
+
+    def _replies(self, discussion: dict, folder: Path, saved: list[Path]) -> str:
+        try:
+            posts = self.m.ws("mod_forum_get_discussion_posts", discussionid=discussion["discussion"])["posts"]
+        except MoodleError as e:
+            self.report.errors.append(f"risposte forum: {e}")
+            return ""
+        out = []
+        for p in sorted(posts, key=lambda p: p.get("timecreated", 0)):
+            if not p.get("hasparent"):
+                continue
+            saved += self._attachments(p, folder)
+            author = (p.get("author") or {}).get("fullname", "")
+            out.append(f"\n\n**Risposta di {author}:** {html_to_md(p.get('message'))}")
+        return "".join(out)
+
+    def _assignments(self) -> None:
+        try:
+            data = self.m.ws("mod_assign_get_assignments", courseids=[self.course["id"]])
+        except MoodleError as e:
+            self.report.errors.append(f"compiti: {e}")
+            return
+        for course in data.get("courses", []):
+            for a in course.get("assignments", []):
+                self._attachments(a, self.mdir / "_compiti" / safe_name(a.get("name") or str(a["id"]), 50))
+
     # --- avvisi ----------------------------------------------------------------
 
     def _announcements(self) -> None:
@@ -236,12 +272,24 @@ class CourseSync:
             return
         parts = []
         for forum in forums:
-            if forum.get("type") != "news":
-                continue
+            # Non solo gli annunci: «Argomenti trattati a lezione», «Dove siamo arrivati», esercizi per argomento...
+            lines = []
+            folder = self.mdir / "_forum_allegati" / safe_name(forum.get("name") or str(forum["id"]), 50)
             for d in self.m.news_discussions(forum["id"]):
                 when = datetime.fromtimestamp(d.get("created") or d.get("timemodified", 0)).strftime("%d/%m/%Y")
-                parts.append(f"## {d.get('name') or d.get('subject')} — {when}\n\n{html_to_md(d.get('message'))}")
+                entry = f"## {d.get('name') or d.get('subject')} — {when}\n\n{html_to_md(d.get('message'))}"
                 self._scan_panopto(d.get("message"), d.get("name", ""), None)
+                saved = self._attachments(d, folder)
+                if d.get("numreplies"):
+                    entry += self._replies(d, folder, saved)
+                if saved:
+                    entry += "\n\nAllegati: " + ", ".join(p.name for p in saved)
+                lines.append(entry)
+            if forum.get("type") == "news":
+                parts += lines
+            elif lines:
+                out = self.mdir / f"_forum_{safe_name(forum.get('name') or str(forum['id']), 50)}.md"
+                out.write_text(f"# {forum.get('name')}\n\n" + "\n\n---\n\n".join(lines) + "\n", encoding="utf-8")
         if parts:
             (self.mdir / "_avvisi.md").write_text("# Avvisi\n\n" + "\n\n---\n\n".join(parts) + "\n", encoding="utf-8")
 
@@ -282,6 +330,7 @@ class CourseSync:
                 (sdir / "_sezione.md").write_text("\n\n".join(lines) + "\n", encoding="utf-8")
                 index.append(f"- [{title}]({sdir.name.replace(' ', '%20')}/_sezione.md) — {len(sec.get('modules', []))} elementi")
             self._announcements()
+            self._assignments()
             (self.mdir / "INDICE.md").write_text("\n".join(index) + "\n", encoding="utf-8")
             r = self.report
             self.db.execute("UPDATE courses SET last_sync=? WHERE id=?", (started, self.course["id"]))

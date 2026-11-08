@@ -38,7 +38,8 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
     apply_catalog()
     with session() as db:
         courses = [dict(r) for r in db.execute(
-            "SELECT * FROM courses WHERE active=1 AND id>0 AND folder IS NOT NULL ORDER BY priority DESC, fullname")]
+            "SELECT * FROM courses WHERE (active=1 OR stage='futuro') AND id>0 AND folder IS NOT NULL "
+            "ORDER BY priority DESC, fullname")]
     summary = {"file": 0, "lezioni": 0, "avvisi": 0, "errori": []}
     touched: list[dict] = []
 
@@ -127,6 +128,8 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
     # 3. Indice di ricerca.
     for c in touched:
         index_course(c)
+    from .study.docclass import tag_all
+    tag_all()  # calendari, appelli, soluzioni: anche i file nuovi hanno subito la loro etichetta
     try:
         embed_pending()
     except EmbeddingError:

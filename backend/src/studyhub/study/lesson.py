@@ -37,6 +37,7 @@ Come insegnare:
 - L'esempio svolto deve essere nello stile dell'esame: dividi la soluzione in passi; per ogni passo scrivi la
   domanda che lo studente dovrebbe farsi ("cosa faresti ora?") e la risposta.
 - Formule in LaTeX con $...$ e $$...$$. In italiano.
+- Circuiti e schemi visivi (FONDAMENTALE): se l'argomento riguarda circuiti elettrici (es. nodi, maglie, partitori, transitori, MOS) o concetti visivi, includi SEMPRE schemi grafici chiari! Usa diagrammi circuitali ASCII/Unicode (es. nodi contrassegnati [A], [B], versi maglie ↻, rami con resistori e generatori) oppure frammenti SVG inline. Non spiegare mai un circuito solo a parole!
 - Basati sul materiale fornito; se aggiungi un chiarimento che non c'è, scrivi "(integrazione)".
 - Se nel materiale c'è il minuto della lezione (▶ mm:ss) indica nei passi "inizio_s" in secondi."""
 
@@ -77,8 +78,9 @@ SCHEMA = {
 }
 
 ASK_SYSTEM = """Sei un tutor universitario paziente. Lo studente sta studiando un argomento e ti chiede qualcosa.
-Rispondi in italiano, con il tu, in modo semplice e concreto (max 200 parole), con un esempio se aiuta.
-Formule in LaTeX ($...$). Basati sul contesto fornito; se serve aggiungere qualcosa che non c'è, dillo."""
+Rispondi in italiano, con il tu, in modo semplice e concreto (max 250 parole), con un esempio e schema visivo se aiuta.
+Se la domanda riguarda circuiti (nodi, maglie, correnti, componenti), disegna sempre lo schema in ASCII o SVG.
+Formule in LaTeX ($...). Basati sul contesto fornito; se serve aggiungere qualcosa che non c'è, dillo."""
 ASK_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["risposta_md"],
               "properties": {"risposta_md": {"type": "string"}}}
 
@@ -118,6 +120,18 @@ def generate(topic_id: int) -> dict:
               + "\n".join(f"- {s}" for s in siblings[:80])
               + f"\n\n=== Materiale del corso ===\n{material}\n\nScrivi la lezione interattiva su «{t['name']}».")
     res = run_json(SYSTEM, prompt, SCHEMA, quality="accurato")
+    data = res.data
+    import random
+    for p in data.get("passi", []):
+        v = p.get("verifica")
+        if v and "opzioni" in v and "corretta" in v and isinstance(v["opzioni"], list):
+            _opts = list(v["opzioni"])
+            _c = v["corretta"]
+            if len(_opts) >= 2 and 0 <= _c < len(_opts):
+                _val = _opts[_c]
+                random.shuffle(_opts)
+                v["opzioni"] = _opts
+                v["corretta"] = _opts.index(_val)
     data = res.data
     for p in data.get("passi", []):  # verifiche malformate: meglio un passo senza verifica che una sbagliata
         v = p.get("verifica") or {}

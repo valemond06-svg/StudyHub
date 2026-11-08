@@ -27,7 +27,7 @@ console = Console()
 SOURCE_DIRS = ("moodle", "appelli", "libri_e_appunti", "studio_ai")
 SKIP_DIRS = {".git", "build", "dist", "obj", "bin", "__pycache__", "hci_data", "analysis_output", "node_modules", "_tmp"}
 SKIP_FILES = {"_corso.json", "INDICE.md"}
-MAX_BYTES = 80 * 1024 * 1024
+MAX_BYTES = 300 * 1024 * 1024  # i libri interi scansionati superano i 200 MB
 
 
 def _sha256(path: Path) -> str:

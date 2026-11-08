@@ -63,11 +63,21 @@ def _worker(audio: str, out: str, prompt: str | None) -> None:
             raise
         dev = "cpu"  # GPU senza CUDA utilizzabile (driver vecchio, VRAM piena): meglio lenta che ferma
         model = WhisperModel(MODEL, device=dev, compute_type=COMPUTE_TYPE[dev])
-    segments, info = model.transcribe(
-        samples, language="it", beam_size=5, vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 700},
-        initial_prompt=prompt, condition_on_previous_text=False,
-    )
+    # A lotti: la GPU elabora più pezzi di audio insieme invece di uno alla volta (2-4 volte più veloce su 4 GB).
+    # STUDYHUB_WHISPER_BATCH=0 torna al modo sequenziale.
+    batch = int(os.environ.get("STUDYHUB_WHISPER_BATCH", "8")) if dev == "cuda" else 0
+    if batch:
+        from faster_whisper import BatchedInferencePipeline
+        segments, info = BatchedInferencePipeline(model=model).transcribe(
+            samples, language="it", beam_size=5, batch_size=batch, vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 700}, initial_prompt=prompt,
+        )
+    else:
+        segments, info = model.transcribe(
+            samples, language="it", beam_size=5, vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 700},
+            initial_prompt=prompt, condition_on_previous_text=False,
+        )
     result = []
     for seg in segments:
         result.append({"start": round(seg.start, 2), "end": round(seg.end, 2), "text": seg.text.strip()})
