@@ -61,7 +61,8 @@ def lecture(lecture_id: int):
     lec = _lecture(lecture_id)
     d = uni_path(lec["folder"])
     meta = _json(d / "lezione.json", {})
-    videos = [k for k, p in (meta.get("video") or {}).items() if Path(p).exists()]
+    from ..media import storage
+    videos = [k for k, p in (meta.get("video") or {}).items() if (q := storage.resolve_media(p)) and q.exists()]
     return {
         **lec,
         "videos": videos,  # video archiviati su Google Drive, guardabili in streaming
@@ -76,9 +77,9 @@ def lecture_video(lecture_id: int, kind: str):
     """Video archiviato su Drive: solo percorsi registrati in lezione.json e dentro media_root."""
     from ..media import storage
     meta = _json(uni_path(_lecture(lecture_id)["folder"]) / "lezione.json", {})
-    path = (meta.get("video") or {}).get(kind)
+    path = storage.resolve_media((meta.get("video") or {}).get(kind))
     root = storage.media_root()
-    if not path or root is None or not Path(path).resolve().is_relative_to(root.resolve()) or not Path(path).exists():
+    if not path or root is None or not path.resolve().is_relative_to(root.resolve()) or not path.exists():
         raise HTTPException(404, "Video non disponibile (Google Drive avviato?)")
     return FileResponse(path, media_type="video/mp4")
 

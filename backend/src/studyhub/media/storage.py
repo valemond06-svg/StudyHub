@@ -10,6 +10,8 @@ Mai sovrascrivere: se la destinazione esiste già con un'altra dimensione, il fi
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import time
 from datetime import datetime
@@ -23,16 +25,46 @@ LOG_FILE = settings.app_dir / "media_migration_log.json"
 
 
 def media_root() -> Path | None:
-    """La cartella su Drive, se configurata e raggiungibile (Drive avviato, unità montata)."""
-    root = settings.extra.get("media_root")
+    """La cartella su Drive, se configurata e raggiungibile (Drive avviato, unità montata).
+
+    Su Linux un percorso Windows ("G:/…") non vale: sarebbe relativo e i video finirebbero in una cartella `G:`
+    locale. Lì si usa `STUDYHUB_MEDIA_ROOT`, poi `media_root_linux`, poi ~/GoogleDrive/StudyHub, solo se il mount
+    rclone è attivo (altrimenti si scriverebbe nella cartella vuota sotto il punto di mount)."""
+    if os.name == "nt":
+        root = settings.extra.get("media_root")
+    else:
+        root = (os.environ.get("STUDYHUB_MEDIA_ROOT") or settings.extra.get("media_root_linux")
+                or str(Path.home() / "GoogleDrive" / "StudyHub"))
+        mount = Path(root).expanduser()
+        while not mount.exists() and mount != mount.parent:
+            mount = mount.parent
+        while not os.path.ismount(mount) and mount != mount.parent:
+            mount = mount.parent
+        if not Path(root).is_absolute() or mount == Path.home() or mount in Path.home().parents:
+            return None  # Drive non montato: i video restano dove sono
     if not root:
         return None
-    p = Path(root)
+    p = Path(root).expanduser()
     try:
         p.mkdir(parents=True, exist_ok=True)
         return p if p.is_dir() else None
     except OSError:
         return None
+
+
+def resolve_media(path: str | None) -> Path | None:
+    """Percorso di un video registrato in lezione.json, adattato a questo sistema.
+
+    I percorsi scritti su Windows ("G:\\Il mio Drive\\StudyHub\\2_Anno\\…") su Linux puntano al mount di Drive."""
+    if not path:
+        return None
+    if os.name != "nt" and re.match(r"^[A-Za-z]:[\\/]", path):
+        parts = re.split(r"[\\/]+", path)
+        root = media_root()
+        if root is None or "StudyHub" not in parts:
+            return None
+        return root.joinpath(*parts[parts.index("StudyHub") + 1:])
+    return Path(path)
 
 
 def cloud_path(local: Path) -> Path | None:
