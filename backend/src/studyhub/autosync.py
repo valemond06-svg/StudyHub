@@ -135,6 +135,13 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
     except EmbeddingError:
         pass  # Ollama spento: si recupera al prossimo giro, la ricerca per parole funziona comunque
 
+    # 4. Copia per il Second Brain (su Drive): un errore qui non deve fermare il sync.
+    try:
+        from .brain_export import export
+        summary["brain"] = export()
+    except Exception as e:
+        summary["errori"].append(f"copia per il Brain: {e}")
+
     for e in summary["errori"]:
         console.print(f"[red]✗[/] {e}")
     if toast and (summary["file"] or summary["lezioni"] or summary["avvisi"]):
