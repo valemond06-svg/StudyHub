@@ -15,7 +15,12 @@ import sys
 import time
 from pathlib import Path
 
+import logging
+
+from .. import logger
 from .gpu import gpu_lock
+
+log = logging.getLogger("studyhub.media.transcribe")
 
 MODEL = "large-v3-turbo"
 COMPUTE_TYPE = {"cuda": "int8_float16", "cpu": "int8"}  # su GPU entra in 4 GB di VRAM
@@ -61,6 +66,7 @@ def _worker(audio: str, out: str, prompt: str | None) -> None:
     except Exception:
         if dev == "cpu":
             raise
+        log.warning("Fallback GPU→CPU: CUDA non disponibile, uso CPU (più lento)")
         dev = "cpu"  # GPU senza CUDA utilizzabile (driver vecchio, VRAM piena): meglio lenta che ferma
         model = WhisperModel(MODEL, device=dev, compute_type=COMPUTE_TYPE[dev])
     # A lotti: la GPU elabora più pezzi di audio insieme invece di uno alla volta (2-4 volte più veloce su 4 GB).
@@ -105,10 +111,11 @@ def transcribe(audio: Path, out: Path, prompt: str | None = None, on_progress=No
 
     with gpu_lock(f"whisper {audio.name}"):
         dev = device()
+        log.info("Whisper: dispositivo=%s modello=%s", dev, MODEL)
         code, err = attempt(dev)
         if code != 0 and dev == "cuda":
             # Crash nativo di CUDA (es. 0xC0000409 con la VRAM contesa): la lezione si trascrive lo stesso, su CPU.
-            print(f"    Whisper su GPU terminato con codice {code & 0xFFFFFFFF:#x}: riprovo su CPU…", flush=True)
+            log.warning("Whisper GPU crashato (codice 0x%x): fallback su CPU", code & 0xFFFFFFFF)
             code, err = attempt("cpu")
         if code != 0:
             raise RuntimeError(f"Whisper fallito (codice {code & 0xFFFFFFFF:#x}): {err[-1500:].strip() or 'nessun messaggio'}")

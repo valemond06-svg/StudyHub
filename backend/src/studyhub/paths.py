@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .config import settings
 
-COURSE_SUBDIRS = ("moodle", "lezioni", "appelli", "libri_e_appunti", "studio_ai")
+COURSE_SUBDIRS = settings.course_subdirs
 _INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 

@@ -37,6 +37,12 @@ class Moodle:
     def close(self) -> None:
         self.http.close()
 
+    def __enter__(self) -> Moodle:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
     def _throttle(self) -> None:
         wait = settings.request_delay_s - (time.time() - self._last)
         if wait > 0:
@@ -95,9 +101,17 @@ class Moodle:
     def course_contents(self, course_id: int) -> list[dict]:
         return self.ws("core_course_get_contents", courseid=course_id)
 
-    def news_discussions(self, forum_id: int) -> list[dict]:
+    def news_discussions(self, forum_id: int, max_pages: int | None = None) -> list[dict]:
+        """Discussioni di un forum Moodle con paginazione controllata.
+
+        max_pages limita il numero di chiamate API per prevenire loop infiniti
+        su forum «Argomenti trattati» con migliaia di discussioni.
+        """
+        if max_pages is None:
+            from ..config import settings
+            max_pages = settings.max_forum_pages
         out: list[dict] = []
-        for page in range(50):  # i forum «Argomenti trattati» superano le 100 discussioni
+        for page in range(max_pages):
             got = self.ws("mod_forum_get_forum_discussions", forumid=forum_id, perpage=100, page=page)["discussions"]
             out += got
             if len(got) < 100:

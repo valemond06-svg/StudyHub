@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 from markdownify import markdownify
 from rich.console import Console
 
+from ..config import settings
 from ..db import session
 from ..paths import ensure_course_dirs, rel_to_uni, safe_name, uni_path
 from .moodle import Moodle, MoodleError
@@ -275,7 +276,7 @@ class CourseSync:
             # Non solo gli annunci: «Argomenti trattati a lezione», «Dove siamo arrivati», esercizi per argomento...
             lines = []
             folder = self.mdir / "_forum_allegati" / safe_name(forum.get("name") or str(forum["id"]), 50)
-            for d in self.m.news_discussions(forum["id"]):
+            for d in self.m.news_discussions(forum["id"], max_pages=settings.max_forum_pages):
                 when = datetime.fromtimestamp(d.get("created") or d.get("timemodified", 0)).strftime("%d/%m/%Y")
                 entry = f"## {d.get('name') or d.get('subject')} — {when}\n\n{html_to_md(d.get('message'))}"
                 self._scan_panopto(d.get("message"), d.get("name", ""), None)

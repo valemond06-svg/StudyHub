@@ -33,9 +33,12 @@ class Settings:
     # Corsi di anni precedenti non ancora superati (regex sul nome): restano attivi e prioritari.
     extra_active_courses: list = field(default_factory=list)
     whisper_device: str = "auto"  # auto | cuda | cpu
+    course_subdirs: tuple[str, ...] = ("moodle", "lezioni", "appelli", "libri_e_appunti", "studio_ai")
     # Moodle è un servizio d'ateneo: poche richieste e piccole pause.
     request_delay_s: float = 0.4
     video_policy: str = "leggera"
+    # Massimo forum consultati per sync automatico (per prevenire loop su forum enormi).
+    max_forum_pages: int = 10
     extra: dict = field(default_factory=dict)
 
     @property

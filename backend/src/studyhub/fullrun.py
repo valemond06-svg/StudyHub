@@ -13,6 +13,7 @@ Si può interrompere e rilanciare: riprende da dove era. Stato in ~/.studyhub/fu
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -27,6 +28,8 @@ from .ai.lecture_notes import existing
 from .config import LOCAL_DIR
 from .db import session
 from .sync.auth import LoginRequired, get_session
+
+log = logging.getLogger("studyhub.fullrun")
 
 console = Console()
 STATUS_FILE = LOCAL_DIR / "full_run.json"
@@ -134,8 +137,12 @@ def media_track() -> None:
     sess0 = wait_login(True, "Video Moodle")
     if not sess0:
         return
-    m = Moodle(sess0)
     try:
+        m = Moodle(sess0)
+    except Exception as e:
+        _log(f"[red]Errore creazione cliente Moodle: {e}[/]")
+        return
+    with m:
         todo = []
         for c in courses:  # un corso irraggiungibile (rete) non ferma gli altri
             try:
@@ -159,8 +166,6 @@ def media_track() -> None:
                     else:
                         time.sleep(60)
             _media_progress(done=done, errors=errors)
-    finally:
-        m.close()
     # Panopto: serve la sessione web (SSO). Se è scaduta aspetto il tuo login.
     sess = wait_login(False, "Registrazioni Panopto")
     if not sess:
@@ -170,8 +175,7 @@ def media_track() -> None:
     from .media.pipeline import discover, process_lecture
     _media_progress(panopto="collegato")
     _save(login=None)
-    p = Panopto(sess)
-    try:
+    with Panopto(sess) as p:
         todo = []
         for c in courses:
             try:
@@ -190,8 +194,6 @@ def media_track() -> None:
                 errors += 1
                 _log(f"[red]✗ {lec['title']}: {e}[/]")
             _media_progress(done=done, errors=errors)
-    finally:
-        p.close()
         _media_progress(current=None)
 
 

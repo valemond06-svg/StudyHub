@@ -10,8 +10,11 @@ import base64
 import json
 import secrets
 import time
+import logging
 from dataclasses import dataclass
 from urllib.parse import unquote
+
+logger = logging.getLogger("studyhub.sync.auth")
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, sync_playwright
@@ -142,10 +145,13 @@ def get_session(interactive: bool = False, token_only_ok: bool = False) -> Moodl
             return sess
     try:
         return browser_login(interactive=False)
-    except Exception:  # SSO scaduto, browser mancante, rete…: per il login silenzioso è uguale
+    except Exception as e:  # SSO scaduto, browser mancante, rete…: per il login silenzioso è uguale
+        if not isinstance(e, LoginRequired):
+            logger = logging.getLogger("studyhub.sync.auth")
+            logger.warning("SSO fallito: %s", e)
         token = _load_token()
         if token_only_ok and _token_valid(token):
             return MoodleSession(data["cookies"] if data else {}, data["sesskey"] if data else "", token)
         if not interactive:
-            raise LoginRequired("Sessione scaduta: esegui `studyhub login`.")
+            raise LoginRequired("Sessione scaduta: esegui `studyhub login`.") from e
         return browser_login(interactive=True)

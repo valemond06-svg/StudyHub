@@ -28,7 +28,7 @@ def _moodle(interactive: bool = False, token_only_ok: bool = False) -> Moodle:
         return Moodle(get_session(interactive=interactive, token_only_ok=token_only_ok))
     except LoginRequired as e:
         console.print(f"[red]{e}[/]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -102,7 +102,11 @@ def lessons(course: str = typer.Argument(..., help="id o parte del nome del cors
     """Elenca le registrazioni Panopto del corso e il loro stato di elaborazione."""
     from .media.pipeline import discover
     c = _find_course(course)
-    rows = discover(get_session(), c)
+    try:
+        rows = list(discover(get_session(), c))
+    except LoginRequired as e:
+        console.print(f"[yellow]Sessione Panopto scaduta: {e}[/]")
+        rows = []
     t = Table("#", "data", "titolo", "stato", "slide", "trascrizione")
     for r in rows:
         t.add_row(str(r["number"] or ""), r["date"] or "", r["title"], r["status"], str(r["n_slides"] or ""),
@@ -116,6 +120,7 @@ def process(
     limit: int = typer.Option(1, help="Quante lezioni elaborare (una alla volta)"),
     lesson: int = typer.Option(None, help="Numero di una lezione specifica"),
     whisper: bool = typer.Option(True, help="Trascrizione Whisper su GPU"),
+    no_wait_login: bool = typer.Option(False, "--no-wait-login", help="Non attende il login: se la sessione è scaduta, salta Panopto"),
 ):
     """Pipeline atomica: audio + silenzi + slide (+ Whisper), una lezione alla volta.
     Vale sia per le registrazioni Panopto sia per i video caricati come file su Moodle."""
@@ -124,13 +129,16 @@ def process(
     c = _find_course(course)
     try:
         sess = get_session()
-        rows = discover(sess, c)
+        rows = list(discover(sess, c))
     except LoginRequired:
-        sess = None  # senza sessione web niente Panopto; i video Moodle bastano il token
-        console.print("[yellow]Sessione web scaduta: salto Panopto (esegui `studyhub login`).[/]")
+        if no_wait_login:
+            sess = None
+            console.print("[yellow]Sessione web scaduta: salto Panopto (--no-wait-login).[/]")
+        else:
+            sess = None  # senza sessione web niente Panopto; i video Moodle bastano il token
+            console.print("[yellow]Sessione web scaduta: salto Panopto (esegui `studyhub login`).[/]")
         rows = []
-    known = {r["id"] for r in rows}
-    rows += [r for r in discover_moodle_videos(c) if r["id"] not in known]
+    rows += list(discover_moodle_videos(c))
     target = "trascritta" if whisper else "media_ok"
     if lesson is not None:
         todo = [r for r in rows if r["number"] == lesson]
@@ -139,22 +147,31 @@ def process(
     if sess is None:
         todo = [r for r in todo if r["source"] == "moodle"]
     p = Panopto(sess) if sess else None
-    m = Moodle(get_session(token_only_ok=True)) if any(r["source"] == "moodle" for r in todo) else None
     try:
-        for r in todo:
-            console.rule(r["title"])
-            try:
-                if r["source"] == "moodle":
-                    process_moodle_video(r, c, m, whisper=whisper)
-                else:
+        if any(r["source"] == "moodle" for r in todo):
+            m = Moodle(get_session(token_only_ok=True))
+            for r in todo:
+                console.rule(r["title"])
+                try:
+                    if r["source"] == "moodle":
+                        process_moodle_video(r, c, m, whisper=whisper)
+                    else:
+                        assert p is not None
+                        process_lecture(r, c, p, whisper=whisper)
+                except Exception as e:
+                    console.print(f"[red]✗ {e}[/]")
+            m.close()
+        else:
+            for r in todo:
+                console.rule(r["title"])
+                try:
+                    assert p is not None
                     process_lecture(r, c, p, whisper=whisper)
-            except Exception as e:
-                console.print(f"[red]✗ {e}[/]")
+                except Exception as e:
+                    console.print(f"[red]✗ {e}[/]")
     finally:
         if p:
             p.close()
-        if m:
-            m.close()
 
 
 @app.command()
@@ -213,7 +230,8 @@ def ai_lesson(
 ):
     """Appunti AI della lezione (1 chiamata Sonnet). Si avvia SOLO a mano: niente batch automatici."""
     from .ai.claude_runner import ClaudeError, RateLimited
-    from .ai.lecture_notes import existing, process as ai_process
+    from .ai.lecture_notes import existing
+    from .ai.lecture_notes import process as ai_process
     from .ingest.indexer import embed_pending, index_course
     c = _find_course(course)
     with session() as db:

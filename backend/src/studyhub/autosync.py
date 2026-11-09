@@ -51,23 +51,24 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
         summary["errori"].append(str(e))
         m = None
     if m:
-        for c in courses:
-            avvisi = uni_path(c["folder"]) / "moodle" / "_avvisi.md"
-            before = _hash(avvisi)
-            try:
-                rep = CourseSync(m, c).run()
-            except Exception as e:
-                summary["errori"].append(f"{c['fullname']}: {e}")
-                continue
-            if rep.new_paths:
-                names = ", ".join(Path(p).name for p in rep.new_paths[:4]) + ("…" if len(rep.new_paths) > 4 else "")
-                notify.add("file", f"{len(rep.new_paths)} nuovi file · {c['fullname']}", names, c["id"], rep.new_paths[0])
-                summary["file"] += len(rep.new_paths)
-                touched.append(c)
-            if before and _hash(avvisi) != before:
-                notify.add("avviso", f"Nuovi avvisi · {c['fullname']}", "Apri gli avvisi del corso su StudyHub.", c["id"],
-                           str(avvisi))
-                summary["avvisi"] += 1
+        with m:
+            for c in courses:
+                avvisi = uni_path(c["folder"]) / "moodle" / "_avvisi.md"
+                before = _hash(avvisi)
+                try:
+                    rep = CourseSync(m, c).run()
+                except Exception as e:
+                    summary["errori"].append(f"{c['fullname']}: {e}")
+                    continue
+                if rep.new_paths:
+                    names = ", ".join(Path(p).name for p in rep.new_paths[:4]) + ("…" if len(rep.new_paths) > 4 else "")
+                    notify.add("file", f"{len(rep.new_paths)} nuovi file · {c['fullname']}", names, c["id"], rep.new_paths[0])
+                    summary["file"] += len(rep.new_paths)
+                    touched.append(c)
+                if before and _hash(avvisi) != before:
+                    notify.add("avviso", f"Nuovi avvisi · {c['fullname']}", "Apri gli avvisi del corso su StudyHub.", c["id"],
+                               str(avvisi))
+                    summary["avvisi"] += 1
 
     budget = max_new_lectures
 
@@ -95,7 +96,6 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
                     lecture_ready(c, lec)
                 except Exception as e:
                     summary["errori"].append(f"{lec['title']}: {e}")
-        m.close()
 
     # 2b. Panopto: serve la sessione web (SSO). Se è scaduta, lo segnaliamo e basta.
     try:
@@ -106,11 +106,10 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
     if sess:
         from .media.panopto import Panopto
         from .media.pipeline import discover, process_lecture
-        p = Panopto(sess)
-        try:
+        with Panopto(sess) as p:
             for c in courses:
                 try:
-                    lectures = discover(sess, c)
+                    lectures = list(discover(sess, c))
                 except Exception as e:
                     summary["errori"].append(f"Panopto {c['fullname']}: {e}")
                     continue
@@ -122,8 +121,6 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
                         lecture_ready(c, lec)
                     except Exception as e:
                         summary["errori"].append(f"{lec['title']}: {e}")
-        finally:
-            p.close()
 
     # 3. Indice di ricerca.
     for c in touched:

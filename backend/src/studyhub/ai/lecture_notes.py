@@ -169,7 +169,7 @@ def _exam_rules(db, course_id: int) -> str:
                WHERE c.course_id=? AND t.category='regole_esame' ORDER BY c.doc_id, c.page LIMIT 12""", (course_id,)):
         parts.append(r[0])
     course = db.execute("SELECT folder FROM courses WHERE id=?", (course_id,)).fetchone()
-    avvisi =uni_path(course["folder"]) / "moodle" / "_avvisi.md" if course and course["folder"] else None
+    avvisi = (uni_path(course["folder"]) / "moodle" / "_avvisi.md") if course and course["folder"] else None
     if avvisi and avvisi.exists():
         lines = [ln for ln in avvisi.read_text(encoding="utf-8").split("\n\n") if EXAM_LINE.search(ln)]
         if lines:

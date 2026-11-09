@@ -86,6 +86,12 @@ class Panopto:
     def close(self) -> None:
         self.http.close()
 
+    def __enter__(self) -> Panopto:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
     def _relogin(self, viewer_url: str) -> None:
         cookies = _login_with_browser(self.sess, viewer_url)
         COOKIE_FILE.write_text(json.dumps(cookies), encoding="utf-8")
