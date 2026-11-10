@@ -19,3 +19,5 @@ __pycache__/
 cache/
 .claude/
 Microsoft/
+scratch/
+*.bak*
