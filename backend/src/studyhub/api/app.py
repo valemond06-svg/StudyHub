@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 from ..db import session
 from ..paths import uni_path
@@ -388,12 +388,84 @@ def sim_submit(sim_id: int, body: SimSubmit):
     return _ai_call(exam.grade_sim, sim_id, body.answers, body.elapsed_min)
 
 
+# --- StudyTok Feed (Shorts / Micro-Concetti verticali) --------------------------------
+
+@app.get("/api/feed")
+def get_feed(course_id: int | None = None, limit: int = 30):
+    """Restituisce le micro-card per StudyTok (Shorts format):
+    argomenti prioritari con hook robotico, widget interattivo, audio clip o slide."""
+    with session() as db:
+        params = []
+        where = ["c.active = 1", "c.passed = 0", "t.hidden = 0"]
+        if course_id:
+            where.append("t.course_id = ?")
+            params.append(course_id)
+        
+        sql = f"""
+            SELECT t.id, t.course_id, t.name, t.summary_md, t.weight,
+                   t.lecture_id, t.t_start, t.doc_id, t.page,
+                   c.fullname as course_fullname, c.shortname as course_shortname,
+                   l.data as lesson_data, lec.title as lec_title
+            FROM study_topics t
+            JOIN courses c ON c.id = t.course_id
+            LEFT JOIN study_lessons l ON l.topic_id = t.id AND l.status = 'pronta'
+            LEFT JOIN lectures lec ON lec.id = t.lecture_id
+            WHERE {" AND ".join(where)}
+            ORDER BY (CASE WHEN l.data IS NOT NULL THEN 0 ELSE 1 END),
+                     (CASE WHEN t.lecture_id IS NOT NULL THEN 0 ELSE 1 END),
+                     RANDOM()
+            LIMIT ?
+        """
+        params.append(limit)
+        rows = db.execute(sql, params).fetchall()
+        
+        cards = []
+        for r in rows:
+            r = dict(r)
+            les_data = {}
+            if r["lesson_data"]:
+                try:
+                    les_data = json.loads(r["lesson_data"])
+                except Exception:
+                    pass
+            
+            hook = les_data.get("hook_robotica_md") or les_data.get("perche_md") or r["summary_md"] or ""
+            widget = les_data.get("widget")
+            arch = les_data.get("archetipo_esame")
+            pcp = les_data.get("ponte_carta_penna")
+            sniper = les_data.get("sniper_sbarramento")
+            
+            cname = r["course_shortname"] or r["course_fullname"].split("-")[0].replace("_Anno/", "").replace("1_Anno/", "").replace("2_Anno/", "").strip()
+            
+            cards.append({
+                "id": f"short_{r['id']}",
+                "topic_id": r["id"],
+                "course_id": r["course_id"],
+                "course_name": cname,
+                "title": les_data.get("titolo") or r["name"],
+                "hook_md": hook[:450] + ("..." if len(hook) > 450 else ""),
+                "widget": widget if widget and widget.get("tipo") != "none" else None,
+                "slide": {"doc_id": r["doc_id"], "page": r["page"]} if r["doc_id"] and r["page"] else None,
+                "audio": {
+                    "lecture_id": r["lecture_id"],
+                    "start_s": int(r["t_start"]),
+                    "lecture_title": r["lec_title"] or "Lezione registrata"
+                } if r["lecture_id"] and r["t_start"] is not None else None,
+                "exam_trick": arch.get("trucco_del_docente_md") if arch else None,
+                "archetipo_nome": arch.get("nome_archetipo") if arch else None,
+                "has_pcp": pcp is not None,
+                "has_sniper": sniper is not None
+            })
+        return {"shorts": cards}
+
+
 # --- Studia: corso → argomenti, sessioni guidate, prontezza ---------------------------
 
 @app.get("/api/study")
 def study_courses():
     """I corsi attivi con la prontezza stimata, per la scelta del corso da studiare."""
     from ..study import bank, mastery
+    from ..study.archetype import get_course_archetype
     with session() as db:
         ids = [r[0] for r in db.execute("""SELECT id FROM courses WHERE active=1 AND folder IS NOT NULL
                                            ORDER BY priority DESC, year_of_study DESC, fullname""")]
@@ -707,19 +779,10 @@ def study_topic_artifact(topic_id: int):
 @app.get("/api/study/topics/{topic_id}/script.m")
 def study_topic_script_m(topic_id: int):
     """Scarica lo script MATLAB dell'argomento (.m), pronto per l'esecuzione in MATLAB/Octave."""
-    from ..study import lesson
-    try:
-        out = lesson.get(topic_id)
-    except KeyError:
-        raise HTTPException(404, "Argomento non trovato")
-    lab = (out.get("lesson") or {}).get("laboratorio_pratico")
-    if not lab or not lab.get("codice"):
-        raise HTTPException(404, "Nessuno script di laboratorio pratico disponibile per questo argomento")
-    
-    code = lab["codice"]
-    filename = f"lab_topic_{topic_id}.m"
-    return PlainTextResponse(code, media_type="text/x-matlab",
-                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+@app.get("/api/study/topics/{topic_id}/script.m")
+def study_topic_script_m(topic_id: int):
+    """Scarica lo script MATLAB dell'argomento (.m), pronto per l'esecuzione in MATLAB/Octave."""
+    return study_topic_artifact(topic_id)
 
 
 # --- Export e novità ---------------------------------------------------------------

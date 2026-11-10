@@ -1,6 +1,6 @@
 """Un'unica funzione per le chiamate AI "da studio", con tre provider in cascata:
 
-- Local LLM Cluster (PC Fisso Qwen3.6-35B-A3B / Laptop Qwen3.8-Flash-Next 125B MoE via 127.0.0.1:8081):
+- Local LLM Cluster (PC Fisso Linux Qwen3.6-35B-A3B / Laptop via Cavo Diretto, LAN, Tailscale o Proxy):
   zero costi, 100% offline, privacy totale e velocità locale (~13 tok/s).
 - Gemini (Google AI Pro) tramite la CLI di Antigravity (`agy`): domande, correzioni, schede.
   Ha una quota ampia, quindi si usa per i lavori frequenti e lascia libera la finestra di Claude.
@@ -30,11 +30,17 @@ AGY_CWD = LOCAL_DIR / "agy-cwd"
 AGY_TIMEOUT_S = 8 * 60
 GEMINI_MODELS = {"veloce": "gemini-3.8-flash-low", "accurato": "gemini-3.8-flash-high"}
 CLAUDE_MODELS = {"veloce": "haiku", "accurato": "sonnet"}
-LOCAL_LLM_URL = os.environ.get("STUDYHUB_LOCAL_LLM", "http://127.0.0.1:8081")
 
-# Discovery automatico dell'LLM locale: prima 127.0.0.1, poi LAN PC Fisso, poi Tailscale
+# Default Key per il PC Fisso Linux (Desktop-vale)
+DEFAULT_API_KEY = "qIlpO0Z0yxd5mYSiF7cjnB5s1WRxXrSHC5XKlnZhIY4"
+
+# Discovery automatico dell'LLM locale / cluster Dual-PC
 _ACTIVE_LOCAL_URL: str | None = None
 _LAST_LOCAL_CHECK: float = 0.0
+
+
+def get_local_llm_key() -> str:
+    return os.environ.get("STUDYHUB_LLM_KEY") or str(settings.extra.get("local_llm_key") or DEFAULT_API_KEY)
 
 
 def get_local_llm_url() -> str | None:
@@ -43,21 +49,32 @@ def get_local_llm_url() -> str | None:
     if _ACTIVE_LOCAL_URL and (now - _LAST_LOCAL_CHECK < 15.0):
         return _ACTIVE_LOCAL_URL
 
-    custom = os.environ.get("STUDYHUB_LOCAL_LLM")
+    custom = os.environ.get("STUDYHUB_LOCAL_LLM") or settings.extra.get("local_llm_url")
     candidates = [custom] if custom else []
+    # Ordine di priorità:
+    # 1. Cavo Ethernet Diretto tra i due PC (10.10.10.1)
+    # 2. Tailscale VPN (100.83.194.37)
+    # 3. LAN Wi-Fi (192.168.10.89)
+    # 4. Proxy Locale (127.0.0.1:8081)
     candidates.extend([
+        "http://10.10.10.1:8080",
+        "http://100.83.194.37:8080",
+        "http://192.168.10.89:8080",
         "http://127.0.0.1:8081",
-        "http://192.168.10.89:8081",
         "http://100.83.194.37:8081",
+        "http://192.168.10.89:8081",
     ])
+    key = get_local_llm_key()
     for cand in candidates:
         if not cand:
             continue
         try:
-            req = urllib.request.Request(f"{cand}/health")
-            with urllib.request.urlopen(req, timeout=0.6) as r:
+            req = urllib.request.Request(f"{cand.rstrip('/')}/health")
+            if ":8080" in cand and key:
+                req.add_header("Authorization", f"Bearer {key}")
+            with urllib.request.urlopen(req, timeout=0.8) as r:
                 if r.status == 200:
-                    _ACTIVE_LOCAL_URL = cand
+                    _ACTIVE_LOCAL_URL = cand.rstrip("/")
                     _LAST_LOCAL_CHECK = now
                     return _ACTIVE_LOCAL_URL
         except Exception:
@@ -109,8 +126,9 @@ def provider_order() -> list[str]:
 
 def _local(system: str, text: str, schema: dict, quality: str) -> LLMResult:
     t0 = time.time()
-    base_url = get_local_llm_url() or LOCAL_LLM_URL
+    base_url = get_local_llm_url() or "http://100.83.194.37:8080"
     url = f"{base_url}/v1/chat/completions"
+    key = get_local_llm_key()
     prompt = (
         f"{system}\n\nNON inserire tag <think> o ragionamenti preliminari. "
         f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme a questo schema:\n"
@@ -124,11 +142,15 @@ def _local(system: str, text: str, schema: dict, quality: str) -> LLMResult:
         "temperature": 0.2,
         "max_tokens": 5120,
     }
+    headers = {"Content-Type": "application/json"}
+    if ":8080" in base_url and key:
+        headers["Authorization"] = f"Bearer {key}"
+
     try:
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
+            headers=headers
         )
         with urllib.request.urlopen(req, timeout=180) as r:
             res = json.loads(r.read().decode("utf-8"))
@@ -151,7 +173,7 @@ def _local(system: str, text: str, schema: dict, quality: str) -> LLMResult:
         except Exception as e:
             raise ClaudeError(f"Local LLM JSON parse error: {e}")
 
-    model_name = res.get("model", "local-qwen")
+    model_name = res.get("model", "local-qwen3.6-35b")
     return LLMResult(data, "local", model_name, round(time.time() - t0, 1))
 
 

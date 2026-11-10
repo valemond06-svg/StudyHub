@@ -461,6 +461,82 @@
   .chip:hover { transform: translateY(-1px); }
   .pomo-btn:active { transform: scale(0.95); }
   .pomo-btn.main:active { transform: scale(0.93); }
+
+  /* --- STUDYHUB LAB ENGINES & 3-LEVEL LESSON STYLES --- */
+  .studyhub-widget-wrap { margin: 14px 0; padding: 14px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  .eng-box { display: grid; gap: 10px; }
+  .eng-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+  .eng-badge { font-size: 13px; font-weight: 700; color: var(--accent); }
+  .eng-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .eng-body { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .eng-split { display: flex; gap: 14px; flex-wrap: wrap; justify-content: space-around; }
+  .eng-canvas, .eng-canvas-s, .eng-canvas-t { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; cursor: crosshair; }
+  .eng-controls { display: grid; gap: 6px; flex: 1; min-width: 220px; }
+  .eng-slider-row { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+  .eng-slider-row .k { width: 95px; }
+  .eng-slider-row input[type="range"] { flex: 1; }
+  .eng-slider-row .v { width: 50px; text-align: right; font-family: monospace; }
+  .eng-matrix-display { display: inline-flex; align-items: center; font-family: monospace; font-size: 13px; font-weight: bold; margin: 2px 0; background: var(--bg); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); width: fit-content; }
+  .eng-m-bracket { font-size: 24px; font-weight: lighter; color: var(--muted); }
+  .eng-m-vals { margin: 0 6px; text-align: center; line-height: 1.3; }
+  .eng-readout { background: var(--accent-soft); padding: 8px 12px; border-radius: 8px; font-size: 12px; border-left: 3px solid var(--accent); margin-top: 4px; }
+  .lsn-block-hook { background: linear-gradient(135deg, rgba(49, 89, 214, 0.06), rgba(35, 135, 79, 0.04)); border: 1.5px solid var(--accent); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+  .lsn-lens-banner { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+  .lsn-lens-icon { font-size: 26px; line-height: 1; }
+  .lsn-ponte-box { background: var(--warn-soft); border: 1.5px solid var(--warn); border-radius: 12px; padding: 16px 18px; margin-top: 14px; }
+  .lsn-archetipo-card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+  .lsn-sniper-box { background: var(--bg); border: 1.5px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 14px; }
+  .pill-eureka { background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; font-weight: 700; border: 0; border-radius: 8px; padding: 5px 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; transition: transform 0.15s; }
+  .pill-eureka:hover { transform: scale(1.03); }
+
+
+  /* --- STUDYTOK FEED STYLES --- */
+  .feed-view { max-width: 620px; margin: 0 auto; padding: 20px 14px; min-height: 85vh; display: flex; flex-direction: column; }
+  .feed-filter-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .feed-counter { font-size: 13px; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 20px; }
+  .short-card { background: var(--panel); border: 1.5px solid var(--line); border-radius: 16px; box-shadow: 0 8px 30px rgba(0,0,0,0.08); overflow: hidden; display: flex; flex-direction: column; transition: transform 0.25s ease, opacity 0.2s ease; position: relative; }
+  .short-card-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .short-card-badge { font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; display: inline-flex; align-items: center; gap: 6px; }
+  .short-card-body { padding: 18px 20px; display: grid; gap: 14px; }
+  .short-card-title { font-size: 20px; font-weight: 750; margin: 0; line-height: 1.3; letter-spacing: -0.01em; color: var(--ink); }
+  .short-hook-box { background: linear-gradient(135deg, rgba(49, 89, 214, 0.05), rgba(35, 135, 79, 0.04)); border-left: 3.5px solid var(--accent); padding: 12px 16px; border-radius: 0 10px 10px 0; font-size: 14px; line-height: 1.55; }
+  .short-media-box { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg); max-height: 380px; display: flex; align-items: center; justify-content: center; }
+  .short-slide-img { width: 100%; max-height: 360px; object-fit: contain; cursor: zoom-in; }
+  .short-trick-box { background: var(--warn-soft); border: 1px dashed var(--warn); border-radius: 10px; padding: 12px 14px; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+  .short-trick-box:hover { background: rgba(255, 243, 220, 0.9); }
+  .short-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; background: var(--bg); border-top: 1px solid var(--line); gap: 8px; flex-wrap: wrap; }
+  .short-nav-bar { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; }
+  .short-nav-btn { background: var(--panel); border: 1.5px solid var(--line); border-radius: 50%; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; transition: all 0.15s; box-shadow: var(--shadow); }
+  .short-nav-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); transform: scale(1.08); }
+  .short-nav-btn:disabled { opacity: 0.35; cursor: default; transform: none; background: var(--panel); color: var(--muted); }
+
+
+  /* --- EXAM X-RAY & DOSSO ARTIFICIALE STYLES --- */
+  .xray-view { max-width: 860px; margin: 0 auto; padding: 22px 16px; display: grid; gap: 20px; }
+  .xray-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .xray-course-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .xray-chip { padding: 6px 14px; border-radius: 20px; border: 1.5px solid var(--line); background: var(--panel); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; color: var(--ink); }
+  .xray-chip:hover { border-color: var(--accent); }
+  .xray-chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); box-shadow: 0 2px 10px rgba(49,89,214,0.25); }
+  .xray-summary-card { background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px; padding: 18px 22px; display: grid; gap: 12px; box-shadow: var(--shadow); }
+  .xray-rules-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 6px; }
+  .xray-rule-item { background: var(--bg); padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); }
+  .xray-rule-item .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; }
+  .xray-rule-item .v { font-size: 13px; font-weight: 600; margin-top: 3px; }
+  .xray-archetipi-list { display: grid; gap: 16px; }
+  .xray-card { background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); transition: all 0.15s; }
+  .xray-card:hover { border-color: var(--accent); }
+  .xray-card-hd { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; background: var(--bg); border-bottom: 1px solid var(--line); cursor: pointer; flex-wrap: wrap; gap: 8px; }
+  .xray-card-title { font-size: 16px; font-weight: 700; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+  .xray-card-body { padding: 18px 20px; display: grid; gap: 14px; }
+  .xray-method-box { background: var(--bg); border-left: 3.5px solid var(--ok); padding: 12px 16px; border-radius: 0 8px 8px 0; font-size: 14px; line-height: 1.5; }
+  .xray-trap-box { background: var(--warn-soft); border-left: 3.5px solid var(--warn); padding: 12px 16px; border-radius: 0 8px 8px 0; font-size: 13.5px; line-height: 1.5; }
+  .dosso-overlay { background: linear-gradient(135deg, #1e1b4b, #312e81); color: #fff; padding: 26px 20px; border-radius: 16px; text-align: center; display: grid; gap: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); border: 1.5px solid #6366f1; }
+  .dosso-overlay h3 { font-size: 20px; margin: 0; color: #fbbf24; }
+  .feed-chip-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .feed-chip { padding: 4px 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel); font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; color: var(--muted); }
+  .feed-chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
 </style>
 </head>
 <body>
@@ -472,7 +548,9 @@
         <span id="themeIcon">🌓</span> <span id="themeLabel" class="small">Tema Auto</span>
       </button>
     </div>
-    <button class="nav" data-view="study"><span class="ico">◎</span>Studia</button>
+    <button class="nav" data-view="feed"><span class="ico">📱</span>StudyTok</button>
+    <button class="nav" data-view="study"><span class="ico">◎</span>Studia & Lab</button>
+    <button class="nav" data-view="xray"><span class="ico">🎯</span>Exam X-Ray</button>
     <button class="nav" data-view="lessons"><span class="ico">▶</span>Video lezioni</button>
     <button class="nav" data-view="tutor"><span class="ico">✦</span>Tutor</button>
     <button class="nav" data-view="today"><span class="ico">☀</span>Novità</button>
@@ -495,6 +573,12 @@
         <div class="results" id="results" hidden></div>
       </div>
     </header>
+
+    <!-- STUDYTOK FEED -->
+    <section class="view" id="v-feed" hidden><div class="feed-view" id="feedBody"></div></section>
+
+    <!-- EXAM X-RAY -->
+    <section class="view" id="v-xray" hidden><div class="xray-view" id="xrayBody"></div></section>
 
     <!-- STUDIA -->
     <section class="view" id="v-study"><div class="study" id="studyBody"></div></section>
@@ -734,7 +818,7 @@ let COURSES = [];
 const activeCourses = () => COURSES.filter((c) => c.folder && c.active);
 
 // ============================================================== navigazione
-const TITLES = { study: "Studia", today: "Novità", lessons: "Video lezioni", tutor: "Tutor", review: "Ripasso", pomodoro: "Pomodoro" };
+const TITLES = { feed: "StudyTok", study: "Studia & Lab", xray: "Exam X-Ray", today: "Novità", lessons: "Video lezioni", tutor: "Tutor", review: "Ripasso", pomodoro: "Pomodoro" };
 let view = null;
 function setView(v, opts = {}) {
   if (!TITLES[v]) v = "study";  // nomi delle viste della versione precedente
@@ -744,6 +828,8 @@ function setView(v, opts = {}) {
   $("title").textContent = TITLES[v]; $("subtitle").textContent = "";
   if (v !== "lessons") audio.pause();
   if (v !== "study") stopPrepPoll();
+  if (v === "feed") loadFeed(opts);
+  if (v === "xray") loadXRay(opts);
   if (v === "study") initStudy(opts);
   if (v === "today") loadToday();
   if (v === "lessons") initLessons(opts);
@@ -994,7 +1080,7 @@ function renderStudyCourse(d, arch = null) {
   const toLearn = d.topics.find((t) => !t.learned), learnN = d.topics.indexOf(toLearn) + 1, nLearned = d.topics.filter((t) => t.learned).length;
   const learn = toLearn ? `<div class="card learn"><div class="t"><div class="muted small">① IMPARA · lezioni interattive in ordine · ${nLearned}/${d.topics.length} fatte</div>
       <b>${learnN}. ${esc(toLearn.name)}</b><div class="muted small">${toLearn.lesson === "pronta" ? "Pronta: passi brevi con verifiche, un esempio da esame, errori da evitare." : '<span class="spin"></span> In preparazione da appunti, trascrizioni e PDF…'}</div></div>
-      <button class="btn primary" id="learnGo" data-learn="${toLearn.id}">${nLearned ? "Continua a imparare →" : "Inizia a imparare →"}</button></div>` : "";
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="learnGo" data-learn="${toLearn.id}">${nLearned ? "Continua a imparare →" : "Inizia a imparare →"}</button><button class="pill-eureka" id="eurekaGo" data-learn="${toLearn.id}" title="Accendi la curiosità in 2 minuti senza fatica">⚡ Pillola Eureka (2 min)</button></div></div>` : "";
   const go = d.n_items ? `<div class="sect"><h2>② Allenati: sessione di oggi ${d.due ? `<span class="pill ai">${d.due} domande stanno per sfuggirti</span>` : ""}</h2>
       <p class="muted small" style="margin:-4px 0 10px">Domande in ordine di corso: prima ripassi quello che stai per dimenticare, poi rinforzi i punti deboli; se resta tempo entra l'argomento nuovo con la sua lezione. Così la prontezza qui sopra misura cosa sai davvero.</p><div class="go">
       <button data-min="25"><b>Breve · 25 min</b><span>ripasso e punti deboli</span></button>
@@ -1091,6 +1177,7 @@ function renderStudyCourse(d, arch = null) {
   $("exDel")?.addEventListener("click", async () => { await fetch(`/api/exams/${$("exDel").dataset.ex}`, { method: "DELETE" }); loadStudyCourse(cid, true); });
   b.querySelectorAll("[data-min]").forEach((x) => (x.onclick = () => startRun(cid, +x.dataset.min)));
   $("learnGo")?.addEventListener("click", () => openLesson(+$("learnGo").dataset.learn));
+  $("eurekaGo")?.addEventListener("click", () => openLesson(+$("eurekaGo").dataset.learn));
   postJ(`/api/study/${cid}/lessons/prefetch?n=4`).catch(() => {});  // le prossime lezioni in ordine, pronte quando arrivi
   b.querySelectorAll("[data-focus]").forEach((x) => (x.onclick = () => startRun(cid, 20, +x.dataset.focus)));
   b.querySelectorAll("[data-topic]").forEach((x) => (x.onclick = () => openTopic(+x.dataset.topic, d.topics.find((t) => t.id === +x.dataset.topic))));
@@ -1158,8 +1245,382 @@ async function loadLesson() {
   if (!les.data && d.status !== "errore") lesPoll = setTimeout(() => { if (les && !les.data && view === "study") loadLesson(); }, 6000);
 }
 const opts_inSession = () => !!(les && les.head);
+
+// ============================================================== DECLARATIVE GRAPHIC ENGINES (StudyHub Labs)
+const StudyHubEngines = {
+  renderLinear2D(container, cfg = {}) {
+    let a = cfg.a ?? 1.5, b = cfg.b ?? 0.5, c = cfg.c ?? 0.0, d = cfg.d ?? 1.2;
+    container.innerHTML = `
+      <div class="eng-box">
+        <div class="eng-header">
+          <span class="eng-badge">📐 Laboratorio: Trasformazioni Lineari 2D & Autovettori</span>
+          <div class="eng-presets">
+            <button class="btn sm" data-preset="id">Identità</button>
+            <button class="btn sm" data-preset="rot">Rotazione 45°</button>
+            <button class="btn sm" data-preset="shear">Shear</button>
+            <button class="btn sm" data-preset="sing">Singolare (det=0)</button>
+          </div>
+        </div>
+        <div class="eng-body">
+          <canvas class="eng-canvas" width="420" height="280"></canvas>
+          <div class="eng-controls">
+            <div class="eng-matrix-display">
+              <span class="eng-m-bracket">[</span>
+              <div class="eng-m-vals">
+                <div><span class="val-a">${a.toFixed(2)}</span> <span class="val-b">${b.toFixed(2)}</span></div>
+                <div><span class="val-c">${c.toFixed(2)}</span> <span class="val-d">${d.toFixed(2)}</span></div>
+              </div>
+              <span class="eng-m-bracket">]</span>
+            </div>
+            <label class="eng-slider-row"><span class="k" style="color:#ef4444">T(î).x (a)</span><input type="range" min="-3" max="3" step="0.1" value="${a}" data-k="a"><span class="v" data-v="a">${a.toFixed(1)}</span></label>
+            <label class="eng-slider-row"><span class="k" style="color:#22c55e">T(ĵ).x (b)</span><input type="range" min="-3" max="3" step="0.1" value="${b}" data-k="b"><span class="v" data-v="b">${b.toFixed(1)}</span></label>
+            <label class="eng-slider-row"><span class="k" style="color:#ef4444">T(î).y (c)</span><input type="range" min="-3" max="3" step="0.1" value="${c}" data-k="c"><span class="v" data-v="c">${c.toFixed(1)}</span></label>
+            <label class="eng-slider-row"><span class="k" style="color:#22c55e">T(ĵ).y (d)</span><input type="range" min="-3" max="3" step="0.1" value="${d}" data-k="d"><span class="v" data-v="d">${d.toFixed(1)}</span></label>
+            <div class="eng-readout">
+              <div>Determinante: <b class="eng-det">0.00</b> <span class="eng-det-note"></span></div>
+              <div class="small muted">Area orientata del parallelogramma deformato</div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    const cv = container.querySelector(".eng-canvas"), ctx = cv.getContext("2d");
+    function draw() {
+      const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, scale = 36;
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = "rgba(150,150,160,0.18)"; ctx.lineWidth = 1;
+      for (let x = -6; x <= 6; x++) {
+        const x1 = cx + (x * a - 6 * b) * scale, y1 = cy - (x * c - 6 * d) * scale;
+        const x2 = cx + (x * a + 6 * b) * scale, y2 = cy - (x * c + 6 * d) * scale;
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        const y1_x = cx + (-6 * a + x * b) * scale, y1_y = cy - (-6 * c + x * d) * scale;
+        const y2_x = cx + (6 * a + x * b) * scale, y2_y = cy - (6 * c + x * d) * scale;
+        ctx.beginPath(); ctx.moveTo(y1_x, y1_y); ctx.lineTo(y2_x, y2_y); ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(100,100,110,0.35)"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(W, cy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
+
+      const det = a * d - b * c;
+      ctx.fillStyle = det >= 0 ? "rgba(49, 89, 214, 0.22)" : "rgba(239, 68, 68, 0.22)";
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + a * scale, cy - c * scale);
+      ctx.lineTo(cx + (a + b) * scale, cy - (c + d) * scale); ctx.lineTo(cx + b * scale, cy - d * scale);
+      ctx.closePath(); ctx.fill();
+
+      // Basis vector T(i) (Red)
+      ctx.strokeStyle = "#ef4444"; ctx.fillStyle = "#ef4444"; ctx.lineWidth = 3;
+      drawArrow(ctx, cx, cy, cx + a * scale, cy - c * scale);
+      // Basis vector T(j) (Green)
+      ctx.strokeStyle = "#22c55e"; ctx.fillStyle = "#22c55e"; ctx.lineWidth = 3;
+      drawArrow(ctx, cx, cy, cx + b * scale, cy - d * scale);
+
+      const detEl = container.querySelector(".eng-det"), detNote = container.querySelector(".eng-det-note");
+      if (detEl) detEl.textContent = det.toFixed(2);
+      if (detNote) {
+        if (Math.abs(det) < 0.05) detNote.innerHTML = "<span style='color:#ef4444'>⚠️ det=0 (Collasso dimensionale!)</span>";
+        else if (det < 0) detNote.innerHTML = "<span style='color:#f59e0b'>Inversione orientamento</span>";
+        else detNote.innerHTML = "<span style='color:#22c55e'>Orientamento preservato</span>";
+      }
+      container.querySelector(".val-a").textContent = a.toFixed(2);
+      container.querySelector(".val-b").textContent = b.toFixed(2);
+      container.querySelector(".val-c").textContent = c.toFixed(2);
+      container.querySelector(".val-d").textContent = d.toFixed(2);
+    }
+    function drawArrow(c, fromX, fromY, toX, toY) {
+      const headlen = 9, angle = Math.atan2(toY - fromY, toX - fromX);
+      c.beginPath(); c.moveTo(fromX, fromY); c.lineTo(toX, toY); c.stroke();
+      c.beginPath(); c.moveTo(toX, toY);
+      c.lineTo(toX - headlen * Math.cos(angle - Math.PI / 6), toY - headlen * Math.sin(angle - Math.PI / 6));
+      c.lineTo(toX - headlen * Math.cos(angle + Math.PI / 6), toY - headlen * Math.sin(angle + Math.PI / 6));
+      c.closePath(); c.fill();
+    }
+    container.querySelectorAll("input[data-k]").forEach(inp => {
+      inp.oninput = (e) => {
+        const k = e.target.dataset.k, v = +e.target.value;
+        if (k === "a") a = v; if (k === "b") b = v; if (k === "c") c = v; if (k === "d") d = v;
+        container.querySelector(`[data-v="${k}"]`).textContent = v.toFixed(1);
+        draw();
+      };
+    });
+    container.querySelectorAll("[data-preset]").forEach(btn => {
+      btn.onclick = () => {
+        const p = btn.dataset.preset;
+        if (p === "id") { a = 1; b = 0; c = 0; d = 1; }
+        else if (p === "rot") { const th = Math.PI / 4; a = Math.cos(th); b = -Math.sin(th); c = Math.sin(th); d = Math.cos(th); }
+        else if (p === "shear") { a = 1; b = 1.2; c = 0; d = 1; }
+        else if (p === "sing") { a = 1; b = 2; c = 0.5; d = 1; }
+        container.querySelectorAll("input[data-k]").forEach(inp => {
+          const k = inp.dataset.k; inp.value = {a,b,c,d}[k];
+          container.querySelector(`[data-v="${k}"]`).textContent = (+inp.value).toFixed(1);
+        });
+        draw();
+      };
+    });
+    draw();
+  },
+
+  renderPoleZero(container, cfg = {}) {
+    let sigma = cfg.sigma ?? 0.8, omega = cfg.omega ?? 3.0;
+    container.innerHTML = `
+      <div class="eng-box">
+        <div class="eng-header">
+          <span class="eng-badge">📡 Laboratorio: Poli nel Piano Complesso s & Risposta nel Tempo</span>
+        </div>
+        <div class="eng-body eng-split">
+          <div>
+            <div class="small bold" style="margin-bottom:4px">Piano Complesso s = -σ ± jω</div>
+            <canvas class="eng-canvas-s" width="200" height="200"></canvas>
+          </div>
+          <div>
+            <div class="small bold" style="margin-bottom:4px">Risposta nel Tempo y(t) al gradino</div>
+            <canvas class="eng-canvas-t" width="260" height="200"></canvas>
+          </div>
+        </div>
+        <div class="eng-controls" style="margin-top:8px">
+          <label class="eng-slider-row"><span class="k">Smorzamento σ</span><input type="range" min="-1.5" max="3.0" step="0.1" value="${sigma}" data-k="sigma"><span class="v" data-v="sigma">${sigma.toFixed(1)}</span></label>
+          <label class="eng-slider-row"><span class="k">Pulsazione ω</span><input type="range" min="0.0" max="6.0" step="0.2" value="${omega}" data-k="omega"><span class="v" data-v="omega">${omega.toFixed(1)}</span></label>
+          <div class="eng-readout">
+            <div>Stato robot: <b class="eng-pz-status"></b></div>
+            <div class="small muted eng-pz-desc"></div>
+          </div>
+        </div>
+      </div>`;
+    const cvS = container.querySelector(".eng-canvas-s"), ctxS = cvS.getContext("2d");
+    const cvT = container.querySelector(".eng-canvas-t"), ctxT = cvT.getContext("2d");
+    function draw() {
+      const Ws = cvS.width, Hs = cvS.height, cxs = Ws / 2, cys = Hs / 2, scaleS = 26;
+      ctxS.clearRect(0, 0, Ws, Hs);
+      ctxS.fillStyle = "rgba(35, 135, 79, 0.12)"; ctxS.fillRect(0, 0, cxs, Hs);
+      ctxS.fillStyle = "rgba(239, 68, 68, 0.12)"; ctxS.fillRect(cxs, 0, cxs, Hs);
+      ctxS.strokeStyle = "rgba(120,120,130,0.5)"; ctxS.lineWidth = 1.5;
+      ctxS.beginPath(); ctxS.moveTo(0, cys); ctxS.lineTo(Ws, cys); ctxS.stroke();
+      ctxS.beginPath(); ctxS.moveTo(cxs, 0); ctxS.lineTo(cxs, Hs); ctxS.stroke();
+      ctxS.fillStyle = "var(--muted)"; ctxS.font = "10px sans-serif";
+      ctxS.fillText("Re(s)", Ws - 30, cys - 4); ctxS.fillText("Im(s)", cxs + 4, 12);
+
+      const px = cxs - sigma * scaleS, py1 = cys - omega * scaleS, py2 = cys + omega * scaleS;
+      function drawPole(x, y) {
+        ctxS.strokeStyle = "#ef4444"; ctxS.lineWidth = 2.5;
+        ctxS.beginPath(); ctxS.moveTo(x - 5, y - 5); ctxS.lineTo(x + 5, y + 5); ctxS.stroke();
+        ctxS.beginPath(); ctxS.moveTo(x + 5, y - 5); ctxS.lineTo(x - 5, y + 5); ctxS.stroke();
+      }
+      drawPole(px, py1);
+      if (omega > 0.05) drawPole(px, py2);
+
+      const Wt = cvT.width, Ht = cvT.height, scaleX = Wt / 5;
+      ctxT.clearRect(0, 0, Wt, Ht);
+      const y0 = Ht - 30, yRef = y0 - 75;
+      ctxT.strokeStyle = "rgba(120,120,130,0.3)"; ctxT.lineWidth = 1;
+      ctxT.beginPath(); ctxT.moveTo(0, y0); ctxT.lineTo(Wt, y0); ctxT.stroke();
+      ctxT.setLineDash([4, 4]); ctxT.beginPath(); ctxT.moveTo(0, yRef); ctxT.lineTo(Wt, yRef); ctxT.stroke();
+      ctxT.setLineDash([]);
+      ctxT.fillStyle = "var(--muted)"; ctxT.font = "10px sans-serif";
+      ctxT.fillText("t [s]", Wt - 24, y0 + 14); ctxT.fillText("riferimento y=1", 4, yRef - 4);
+
+      ctxT.strokeStyle = sigma > 0 ? "var(--accent)" : "#ef4444"; ctxT.lineWidth = 2.5;
+      ctxT.beginPath();
+      for (let i = 0; i <= Wt; i += 2) {
+        const t = (i / scaleX);
+        let yt = Math.abs(omega) < 0.05 ? (1 - Math.exp(-sigma * t))
+          : (1 - Math.exp(-sigma * t) * (Math.cos(omega * t) + (sigma / (omega || 1)) * Math.sin(omega * t)));
+        yt = Math.max(-1.5, Math.min(3.5, yt));
+        const py = y0 - yt * 75;
+        if (i === 0) ctxT.moveTo(i, py); else ctxT.lineTo(i, py);
+      }
+      ctxT.stroke();
+
+      const stEl = container.querySelector(".eng-pz-status"), descEl = container.querySelector(".eng-pz-desc");
+      if (sigma > 0.05) {
+        stEl.innerHTML = "<span style='color:#23874f'>✅ STABILE ASINTOTICAMENTE</span>";
+        descEl.textContent = "Poli nel semipiano sinistro: le oscillazioni si spengono e il robot va a bersaglio!";
+      } else if (Math.abs(sigma) <= 0.05) {
+        stEl.innerHTML = "<span style='color:#b26a00'>⚠️ SEMPLICEMENTE STABILE (Oscillatore)</span>";
+        descEl.textContent = "Poli sull'asse immaginario: oscillazione perpetua senza smorzamento.";
+      } else {
+        stEl.innerHTML = "<span style='color:#ef4444'>❌ INSTABILE (CRASH!)</span>";
+        descEl.textContent = "Poli nel semipiano destro: energia divergente, il sistema sbanda senza controllo!";
+      }
+    }
+    container.querySelectorAll("input[data-k]").forEach(inp => {
+      inp.oninput = (e) => {
+        const k = e.target.dataset.k, v = +e.target.value;
+        if (k === "sigma") sigma = v; if (k === "omega") omega = v;
+        container.querySelector(`[data-v="${k}"]`).textContent = v.toFixed(1);
+        draw();
+      };
+    });
+    draw();
+  },
+
+  renderVectorField(container, cfg = {}) {
+    let mode = cfg.mode || "gradient";
+    container.innerHTML = `
+      <div class="eng-box">
+        <div class="eng-header">
+          <span class="eng-badge">🌊 Laboratorio: Campi Vettoriali & Linee di Forza (Analisi 2)</span>
+          <div class="eng-presets">
+            <button class="btn sm ${mode==='gradient'?'primary':''}" data-mode="gradient">Attrazione Minimo (∇f)</button>
+            <button class="btn sm ${mode==='obstacle'?'primary':''}" data-mode="obstacle">Evitamento Ostacolo</button>
+            <button class="btn sm ${mode==='vortex'?'primary':''}" data-mode="vortex">Vortice</button>
+            <button class="btn sm ${mode==='saddle'?'primary':''}" data-mode="saddle">Punto di Sella</button>
+          </div>
+        </div>
+        <div class="eng-body">
+          <canvas class="eng-canvas" width="440" height="240"></canvas>
+        </div>
+        <div class="small muted">💡 Clicca sul canvas per posizionare il robot e seguirne la traiettoria nel campo.</div>
+      </div>`;
+    const cv = container.querySelector(".eng-canvas"), ctx = cv.getContext("2d");
+    let robot = { x: -1.8, y: 1.4 };
+    function getField(x, y) {
+      if (mode === "gradient") return { fx: -x, fy: -y };
+      if (mode === "obstacle") { const d2 = x*x + y*y + 0.15; return { fx: 0.8 + 0.6*x/d2, fy: 0.6*y/d2 }; }
+      if (mode === "vortex") return { fx: -y, fy: x };
+      if (mode === "saddle") return { fx: x, fy: -y };
+      return { fx: -x, fy: -y };
+    }
+    function draw() {
+      const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, scale = 40;
+      ctx.clearRect(0, 0, W, H);
+      ctx.lineWidth = 1.2;
+      for (let gx = -4; gx <= 4; gx += 0.8) {
+        for (let gy = -2.4; gy <= 2.4; gy += 0.8) {
+          const { fx, fy } = getField(gx, gy), len = Math.hypot(fx, fy) || 1;
+          const px = cx + gx * scale, py = cy - gy * scale;
+          const tox = px + (fx / len) * 13, toy = py - (fy / len) * 13;
+          ctx.strokeStyle = "rgba(49, 89, 214, 0.4)"; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(tox, toy); ctx.stroke();
+        }
+      }
+      ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      let simX = robot.x, simY = robot.y;
+      ctx.moveTo(cx + simX * scale, cy - simY * scale);
+      for (let step = 0; step < 75; step++) {
+        const { fx, fy } = getField(simX, simY);
+        simX += fx * 0.04; simY += fy * 0.04;
+        ctx.lineTo(cx + simX * scale, cy - simY * scale);
+      }
+      ctx.stroke();
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath(); ctx.arc(cx + robot.x * scale, cy - robot.y * scale, 5.5, 0, 2 * Math.PI); ctx.fill();
+    }
+    cv.onclick = (e) => {
+      const rect = cv.getBoundingClientRect();
+      robot.x = (e.clientX - rect.left - cv.width / 2) / 40;
+      robot.y = -(e.clientY - rect.top - cv.height / 2) / 40;
+      draw();
+    };
+    container.querySelectorAll("[data-mode]").forEach(btn => {
+      btn.onclick = () => {
+        container.querySelectorAll("[data-mode]").forEach(b => b.classList.remove("primary"));
+        btn.classList.add("primary"); mode = btn.dataset.mode; draw();
+      };
+    });
+    draw();
+  },
+
+  renderCircuitSim(container, cfg = {}) {
+    let r1 = cfg.r1 ?? 10, r2 = cfg.r2 ?? 100, vin = cfg.vin ?? 0.8;
+    container.innerHTML = `
+      <div class="eng-box">
+        <div class="eng-header">
+          <span class="eng-badge">⚡ Laboratorio: Amplificatore Operazionale Invertente</span>
+        </div>
+        <div class="eng-body eng-split">
+          <div style="flex:1">
+            <svg class="eng-circuit-svg" viewBox="0 0 300 160" style="width:100%;max-width:300px;height:auto;background:var(--bg);border-radius:8px">
+              <polygon points="110,40 110,120 190,80" fill="var(--panel)" stroke="var(--ink)" stroke-width="2"/>
+              <text x="118" y="65" font-size="14" fill="var(--ink)">-</text>
+              <text x="118" y="105" font-size="14" fill="var(--ink)">+</text>
+              <line x1="70" y1="100" x2="110" y2="100" stroke="var(--ink)" stroke-width="2"/>
+              <line x1="70" y1="100" x2="70" y2="125" stroke="var(--ink)" stroke-width="2"/>
+              <line x1="60" y1="125" x2="80" y2="125" stroke="var(--ink)" stroke-width="2"/>
+              <line x1="64" y1="130" x2="76" y2="130" stroke="var(--ink)" stroke-width="2"/>
+              <line x1="20" y1="60" x2="45" y2="60" stroke="var(--ink)" stroke-width="2"/>
+              <rect x="45" y="52" width="35" height="16" fill="var(--panel)" stroke="#3159d6" stroke-width="2"/>
+              <text x="53" y="64" font-size="10" fill="#3159d6">R1</text>
+              <line x1="80" y1="60" x2="110" y2="60" stroke="var(--ink)" stroke-width="2"/>
+              <line x1="95" y1="60" x2="95" y2="24" stroke="var(--ink)" stroke-width="2"/>
+              <line x1="95" y1="24" x2="130" y2="24" stroke="var(--ink)" stroke-width="2"/>
+              <rect x="130" y="16" width="35" height="16" fill="var(--panel)" stroke="#23874f" stroke-width="2"/>
+              <text x="138" y="28" font-size="10" fill="#23874f">R2</text>
+              <line x1="165" y1="24" x2="215" y2="24" stroke="var(--ink)" stroke-width="2"/>
+              <line x1="215" y1="24" x2="215" y2="80" stroke="var(--ink)" stroke-width="2"/>
+              <line x1="190" y1="80" x2="250" y2="80" stroke="var(--ink)" stroke-width="2"/>
+              <circle cx="250" cy="80" r="3" fill="#ef4444"/>
+              <text x="256" y="84" font-size="11" font-weight="bold" fill="#ef4444">Vout</text>
+              <circle cx="20" cy="60" r="3" fill="#3159d6"/>
+              <text x="6" y="55" font-size="11" font-weight="bold" fill="#3159d6">Vin</text>
+            </svg>
+          </div>
+          <div class="eng-controls" style="flex:1">
+            <label class="eng-slider-row"><span class="k">Vin [V]</span><input type="range" min="-3" max="3" step="0.1" value="${vin}" data-k="vin"><span class="v" data-v="vin">${vin.toFixed(1)} V</span></label>
+            <label class="eng-slider-row"><span class="k">R1 [kΩ]</span><input type="range" min="1" max="50" step="1" value="${r1}" data-k="r1"><span class="v" data-v="r1">${r1} kΩ</span></label>
+            <label class="eng-slider-row"><span class="k">R2 [kΩ]</span><input type="range" min="5" max="250" step="5" value="${r2}" data-k="r2"><span class="v" data-v="r2">${r2} kΩ</span></label>
+            <div class="eng-readout">
+              <div>Guadagno: <b class="eng-op-gain"></b></div>
+              <div>Vout: <b class="eng-op-vout" style="font-size:15px"></b></div>
+              <div class="small eng-op-sat" style="margin-top:2px"></div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    function calc() {
+      const Av = -r2 / r1;
+      let vout = Av * vin;
+      const vsat = 12.0; let sat = false;
+      if (vout > vsat) { vout = vsat; sat = true; } else if (vout < -vsat) { vout = -vsat; sat = true; }
+      container.querySelector(".eng-op-gain").textContent = `${Av.toFixed(2)} (${Av < 0 ? "Inverte fase" : ""})`;
+      const voutEl = container.querySelector(".eng-op-vout");
+      voutEl.textContent = `${vout.toFixed(2)} V`;
+      voutEl.style.color = sat ? "#ef4444" : "var(--ok)";
+      const satEl = container.querySelector(".eng-op-sat");
+      satEl.innerHTML = sat ? "<span style='color:#ef4444'>⚠️ Saturazione Rails (±12V)! Forma d'onda tagliata.</span>" : "<span style='color:#23874f'>Linearità verificata. Massa virtuale V⁻=0V.</span>";
+    }
+    container.querySelectorAll("input[data-k]").forEach(inp => {
+      inp.oninput = (e) => {
+        const k = e.target.dataset.k, v = +e.target.value;
+        if (k === "vin") vin = v; if (k === "r1") r1 = v; if (k === "r2") r2 = v;
+        container.querySelector(`[data-v="${k}"]`).textContent = k === "vin" ? `${v.toFixed(1)} V` : `${v} kΩ`;
+        calc();
+      };
+    });
+    calc();
+  },
+
+  renderWidget(container, w) {
+    if (!w || !w.tipo || w.tipo === "none") return;
+    let cfg = {};
+    try { cfg = typeof w.config_json === "string" ? JSON.parse(w.config_json) : (w.config_json || {}); } catch {}
+    const host = document.createElement("div");
+    host.className = "studyhub-widget-wrap";
+    if (w.titolo) host.innerHTML = `<div class="stepname" style="margin-bottom:6px">🧪 ${esc(w.titolo)}</div>`;
+    if (w.istruzioni) host.innerHTML += `<div class="small muted" style="margin-bottom:10px">${mdInline(w.istruzioni)}</div>`;
+    const engTarget = document.createElement("div");
+    host.appendChild(engTarget);
+    container.appendChild(host);
+
+    if (w.tipo === "linear_2d") this.renderLinear2D(engTarget, cfg);
+    else if (w.tipo === "pole_zero") this.renderPoleZero(engTarget, cfg);
+    else if (w.tipo === "vector_field") this.renderVectorField(engTarget, cfg);
+    else if (w.tipo === "circuit_sim") this.renderCircuitSim(engTarget, cfg);
+  }
+};
+window.StudyHubEngines = StudyHubEngines;
+
 function lessonPhases() {
-  const L = les.data; return ["intro", ...L.passi.map((_, i) => "p" + i), "esempio", ...(L.laboratorio_pratico ? ["pratica"] : []), ...(L.errori_tipici && L.errori_tipici.length ? ["errori"] : []), "fine"];
+  const L = les.data;
+  if (!L) return ["intro", "fine"];
+  if (L.hook_robotica_md || L.ponte_carta_penna || L.archetipo_esame) {
+    const ph = ["hook"];
+    (L.passi || []).forEach((_, i) => ph.push("p" + i));
+    if (L.laboratorio_pratico) ph.push("pratica");
+    if (L.ponte_carta_penna) ph.push("ponte");
+    if (L.sniper_sbarramento) ph.push("sniper");
+    if (L.errori_tipici && L.errori_tipici.length) ph.push("errori");
+    ph.push("fine");
+    return ph;
+  }
+  return ["intro", ...(L.passi || []).map((_, i) => "p" + i), "esempio", ...(L.laboratorio_pratico ? ["pratica"] : []), ...(L.errori_tipici && L.errori_tipici.length ? ["errori"] : []), "fine"];
 }
 function lesNext() {
   const ph = lessonPhases(), cur = les.phase === "passo" ? "p" + les.i : les.phase, k = ph.indexOf(cur) + 1;
@@ -1245,31 +1706,108 @@ function renderLesson() {
     $("lRetry")?.addEventListener("click", async () => { await getJ(`/api/study/topics/${t.id}/lesson`); loadLesson(); });
     $("lExit")?.addEventListener("click", () => { clearTimeout(lesPoll); les = null; loadStudyCourse(t.course_id); });
     bindSources(body);
-  bindLessonMedia(body, t); return;
+    bindLessonMedia(body, t); return;
   }
   const ph = lessonPhases(), cur = les.phase === "passo" ? "p" + les.i : les.phase, ci = ph.indexOf(cur);
   const dots = `<div class="dots">${ph.map((_, k) => `<i class="${k < ci ? "done" : k === ci ? "cur" : ""}"></i>`).join("")}</div>`;
   let inner = "", ctx = "";
-  if (les.phase === "intro") {
+
+  if (les.phase === "hook") {
+    inner = `
+      <div class="stepname">⚡ 1. Hook & Laboratorio Visivo (2 min)</div>
+      <h2>${esc(L.titolo || t.name)}</h2>
+      <div class="lsn-block-hook">
+        <div class="lsn-lens-banner">
+          <span class="lsn-lens-icon">🤖</span>
+          <div>
+            <b style="color:var(--accent);font-size:14px">The Robotics Lens: Perché ti serve davvero</b>
+            <div class="md" style="margin-top:6px;line-height:1.5">${md(L.hook_robotica_md || L.perche_md || "")}</div>
+          </div>
+        </div>
+        <div id="lsnWidgetTarget"></div>
+      </div>
+      ${lessonMediaHtml(t, null)}
+      <div class="muted small">${(L.passi || []).length} passi sintetici sotto il cofano, micro-sfida carta e penna, sniper da sbarramento.</div>
+      <div style="margin-top:10px"><button class="btn primary" id="lNext">Passa a Sotto il Cofano (Il Rigore) →</button></div>`;
+  } else if (les.phase === "intro") {
     inner = `<div class="stepname">Perché ti serve</div><h2>${esc(L.titolo || t.name)}</h2><div class="md">${md(L.perche_md)}</div>
       ${lessonMediaHtml(t, null)}
-      ${L.prerequisiti.length ? `<div class="small muted">Ti serve sapere: ${L.prerequisiti.map(esc).join(" · ")}</div>` : ""}
+      ${L.prerequisiti && L.prerequisiti.length ? `<div class="small muted">Ti serve sapere: ${L.prerequisiti.map(esc).join(" · ")}</div>` : ""}
       <div class="muted small">${L.passi.length} passi brevi con una verifica ciascuno, un esempio da esame, errori da evitare. Circa ${4 + 2 * L.passi.length} minuti.</div>
       <div><button class="btn primary" id="lNext">Iniziamo →</button></div>`;
   } else if (les.phase === "passo") {
     const p = L.passi[les.i], v = p.verifica, a = les.answers[les.i];
     ctx = `${p.titolo}\n${p.spiegazione_md}`;
-    inner = `<div class="stepname">Passo ${les.i + 1} di ${L.passi.length}</div><h2>${esc(p.titolo)}</h2>
+    inner = `<div class="stepname">⚙️ 2. Sotto il Cofano · Passo ${les.i + 1} di ${L.passi.length}</div><h2>${esc(p.titolo)}</h2>
       <div class="md">${md(p.spiegazione_md)}</div>
-      ${p.intuizione_md ? `<div class="idea md"><b>💡 Per capirlo al volo</b>${md(p.intuizione_md)}</div>` : ""}
+      ${p.intuizione_md ? `<div class="idea md"><b>💡 Intuizione visiva / fisica</b>${md(p.intuizione_md)}</div>` : ""}
       ${lessonMediaHtml(t, p)}
       ${helperHtml()}
       ${v ? `<div class="check"><b>Verifica veloce</b><div class="md">${md(v.testo_md)}</div><div class="opts">${v.opzioni.map((o, j) => {
           let cls = ""; if (a != null) cls = j === v.corretta ? "right" : j === a ? "wrong" : "";
           return `<button class="opt ${cls}" data-v="${j}" ${a != null ? "disabled" : ""}><kbd>${j + 1}</kbd><span>${mdInline(o)}</span></button>`; }).join("")}</div>
         ${a != null ? `<div class="why md">${a === v.corretta ? "<b>✓ Esatto.</b> " : "<b>✗ Non proprio.</b> "}${md(v.spiegazione_md)}</div>
-          <div><button class="btn primary" id="lNext">Avanti →</button>${a !== v.corretta ? ' <span class="muted small">Se non ti torna, usa «Spiegamelo in un altro modo».</span>' : ""}</div>` : ""}</div>`
+          <div><button class="btn primary" id="lNext">Avanti →</button>${a !== v.corretta ? ' <span class="muted small">Se non ti torna, usa lo sparring partner «Spiegamelo in un altro modo».</span>' : ""}</div>` : ""}</div>`
         : `<div><button class="btn primary" id="lNext">Ho capito, avanti →</button></div>`}`;
+  } else if (les.phase === "ponte") {
+    const arch = L.archetipo_esame;
+    const pcp = L.ponte_carta_penna;
+    const rev = !!les.ponteRev;
+    ctx = (pcp ? pcp.sfida_testo_md : "") + (arch ? "\n" + arch.come_appare_all_esame_md : "");
+    inner = `
+      <div class="stepname">🎯 3. Come cade all'Esame & Ponte Carta e Penna</div>
+      <h2>${esc(L.titolo || t.name)}</h2>
+      ${arch ? `
+        <div class="lsn-archetipo-card">
+          <div class="stepname" style="color:var(--ink)">🏛️ Archetipo d'Esame UniVR: ${esc(arch.nome_archetipo || "Esercizio Standard")}</div>
+          <div class="md" style="margin-top:6px"><b>Come compare nei compiti:</b> ${md(arch.come_appare_all_esame_md || "")}</div>
+          <div class="md" style="margin-top:6px;color:var(--warn)"><b>⚠️ Tranello classico del docente:</b> ${md(arch.trucco_del_docente_md || "")}</div>
+        </div>
+      ` : ""}
+      ${pcp ? `
+        <div class="lsn-ponte-box">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <b>✍️ Ponte Carta e Penna (allenamento della mano)</b>
+            <span class="pill warn">⏱️ ${pcp.tempo_stimato_min || 3} min</span>
+          </div>
+          <div class="muted small" style="margin-bottom:10px">Prendi un foglio bianco e una penna. L'intuizione visiva apre la mente, ma il 30 si prende con la mano ferma sui calcoli:</div>
+          <div class="md" style="font-size:15px;margin-bottom:12px;background:var(--panel);padding:12px;border-radius:8px;border:1px solid var(--line)">${md(pcp.sfida_testo_md)}</div>
+          ${!rev ? `
+            <div><button class="btn primary" id="lPonteReveal">Ho provato sul foglio: Mostra Soluzione e Risultato →</button></div>
+          ` : `
+            <div class="md" style="background:var(--panel);padding:14px;border-radius:8px;border:1.5px solid var(--ok);margin-top:10px">
+              <div style="font-weight:bold;color:var(--ok);margin-bottom:6px">✓ Svolgimento Passo-Passo per confronto:</div>
+              ${md(pcp.soluzione_passo_passo_md)}
+              <hr style="margin:10px 0;border:0;border-top:1px solid var(--line)">
+              <div><b>Risultato finale:</b> ${md(pcp.risultato_finale_md)}</div>
+            </div>
+            <div style="margin-top:14px"><button class="btn primary" id="lNext">${L.sniper_sbarramento ? "Avanti allo Sniper da Sbarramento →" : "Avanti →"}</button></div>
+          `}
+        </div>
+      ` : `<div><button class="btn primary" id="lNext">Avanti →</button></div>`}
+      ${helperHtml()}`;
+  } else if (les.phase === "sniper") {
+    const sn = L.sniper_sbarramento, a = les.sniperAns;
+    ctx = sn.testo_md;
+    inner = `
+      <div class="stepname">🎯 3. Sniper da Sbarramento & Caccia al Bug</div>
+      <h2>Supera il filtro eliminatorio</h2>
+      <div class="muted small" style="margin-bottom:12px">Allena l'occhio sui tranelli eliminatori e i casi limite frequenti nelle prove UniVR.</div>
+      <div class="lsn-sniper-box">
+        <div class="md" style="font-size:15px;font-weight:500;margin-bottom:12px">${md(sn.testo_md)}</div>
+        <div class="opts">${sn.opzioni.map((o, j) => {
+          let cls = ""; if (a != null) cls = j === sn.corretta ? "right" : j === a ? "wrong" : "";
+          return `<button class="opt ${cls}" data-sn="${j}" ${a != null ? "disabled" : ""}><kbd>${j + 1}</kbd><span>${mdInline(o)}</span></button>`;
+        }).join("")}</div>
+        ${a != null ? `
+          <div class="why md" style="margin-top:12px">
+            ${a === sn.corretta ? "<b>✓ Bersaglio centrato!</b> " : "<b>✗ Caduto nel trabocchetto!</b> "}
+            ${md(sn.perche_trabocchetto_md)}
+          </div>
+          <div style="margin-top:14px"><button class="btn primary" id="lNext">Avanti →</button></div>
+        ` : ""}
+      </div>
+      ${helperHtml()}`;
   } else if (les.phase === "esempio") {
     const E = L.esempio;
     ctx = E.testo_md;
@@ -1340,12 +1878,18 @@ function renderLesson() {
       ${L.errori_tipici.map((e) => `<div class="errcard"><div>✗ ${mdInline(e.errore)}</div><div class="fix">✓ ${mdInline(e.correzione)}</div></div>`).join("")}
       <div><button class="btn primary" id="lNext">Avanti →</button></div>`;
   } else {
-    const n = L.passi.filter((p) => p.verifica).length;
+    const n = (L.passi || []).filter((p) => p.verifica).length;
     inner = `<div class="stepname">Da sapere a memoria</div><h2>${esc(L.titolo || t.name)}</h2><div class="md">${md(L.riassunto_md)}</div>
       ${n ? `<div class="muted">Verifiche giuste al primo colpo: <b>${les.firstTry}/${n}</b>${les.firstTry < n ? " — le domande che seguono ti fanno consolidare proprio quei punti." : ""}</div>` : ""}
       <div class="helper"><button class="btn primary" id="lDone">${les.onDone ? "Ora mettiti alla prova →" : "Mettiti alla prova · 10 min →"}</button>${les.onDone ? "" : '<button class="btn" id="lBack">Torna al corso</button>'}</div>`;
   }
+
   body.innerHTML = head + `<div class="card lsn">${dots}${inner}</div>`;
+
+  if (les.phase === "hook" && L.widget && $("lsnWidgetTarget")) {
+    StudyHubEngines.renderWidget($("lsnWidgetTarget"), L.widget);
+  }
+
   $("lExit")?.addEventListener("click", () => { clearTimeout(lesPoll); les = null; loadStudyCourse(t.course_id); });
   $("lNext")?.addEventListener("click", lesNext);
   $("btnCopyCode")?.addEventListener("click", () => {
@@ -1362,6 +1906,8 @@ function renderLesson() {
     const el = $("sfidaSol");
     if (el) el.style.display = el.style.display === "none" ? "block" : "none";
   });
+  $("lPonteReveal")?.addEventListener("click", () => { les.ponteRev = true; renderLesson(); });
+  body.querySelectorAll("[data-sn]").forEach((b) => (b.onclick = () => { les.sniperAns = +b.dataset.sn; renderLesson(); }));
   body.querySelectorAll("[data-v]").forEach((b) => (b.onclick = () => {
     const j = +b.dataset.v, v = L.passi[les.i].verifica; les.answers[les.i] = j; if (j === v.corretta) les.firstTry++; renderLesson(); }));
   $("lReveal")?.addEventListener("click", () => { les.ex++; renderLesson(); });
@@ -1992,6 +2538,468 @@ function toast(msg, type = 'info') {
   const t = document.createElement("div"); t.className = `toast ${type}`; t.textContent = msg; c.append(t);
   setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateY(20px)'; t.style.transition = 'all 0.3s'; setTimeout(() => t.remove(), 300); }, 4500);
 }
+
+
+// ============================================================== STUDYTOK FEED (Shorts / Micro-Concetti)
+let feedCards = [], feedIdx = 0, feedCourse = store.get("feedCourse", ""), feedTrickOpen = false;
+let consecutiveScrolls = 0, showDosso = false;
+
+async function loadFeed(opts = {}) {
+  const body = $("feedBody");
+  if (!body) return;
+  // Anti-Zapping fix: default to the first active course instead of empty string!
+  if (!feedCourse && activeCourses().length) {
+    feedCourse = String(activeCourses()[0].id);
+    store.set("feedCourse", feedCourse);
+  }
+  body.innerHTML = '<div class="muted" style="text-align:center;padding:40px"><span class="spin"></span> Caricamento StudyTok Feed...</div>';
+  try {
+    const url = "/api/feed" + (feedCourse ? "?course_id=" + feedCourse : "");
+    const res = await getJ(url);
+    feedCards = res.shorts || [];
+    feedIdx = 0;
+    consecutiveScrolls = 0;
+    showDosso = false;
+    feedTrickOpen = false;
+    renderFeed();
+  } catch (err) {
+    body.innerHTML = `<div class="card" style="color:var(--warn)">Errore nel caricamento del feed: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderFeed() {
+  const body = $("feedBody");
+  if (!body) return;
+  if (!feedCards.length) {
+    body.innerHTML = `<div class="card" style="text-align:center;padding:40px">
+      <h3>Nessuno Short disponibile per questo filtro</h3>
+      <p class="muted">Seleziona un altro corso o torna a 'Tutti i corsi'.</p>
+      <div style="margin-top:12px"><button class="btn primary sm" onclick="feedCourse='';store.set('feedCourse','');loadFeed();">Mostra tutti i corsi</button></div>
+    </div>`;
+    return;
+  }
+
+  // Anti-Zapping: Render Chip Bar with 1..5 numbers
+  const coursesList = activeCourses();
+  const chipsHtml = `
+    <div class="feed-chip-bar">
+      <button class="feed-chip ${!feedCourse ? 'on' : ''}" data-fc=""><kbd>0</kbd> Mix Globale</button>
+      ${coursesList.map((c, i) => `
+        <button class="feed-chip ${String(c.id) === String(feedCourse) ? 'on' : ''}" data-fc="${c.id}">
+          <kbd>${i + 1}</kbd> ${esc(shortName(c.fullname))}
+        </button>
+      `).join("")}
+    </div>
+  `;
+
+  // Dosso Artificiale check (every 5 cards scrolled without doing an exercise)
+  if (showDosso) {
+    const currentCard = feedCards[feedIdx];
+    body.innerHTML = `
+      ${chipsHtml}
+      <div class="dosso-overlay">
+        <span style="font-size:38px">🛑</span>
+        <h3>Dosso Artificiale: Hai visto 5 concetti!</h3>
+        <div style="font-size:14.5px;color:#e0e7ff;line-height:1.55;max-width:500px;margin:0 auto">
+          Scorrere in sequenza dà una rapida scarica di dopamina, ma all'esame scritto serve <b>l'automatismo procedurale della mano</b>.<br>
+          Fermati 3 minuti per fare una micro-sfida su carta prima di continuare a scorrere.
+        </div>
+        <div style="display:flex;gap:12px;justify-content:center;margin-top:10px;flex-wrap:wrap">
+          <button class="btn primary" id="dossoPcpBtn">✍️ Fai la sfida Carta e Penna (3 min) →</button>
+          <button class="btn ghost" id="dossoPassBtn" style="color:#fff;border-color:rgba(255,255,255,0.4)">Continua a scorrere comunque ›</button>
+        </div>
+      </div>
+    `;
+    $("dossoPcpBtn")?.addEventListener("click", () => {
+      showDosso = false; consecutiveScrolls = 0;
+      openLesson(currentCard.topic_id);
+    });
+    $("dossoPassBtn")?.addEventListener("click", () => {
+      showDosso = false; consecutiveScrolls = 0;
+      renderFeed();
+    });
+    bindFeedChips(body);
+    return;
+  }
+
+  const card = feedCards[feedIdx];
+  const total = feedCards.length;
+
+  // Single Dominant Media element (Fix Sovraccarico Visivo)
+  let mediaHtml = "";
+  if (card.widget) {
+    mediaHtml = `<div class="short-widget-target" id="shortWidgetArea"></div>`;
+  } else if (card.slide) {
+    mediaHtml = `
+      <div class="short-media-box">
+        <img src="/api/docs/${card.slide.doc_id}/page/${card.slide.page}.png" class="short-slide-img" alt="Slide del corso" loading="lazy">
+      </div>`;
+  }
+
+  // Audio pill: compact and high-contrast
+  let audioHtml = "";
+  if (card.audio) {
+    audioHtml = `
+      <div class="lsn-media-player" style="margin:6px 0 10px">
+        <button type="button" class="lsn-play-btn" id="feedAudioBtn" data-play-sec="${card.audio.start_s}" data-lec="${card.audio.lecture_id}">
+          ▶ Ascolta i 25s chiave del prof (${fmt(card.audio.start_s)})
+        </button>
+        <span class="small muted" style="flex:1">${esc(card.audio.lecture_title)}</span>
+      </div>`;
+  }
+
+  // Exam trick: folded by default behind Space or click
+  let trickHtml = "";
+  if (card.exam_trick) {
+    trickHtml = `
+      <div class="short-trick-box" id="feedTrickToggle">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <b style="color:var(--warn)">💡 ${card.archetipo_nome ? esc(card.archetipo_nome) + " · " : ""}Tranello d'Esame</b>
+          <span class="small faint">${feedTrickOpen ? "▲ Comprimi" : "▼ Svela (spazio)"}</span>
+        </div>
+        ${feedTrickOpen ? `<div class="md" style="margin-top:8px">${md(card.exam_trick)}</div>` : ""}
+      </div>`;
+  }
+
+  body.innerHTML = `
+    ${chipsHtml}
+    <div class="feed-filter-bar">
+      <span class="feed-counter">📱 Short ${feedIdx + 1} di ${total}</span>
+      <span class="small muted">Scorri con [↓] o [↑] · [Spazio] per audio/tranello</span>
+    </div>
+
+    <div class="short-card" id="activeShortCard">
+      <div class="short-card-header">
+        <span class="short-card-badge">📘 ${esc(card.course_name)}</span>
+        <span class="pill primary" style="font-size:11px">⚡ Concept Bite</span>
+      </div>
+      <div class="short-card-body">
+        <h2 class="short-card-title">${esc(card.title)}</h2>
+        ${card.hook_md ? `<div class="short-hook-box"><b style="color:var(--accent)">🤖 The Robotics Lens:</b><div class="md" style="margin-top:4px">${md(card.hook_md)}</div></div>` : ""}
+        ${mediaHtml}
+        ${audioHtml}
+        ${trickHtml}
+      </div>
+      <div class="short-footer">
+        <button class="btn primary sm" id="feedOpenLab">🕹️ Apri Lab Completo →</button>
+        ${card.has_pcp ? `<button class="btn sm" id="feedOpenPcp">✍️ Sfida Carta e Penna</button>` : ""}
+        <button class="btn sm ghost" id="feedNextSmall">Avanti (↓) ›</button>
+      </div>
+    </div>
+
+    <div class="short-nav-bar">
+      <button class="short-nav-btn" id="feedPrevBtn" ${feedIdx === 0 ? "disabled" : ""} title="Precedente (Freccia Su / K)">▲</button>
+      <button class="short-nav-btn primary" id="feedNextBtn" ${feedIdx >= total - 1 ? "disabled" : ""} title="Prossimo (Freccia Giù / J)">▼</button>
+    </div>
+  `;
+
+  if (card.widget && $("shortWidgetArea")) {
+    StudyHubEngines.renderWidget($("shortWidgetArea"), card.widget);
+  }
+
+  bindFeedChips(body);
+
+  $("feedNextBtn")?.addEventListener("click", nextFeedCard);
+  $("feedNextSmall")?.addEventListener("click", nextFeedCard);
+  $("feedPrevBtn")?.addEventListener("click", prevFeedCard);
+
+  $("feedTrickToggle")?.addEventListener("click", () => {
+    feedTrickOpen = !feedTrickOpen;
+    renderFeed();
+  });
+
+  $("feedOpenLab")?.addEventListener("click", () => {
+    consecutiveScrolls = 0;
+    openLesson(card.topic_id);
+  });
+
+  $("feedOpenPcp")?.addEventListener("click", () => {
+    consecutiveScrolls = 0;
+    openLesson(card.topic_id);
+  });
+
+  $("feedAudioBtn")?.addEventListener("click", (e) => {
+    const sec = +e.currentTarget.dataset.playSec;
+    const lecid = e.currentTarget.dataset.lec;
+    if (audio.src.includes(`/media/${lecid}/audio.opus`) && !audio.paused) {
+      audio.pause();
+      e.currentTarget.innerHTML = `▶ Ascolta i 25s chiave del prof (${fmt(sec)})`;
+    } else {
+      audio.src = `/media/${lecid}/audio.opus`;
+      audio.currentTime = sec;
+      audio.play().then(() => {
+        e.currentTarget.innerHTML = `❚❚ In riproduzione (${fmt(sec)})`;
+      }).catch(() => {
+        alert("Audio non disponibile per questa registrazione.");
+      });
+    }
+  });
+}
+
+function bindFeedChips(root) {
+  root.querySelectorAll("[data-fc]").forEach(btn => {
+    btn.onclick = () => {
+      feedCourse = btn.dataset.fc;
+      store.set("feedCourse", feedCourse);
+      loadFeed();
+    };
+  });
+}
+
+function nextFeedCard() {
+  if (feedIdx < feedCards.length - 1) {
+    consecutiveScrolls++;
+    if (consecutiveScrolls >= 5) {
+      showDosso = true;
+      audio.pause();
+      renderFeed();
+      return;
+    }
+    feedIdx++;
+    feedTrickOpen = false;
+    audio.pause();
+    renderFeed();
+  }
+}
+
+function prevFeedCard() {
+  if (feedIdx > 0) {
+    feedIdx--;
+    feedTrickOpen = false;
+    audio.pause();
+    renderFeed();
+  }
+}
+
+// Keyboard shortcuts for StudyTok
+document.addEventListener("keydown", (e) => {
+  if (view !== "feed" || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+  if (e.key === "ArrowDown" || e.key === "j" || e.key === "J") {
+    e.preventDefault();
+    nextFeedCard();
+  } else if (e.key === "ArrowUp" || e.key === "k" || e.key === "K") {
+    e.preventDefault();
+    prevFeedCard();
+  } else if (e.code === "Space") {
+    e.preventDefault();
+    const abtn = $("feedAudioBtn");
+    if (abtn) abtn.click();
+    else {
+      feedTrickOpen = !feedTrickOpen;
+      renderFeed();
+    }
+  } else if (e.key >= "0" && e.key <= "9") {
+    const idx = parseInt(e.key, 10);
+    const courses = activeCourses();
+    if (idx === 0) {
+      feedCourse = "";
+      store.set("feedCourse", "");
+      loadFeed();
+    } else if (idx <= courses.length) {
+      feedCourse = String(courses[idx - 1].id);
+      store.set("feedCourse", feedCourse);
+      loadFeed();
+    }
+  }
+});
+
+
+// ============================================================== EXAM X-RAY (Radiografia Appelli Reali UniVR)
+let xrayCourse = store.get("xrayCourse", ""), xrayData = null;
+
+async function loadXRay(opts = {}) {
+  const body = $("xrayBody");
+  if (!body) return;
+  if (!xrayCourse && activeCourses().length) {
+    xrayCourse = String(activeCourses()[0].id);
+    store.set("xrayCourse", xrayCourse);
+  }
+  body.innerHTML = '<div class="muted" style="text-align:center;padding:40px"><span class="spin"></span> Radiografia degli appelli in corso...</div>';
+  try {
+    const res = await getJ(`/api/courses/${xrayCourse}/exam`);
+    xrayData = res;
+    renderXRay();
+  } catch (err) {
+    body.innerHTML = `<div class="card" style="color:var(--warn)">Errore nel caricamento di Exam X-Ray: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderXRay() {
+  const body = $("xrayBody");
+  if (!body) return;
+  const coursesList = activeCourses();
+  const prof = xrayData ? xrayData.profile : null;
+
+  const chipsHtml = `
+    <div class="xray-course-chips">
+      ${coursesList.map((c, i) => `
+        <button class="xray-chip ${String(c.id) === String(xrayCourse) ? 'on' : ''}" data-xc="${c.id}">
+          <kbd>${i + 1}</kbd> ${esc(shortName(c.fullname))}
+        </button>
+      `).join("")}
+    </div>
+  `;
+
+  if (!prof) {
+    body.innerHTML = `
+      ${chipsHtml}
+      <div class="card" style="text-align:center;padding:40px">
+        <h3>Nessun profilo d'esame generato per questo corso</h3>
+        <p class="muted">StudyHub può analizzare tutti gli appelli in archivio e generare la radiografia degli archetipi ricorrenti.</p>
+        <button class="btn primary" id="xrayBuildBtn">⚡ Analizza Appelli e Genera X-Ray</button>
+      </div>
+    `;
+    $("xrayBuildBtn")?.addEventListener("click", async () => {
+      body.innerHTML = '<div class="muted" style="text-align:center;padding:40px"><span class="spin"></span> Analisi appelli con Sonnet in corso (può richiedere circa 60 secondi)...</div>';
+      try {
+        await postJ(`/api/courses/${xrayCourse}/exam/profile`, { force: true });
+        loadXRay();
+      } catch (e) {
+        alert("Errore generazione: " + e.message); loadXRay();
+      }
+    });
+    bindXRayChips(body);
+    return;
+  }
+
+  const fmt = prof.formato || {};
+  const archetipi = prof.esercizi_tipo || [];
+
+  // Formatta struttura parti in modo pulito
+  const strutturaStr = Array.isArray(fmt.parti)
+    ? fmt.parti.map(p => typeof p === 'object' && p ? (p.nome || p.titolo) : p).join(' · ')
+    : (fmt.parti || "Parte I + Parte II");
+  const durataStr = fmt.durata_min ? `${fmt.durata_min} min` : "120 min";
+
+  body.innerHTML = `
+    <div class="xray-header">
+      <div>
+        <h2 style="margin:0;font-size:22px;letter-spacing:-0.02em">🎯 Exam X-Ray: La Radiografia dell'Esame</h2>
+        <div class="muted small" style="margin-top:2px">Decodifica degli appelli reali UniVR · ${archetipi.length} Archetipi ricorrenti</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn primary sm" id="xraySimBtn">📝 Simula Appello Ufficiale</button>
+      </div>
+    </div>
+    ${chipsHtml}
+
+    <div class="xray-summary-card">
+      <div style="font-weight:700;font-size:15px;color:var(--accent)">🏛️ Regole Ufficiali & Formato del Compito</div>
+      <div class="xray-rules-grid">
+        <div class="xray-rule-item"><div class="k">⏱️ Durata</div><div class="v">${durataStr}</div></div>
+        <div class="xray-rule-item"><div class="k">📝 Struttura</div><div class="v">${esc(strutturaStr)}</div></div>
+        <div class="xray-rule-item"><div class="k">🚫 Sbarramento</div><div class="v">${esc(fmt.regole_voto || "Quiz eliminatorio")}</div></div>
+        <div class="xray-rule-item"><div class="k">🗣️ Orale</div><div class="v">${esc(fmt.orale || "Facoltativo solo per lode")}</div></div>
+        <div class="xray-rule-item"><div class="k">🧮 Materiale</div><div class="v">${esc(fmt.materiale_consentito || "Solo calcolatrice scientifica")}</div></div>
+      </div>
+    </div>
+
+    <div class="xray-header" style="margin-top:8px">
+      <h3 style="margin:0;font-size:17px">🧩 Gli Archetipi d'Esame Ricorrenti (${archetipi.length})</h3>
+      <span class="small muted">Clicca su ciascun archetipo per espandere lo schema risolutivo e i tranelli</span>
+    </div>
+
+    <div class="xray-archetipi-list">
+      ${archetipi.map((ex, idx) => {
+        const metodoStr = ex.metodo_passo_passo || ex.metodo_md || "";
+        const trapStr = ex.tranelli || ex.errori_tipici || "";
+        return `
+        <div class="xray-card">
+          <div class="xray-card-hd" data-xray-toggle="${idx}" title="Clicca per espandere / comprimere">
+            <div class="xray-card-title">
+              <span class="pill primary" style="font-size:12px;padding:3px 8px">#${idx + 1}</span>
+              <span>${esc(ex.titolo || "Archetipo d'Esame")}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              ${ex.frequenza ? `<span class="pill warn" style="font-size:11px">🔥 ${esc(ex.frequenza)}</span>` : ""}
+              ${ex.punti_tipici ? `<span class="pill ok" style="font-size:11px">💎 ${esc(ex.punti_tipici)} pt</span>` : ""}
+              <span class="small faint" id="xrayArrow_${idx}">▼</span>
+            </div>
+          </div>
+          <div class="xray-card-body" id="xrayBody_${idx}">
+            ${metodoStr ? `
+              <div class="xray-method-box">
+                <b style="color:var(--ok)">✓ Schema Risolutivo Passo-Passo:</b>
+                <div class="md" style="margin-top:6px">${md(metodoStr)}</div>
+              </div>
+            ` : ""}
+            ${trapStr ? `
+              <div class="xray-trap-box">
+                <b style="color:var(--warn)">⚠️ Tranelli del Docente & Errori Mortali da Evitare:</b>
+                <div class="md" style="margin-top:6px">${md(trapStr)}</div>
+              </div>
+            ` : ""}
+            <div style="display:flex;justify-content:flex-end;margin-top:4px">
+              <button class="btn primary sm" data-xray-train="${xrayCourse}" data-arch-title="${esc(ex.titolo || '')}">✍️ Mettiti alla prova su questo Archetipo</button>
+            </div>
+          </div>
+        </div>
+      `;
+      }).join("")}
+    </div>
+  `;
+
+  bindXRayChips(body);
+
+  // Toggle per comprimere/espandere i singoli archetipi
+  body.querySelectorAll("[data-xray-toggle]").forEach(hd => {
+    hd.addEventListener("click", () => {
+      const idx = hd.dataset.xrayToggle;
+      const b = $("xrayBody_" + idx);
+      const arrow = $("xrayArrow_" + idx);
+      if (b) {
+        const isHidden = b.style.display === "none";
+        b.style.display = isHidden ? "grid" : "none";
+        if (arrow) arrow.textContent = isHidden ? "▼" : "▶";
+      }
+    });
+  });
+
+  // Pulsante simula esame
+  $("xraySimBtn")?.addEventListener("click", async () => {
+    try {
+      body.innerHTML = '<div class="muted" style="text-align:center;padding:40px"><span class="spin"></span> Generazione simulazione dell\'esame in corso...</div>';
+      const sim = await postJ(`/api/courses/${xrayCourse}/exam/sims`, {});
+      setView("study");
+    } catch (e) {
+      alert("Simulazione non ancora pronta: " + e.message);
+      loadXRay();
+    }
+  });
+
+  body.querySelectorAll("[data-xray-train]").forEach(btn => {
+    btn.onclick = () => {
+      const archTitle = btn.dataset.archTitle;
+      store.set("studyCourse", xrayCourse);
+      setView("study");
+    };
+  });
+}
+
+function bindXRayChips(root) {
+  root.querySelectorAll("[data-xc]").forEach(btn => {
+    btn.onclick = () => {
+      xrayCourse = btn.dataset.xc;
+      store.set("xrayCourse", xrayCourse);
+      loadXRay();
+    };
+  });
+}
+
+// Keyboard shortcuts for X-Ray
+document.addEventListener("keydown", (e) => {
+  if (view !== "xray" || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+  if (e.key >= "1" && e.key <= "9") {
+    const idx = parseInt(e.key, 10);
+    const courses = activeCourses();
+    if (idx <= courses.length) {
+      xrayCourse = String(courses[idx - 1].id);
+      store.set("xrayCourse", xrayCourse);
+      loadXRay();
+    }
+  }
+});
+
 
 // ============================================================== POMODORO TIMER
 const POMO_CIRC = 2 * Math.PI * 120;
