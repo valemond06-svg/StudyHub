@@ -110,16 +110,15 @@ def _local(system: str, text: str, schema: dict, quality: str) -> LLMResult:
         raw = msg.get("reasoning_content")
 
     match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
+    text_json = match.group(0) if match else raw
+    try:
+        data = json.loads(text_json, strict=False)
+    except Exception:
         try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError as e:
+            import json_repair
+            data = json_repair.loads(text_json)
+        except Exception as e:
             raise ClaudeError(f"Local LLM JSON parse error: {e}")
-    else:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise ClaudeError(f"Local LLM no valid JSON: {raw[:200]}")
 
     model_name = res.get("model", "local-qwen")
     return LLMResult(data, "local", model_name, round(time.time() - t0, 1))

@@ -157,9 +157,17 @@ def query_llm(url: str, prompt: str, system: str, max_tokens: int = 4096, timeou
 
 def clean_json(raw: str) -> dict:
     match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    return json.loads(raw)
+    text = match.group(0) if match else raw
+    try:
+        return json.loads(text, strict=False)
+    except Exception:
+        pass
+    try:
+        import json_repair
+        return json_repair.loads(text)
+    except Exception:
+        pass
+    return json.loads(text)
 
 
 def review_matlab_code(topic_name: str, lab_data: dict) -> dict:
