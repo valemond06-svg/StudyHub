@@ -1,5 +1,7 @@
-"""Un'unica funzione per le chiamate AI "da studio", con due abbonamenti:
+"""Un'unica funzione per le chiamate AI "da studio", con tre provider in cascata:
 
+- Local LLM Cluster (PC Fisso Qwen3.6-35B-A3B / Laptop Qwen3.8-Flash-Next 125B MoE via 127.0.0.1:8081):
+  zero costi, 100% offline, privacy totale e velocità locale (~13 tok/s).
 - Gemini (Google AI Pro) tramite la CLI di Antigravity (`agy`): domande, correzioni, schede.
   Ha una quota ampia, quindi si usa per i lavori frequenti e lascia libera la finestra di Claude.
 - Claude (Pro) tramite claude_runner: Sonnet/Haiku, mai Opus. Fa da riserva se Gemini non risponde
@@ -12,9 +14,12 @@ appunti superano il limite di 32 KB di Windows.
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import time
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,14 +30,24 @@ AGY_CWD = LOCAL_DIR / "agy-cwd"
 AGY_TIMEOUT_S = 8 * 60
 GEMINI_MODELS = {"veloce": "gemini-3.8-flash-low", "accurato": "gemini-3.8-flash-high"}
 CLAUDE_MODELS = {"veloce": "haiku", "accurato": "sonnet"}
+LOCAL_LLM_URL = os.environ.get("STUDYHUB_LOCAL_LLM", "http://127.0.0.1:8081")
 
 
 @dataclass
 class LLMResult:
     data: dict
-    provider: str      # gemini | claude
+    provider: str      # local | gemini | claude
     model: str
     duration_s: float
+
+
+def _check_local() -> bool:
+    try:
+        req = urllib.request.Request(f"{LOCAL_LLM_URL}/health")
+        with urllib.request.urlopen(req, timeout=0.6) as r:
+            return r.status == 200
+    except Exception:
+        return False
 
 
 def _agy_exe() -> str | None:
@@ -44,13 +59,70 @@ def _agy_exe() -> str | None:
 
 
 def provider_order() -> list[str]:
-    """config.yaml → ai_provider: auto | gemini | claude. auto = Gemini se c'è, poi Claude."""
+    """config.yaml → ai_provider: auto | local | gemini | claude. auto = local (se cluster attivo), poi Gemini se c'è, poi Claude."""
     pref = (settings.extra.get("ai_provider") or "auto").lower()
+    if pref == "local":
+        return ["local"]
     if pref == "claude":
         return ["claude"]
     if pref == "gemini":
         return ["gemini"]
-    return ["gemini", "claude"] if _agy_exe() else ["claude"]
+
+    chain = []
+    if _check_local():
+        chain.append("local")
+    if _agy_exe():
+        chain.append("gemini")
+    chain.append("claude")
+    return chain
+
+
+def _local(system: str, text: str, schema: dict, quality: str) -> LLMResult:
+    t0 = time.time()
+    url = f"{LOCAL_LLM_URL}/v1/chat/completions"
+    prompt = (
+        f"{system}\n\nNON inserire tag <think> o ragionamenti preliminari. "
+        f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme a questo schema:\n"
+        f"{json.dumps(schema, ensure_ascii=False)}\n\nTesto di partenza:\n{text}"
+    )
+    payload = {
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2,
+        "max_tokens": 5120,
+    }
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=180) as r:
+            res = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        raise ClaudeError(f"Local LLM error: {e}")
+
+    msg = res.get("choices", [{}])[0].get("message", {})
+    raw = msg.get("content") or ""
+    if not raw.strip() and msg.get("reasoning_content"):
+        raw = msg.get("reasoning_content")
+
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError as e:
+            raise ClaudeError(f"Local LLM JSON parse error: {e}")
+    else:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ClaudeError(f"Local LLM no valid JSON: {raw[:200]}")
+
+    model_name = res.get("model", "local-qwen")
+    return LLMResult(data, "local", model_name, round(time.time() - t0, 1))
 
 
 def _gemini(system: str, text: str, schema: dict, quality: str) -> LLMResult:
@@ -95,6 +167,8 @@ def run_json(system: str, text: str, schema: dict, quality: str = "accurato") ->
     errors = []
     for prov in provider_order():
         try:
+            if prov == "local":
+                return _local(system, text, schema, quality)
             if prov == "gemini":
                 return _gemini(system, text, schema, quality)
             res = claude_run(system, [{"type": "text", "text": text}], schema, model=CLAUDE_MODELS[quality])

@@ -38,6 +38,7 @@ Come insegnare:
   domanda che lo studente dovrebbe farsi ("cosa faresti ora?") e la risposta.
 - Formule in LaTeX con $...$ e $$...$$. In italiano.
 - Circuiti e schemi visivi (FONDAMENTALE): se l'argomento riguarda circuiti elettrici (es. nodi, maglie, partitori, transitori, MOS) o concetti visivi, includi SEMPRE schemi grafici chiari! Usa diagrammi circuitali ASCII/Unicode (es. nodi contrassegnati [A], [B], versi maglie ↻, rami con resistori e generatori) oppure frammenti SVG inline. Non spiegare mai un circuito solo a parole!
+- Laboratorio Pratico & Esercizio MATLAB / Codice (FONDAMENTALE per Ingegneria): se l'argomento ha applicazioni pratiche al calcolatore, numeriche o di laboratorio (specialmente in corsi come Metodi Statistici per l'Ingegneria, Sistemi e Segnali, Visione Artificiale, Sistemi Operativi), compila SEMPRE il blocco "laboratorio_pratico"! Fornisci codice MATLAB reale, pulito, commentato, vettorizzato ed eseguibile. Spiega i comandi chiave, indica l'output della Command Window / grafico, e proponi un esercizio sfida con suggerimento e codice soluzione sbloccabile.
 - Basati sul materiale fornito; se aggiungi un chiarimento che non c'è, scrivi "(integrazione)".
 - Se nel materiale c'è il minuto della lezione (▶ mm:ss) indica nei passi "inizio_s" in secondi."""
 
@@ -70,6 +71,28 @@ SCHEMA = {
                                        "properties": {"domanda_md": {"type": "string"},
                                                       "risposta_md": {"type": "string"}}}},
                                    "risultato_md": {"type": "string"}}},
+        "laboratorio_pratico": {
+            "type": "object", "additionalProperties": False,
+            "required": ["titolo", "software", "consegna_md", "codice", "spiegazione_md", "output_atteso", "sfida"],
+            "properties": {
+                "titolo": {"type": "string"},
+                "software": {"type": "string", "description": "es. MATLAB, GNU Octave, Python, C"},
+                "dataset": {"type": "string", "description": "nome dataset es. icecream_example.dat o vettore campionario"},
+                "consegna_md": {"type": "string"},
+                "codice": {"type": "string", "description": "script MATLAB completo ed eseguibile con commenti"},
+                "spiegazione_md": {"type": "string", "description": "spiegazione dei comandi chiave e sintassi"},
+                "output_atteso": {"type": "string", "description": "output testuale della command window o descrizione del grafico"},
+                "sfida": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["consegna_md", "suggerimento_md", "soluzione_codice"],
+                    "properties": {
+                        "consegna_md": {"type": "string"},
+                        "suggerimento_md": {"type": "string"},
+                        "soluzione_codice": {"type": "string"}
+                    }
+                }
+            }
+        },
         "errori_tipici": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["errore", "correzione"],
             "properties": {"errore": {"type": "string"}, "correzione": {"type": "string"}}}},

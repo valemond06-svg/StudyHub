@@ -20,6 +20,48 @@
             --accent: #7d9bff; --accent-ink: #0d1020; --accent-soft: #1f2640; --ok: #5ccb8a; --ok-soft: #173024;
             --warn: #f0b252; --warn-soft: #33270f; --shadow: none; }
   }
+  [data-theme="dark"] {
+    --bg: #121214; --panel: #1b1b1e; --ink: #ededf0; --muted: #a0a0a8; --faint: #6c6c74; --line: #2a2a2f;
+    --accent: #7d9bff; --accent-ink: #0d1020; --accent-soft: #1f2640; --ok: #5ccb8a; --ok-soft: #173024;
+    --warn: #f0b252; --warn-soft: #33270f; --shadow: none;
+  }
+  [data-theme="light"] {
+    --bg: #f5f4f1; --panel: #ffffff; --ink: #1c1c1e; --muted: #6e6e73; --faint: #a1a1a6; --line: #e6e4df;
+    --accent: #3159d6; --accent-ink: #ffffff; --accent-soft: #eaf0ff; --ok: #23874f; --ok-soft: #e5f4ea;
+    --warn: #b26a00; --warn-soft: #fff3dc; --stage: #0f0f10;
+    --r: 12px; --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+  }
+  [data-theme="oled"] {
+    --bg: #000000; --panel: #0a0a0c; --ink: #f0f0f5; --muted: #9494a0; --faint: #555560; --line: #1c1c22;
+    --accent: #82a0ff; --accent-ink: #000000; --accent-soft: #141b33; --ok: #4ade80; --ok-soft: #0d2818;
+    --warn: #fbbf24; --warn-soft: #2e2305; --shadow: none;
+  }
+
+  /* --- Laboratorio MATLAB & Codice --- */
+  .lab-box { margin: 16px 0; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); overflow: hidden; box-shadow: var(--shadow); }
+  .lab-tabs { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .code-container { padding: 14px 16px; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.6; }
+  .matlab-code { margin: 0; background: none; font-family: inherit; font-size: inherit; }
+  .matlab-code .m-com { color: #16a34a; font-style: italic; }
+  .matlab-code .m-kwd { color: #e11d48; font-weight: 600; }
+  .matlab-code .m-str { color: #ea580c; }
+  .matlab-code .m-fn  { color: #0284c7; font-weight: 600; }
+  .matlab-code .m-num { color: #9333ea; }
+  .output-container { padding: 14px 16px; background: #0b0f19; color: #f8fafc; font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.5; border-radius: 0 0 var(--r) var(--r); }
+  .output-header { font-size: 11px; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; letter-spacing: .05em; font-weight: 600; }
+  .console-output { margin: 0; white-space: pre-wrap; font-family: inherit; color: #38bdf8; }
+  .plot-desc { margin-top: 14px; padding: 10px 14px; background: rgba(255,255,255,0.06); border-radius: 8px; color: #e2e8f0; font-size: 12.5px; border-left: 3px solid #38bdf8; }
+  .sfida-box { margin: 20px 0 16px; padding: 16px 18px; border: 1px dashed var(--accent); border-radius: var(--r); background: var(--accent-soft); }
+  .sfida-title { font-weight: 700; font-size: 14px; color: var(--accent); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .sfida-actions { display: flex; gap: 8px; margin: 12px 0 6px; }
+  .sfida-hint { padding: 10px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-top: 8px; font-size: 13px; }
+  .sfida-sol { padding: 12px 14px; background: var(--panel); border: 1px solid var(--ok); border-radius: 8px; margin-top: 8px; }
+  .sol-title { font-size: 12px; font-weight: 600; color: var(--ok); margin-bottom: 6px; }
+  .theme-bar { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 10px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .theme-btn { border: 1px solid var(--line); background: var(--bg); border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; color: var(--muted); }
+  .theme-btn:hover { color: var(--ink); border-color: var(--faint); }
+  .toast { position: fixed; bottom: 24px; right: 24px; padding: 10px 18px; background: var(--ink); color: var(--panel); border-radius: 8px; font-weight: 600; font-size: 13px; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.25); animation: toastIn .2s ease; }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
@@ -425,6 +467,11 @@
 <div class="app">
   <nav class="rail">
     <div class="brand">StudyHub</div>
+    <div class="theme-bar">
+      <button type="button" class="theme-btn" id="btnThemeToggle" title="Cambia tema (Chiaro / Scuro / OLED)">
+        <span id="themeIcon">🌓</span> <span id="themeLabel" class="small">Tema Auto</span>
+      </button>
+    </div>
     <button class="nav" data-view="study"><span class="ico">◎</span>Studia</button>
     <button class="nav" data-view="lessons"><span class="ico">▶</span>Video lezioni</button>
     <button class="nav" data-view="tutor"><span class="ico">✦</span>Tutor</button>
@@ -568,9 +615,71 @@ function md(text) {
   html = html.replace(/<pre><code class="language-circuit">([\s\S]*?)<\/code><\/pre>/g, (_, code) =>
     `<div class="circuit-box"><div class="small" style="font-weight:700;margin-bottom:8px;color:#38bdf8;letter-spacing:0.04em">⚡ SCHEMA DEL CIRCUITO</div><pre class="circuit">${code}</pre></div>`
   );
+  html = html.replace(/<pre><code class="language-(?:matlab|octave|m)">([\s\S]*?)<\/code><\/pre>/g, (_, code) =>
+    `<div class="lab-box"><div class="lab-tabs"><span class="small" style="font-weight:700;color:var(--accent)">💻 MATLAB SCRIPT</span></div><div class="code-container"><pre class="matlab-code"><code>${highlightMatlab(code)}</code></pre></div></div>`
+  );
   return html.replace(/▶\s*(\d{1,2}(?::\d{2}){1,2})/g, (_, ts) => `<span class="ts" data-t="${ts.split(":").reduce((a, b) => a * 60 + +b, 0)}">▶ ${ts}</span>`);
 }
 const mdInline = (t) => md(t).replace(/^<p>|<\/p>\s*$/g, "");
+
+function highlightMatlab(code) {
+  if (!code) return "";
+  const escHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const lines = code.split("\n");
+  const kwds = new Set(["function","end","if","else","elseif","for","while","switch","case","otherwise","try","catch","return","break","continue","global","persistent","clear","clc","close","hold","grid"]);
+  const fns = new Set(["mean","median","mode","std","var","cov","corr","corrcoef","histogram","histcounts","boxplot","plot","subplot","scatter","stem","figure","title","xlabel","ylabel","legend","xlim","ylim","load","save","readtable","regress","fitlm","normpdf","normcdf","norminv","tpdf","tcdf","tinv","chi2pdf","chi2cdf","chi2inv","fpdf","fcdf","finv","ttest","ttest2","anova1","length","size","sum","prod","sqrt","exp","log","zeros","ones","eye","linspace","rand","randn","disp","fprintf"]);
+  return lines.map((line) => {
+    let comIdx = -1, inStr = false;
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === "'" || line[i] === '"') inStr = !inStr;
+      else if (line[i] === "%" && !inStr) { comIdx = i; break; }
+    }
+    let codePart = comIdx !== -1 ? line.slice(0, comIdx) : line;
+    let comPart = comIdx !== -1 ? line.slice(comIdx) : "";
+    codePart = escHtml(codePart);
+    codePart = codePart.replace(/(['"][^'"]*['"])/g, '<span class="m-str">$1</span>');
+    codePart = codePart.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="m-num">$1</span>');
+    codePart = codePart.replace(/\b([a-zA-Z_]\w*)\b/g, (m) => {
+      if (kwds.has(m)) return `<span class="m-kwd">${m}</span>`;
+      if (fns.has(m)) return `<span class="m-fn">${m}</span>`;
+      return m;
+    });
+    return codePart + (comPart ? `<span class="m-com">${escHtml(comPart)}</span>` : "");
+  }).join("\n");
+}
+
+function showToast(msg) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => {
+    t.style.opacity = "0";
+    t.style.transition = "opacity .3s ease";
+    setTimeout(() => t.remove(), 300);
+  }, 2200);
+}
+
+const THEMES = ["auto", "dark", "oled", "light"];
+function getTheme() { return localStorage.getItem("studyhub_theme") || "auto"; }
+function setTheme(th) {
+  if (th === "auto") { delete document.documentElement.dataset.theme; }
+  else { document.documentElement.dataset.theme = th; }
+  localStorage.setItem("studyhub_theme", th);
+  const icon = $("themeIcon"), lbl = $("themeLabel");
+  if (icon && lbl) {
+    if (th === "dark") { icon.textContent = "🌙"; lbl.textContent = "Scuro"; }
+    else if (th === "oled") { icon.textContent = "🖤"; lbl.textContent = "OLED"; }
+    else if (th === "light") { icon.textContent = "☀️"; lbl.textContent = "Chiaro"; }
+    else { icon.textContent = "🌓"; lbl.textContent = "Auto"; }
+  }
+}
+function cycleTheme() {
+  const cur = getTheme();
+  const next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
+  setTheme(next);
+  showToast(`Tema impostato: ${next.toUpperCase()}`);
+}
 let COURSES = [];
 const activeCourses = () => COURSES.filter((c) => c.folder && c.active);
 
@@ -942,7 +1051,7 @@ async function loadLesson() {
 }
 const opts_inSession = () => !!(les && les.head);
 function lessonPhases() {
-  const L = les.data; return ["intro", ...L.passi.map((_, i) => "p" + i), "esempio", ...(L.errori_tipici.length ? ["errori"] : []), "fine"];
+  const L = les.data; return ["intro", ...L.passi.map((_, i) => "p" + i), "esempio", ...(L.laboratorio_pratico ? ["pratica"] : []), ...(L.errori_tipici && L.errori_tipici.length ? ["errori"] : []), "fine"];
 }
 function lesNext() {
   const ph = lessonPhases(), cur = les.phase === "passo" ? "p" + les.i : les.phase, k = ph.indexOf(cur) + 1;
@@ -1062,6 +1171,46 @@ function renderLesson() {
         ${k < les.ex ? `<div class="md">${md(s.risposta_md)}</div>` : `<div><button class="btn sm primary" id="lReveal">Ci ho pensato: mostrami il passo</button></div>`}</div>` : "").join("")}
       ${les.ex >= E.passi.length ? `<div class="why md"><b>Risultato.</b> ${md(E.risultato_md)}</div><div><button class="btn primary" id="lNext">Avanti →</button></div>` : ""}
       ${helperHtml()}`;
+  } else if (les.phase === "pratica") {
+    const LP = L.laboratorio_pratico;
+    ctx = `${LP.titolo || ""}\n${LP.consegna_md || ""}\n${LP.spiegazione_md || ""}`;
+    inner = `<div class="stepname">Laboratorio Sperimentale · ${esc(LP.software || "MATLAB")}</div>
+      <h2>${esc(LP.titolo || "Laboratorio Pratico al Calcolatore")}</h2>
+      ${LP.dataset ? `<div class="small muted" style="margin-bottom:8px"><b>Dataset / File:</b> <code>${esc(LP.dataset)}</code></div>` : ""}
+      <div class="md">${md(LP.consegna_md)}</div>
+      <div class="lab-box">
+        <div class="lab-tabs">
+          <span class="small" style="font-weight:700;color:var(--accent)">💻 SCRIPT ${esc(LP.software || "MATLAB")}</span>
+          <div style="flex:1"></div>
+          <button class="btn sm" id="btnCopyCode" title="Copia codice negli appunti">📋 Copia</button>
+          <a class="btn sm" href="/api/study/topics/${t.id}/script.m" download="script_topic_${t.id}.m" title="Scarica script .m">💾 Scarica .m</a>
+        </div>
+        <div class="code-container">
+          <pre class="matlab-code"><code>${highlightMatlab(LP.codice)}</code></pre>
+        </div>
+        ${LP.output_atteso ? `
+        <div class="output-container">
+          <div class="output-header">Output Atteso (Command Window / Grafico)</div>
+          <pre class="console-output">${esc(LP.output_atteso)}</pre>
+        </div>` : ""}
+      </div>
+      <div class="md" style="margin-top:14px">${md(LP.spiegazione_md)}</div>
+      ${LP.sfida ? `
+      <div class="sfida-box">
+        <div class="sfida-title">🎯 Sfida Pratica: Mettiti alla prova</div>
+        <div class="md">${md(LP.sfida.consegna_md)}</div>
+        <div class="sfida-actions">
+          ${LP.sfida.suggerimento_md ? `<button class="btn sm ghost" id="btnToggleHint">💡 Suggerimento</button>` : ""}
+          <button class="btn sm ghost" id="btnToggleSol">🔓 Mostra Soluzione</button>
+        </div>
+        <div id="sfidaHint" class="sfida-hint" style="display:none"><div class="md"><b>Suggerimento:</b> ${md(LP.sfida.suggerimento_md || "")}</div></div>
+        <div id="sfidaSol" class="sfida-sol" style="display:none">
+          <div class="sol-title">✓ Soluzione Codice:</div>
+          <pre class="matlab-code"><code>${highlightMatlab(LP.sfida.soluzione_codice || "")}</code></pre>
+        </div>
+      </div>` : ""}
+      ${helperHtml()}
+      <div style="margin-top:16px"><button class="btn primary" id="lNext">Avanti →</button></div>`;
   } else if (les.phase === "errori") {
     inner = `<div class="stepname">Errori che costano punti</div><div class="muted small">Prima di aprirli, chiediti perché sono sbagliati.</div>
       ${L.errori_tipici.map((e) => `<div class="errcard"><div>✗ ${mdInline(e.errore)}</div><div class="fix">✓ ${mdInline(e.correzione)}</div></div>`).join("")}
@@ -1075,6 +1224,20 @@ function renderLesson() {
   body.innerHTML = head + `<div class="card lsn">${dots}${inner}</div>`;
   $("lExit")?.addEventListener("click", () => { clearTimeout(lesPoll); les = null; loadStudyCourse(t.course_id); });
   $("lNext")?.addEventListener("click", lesNext);
+  $("btnCopyCode")?.addEventListener("click", () => {
+    if (L.laboratorio_pratico?.codice) {
+      navigator.clipboard.writeText(L.laboratorio_pratico.codice);
+      showToast("Codice copiato negli appunti!");
+    }
+  });
+  $("btnToggleHint")?.addEventListener("click", () => {
+    const el = $("sfidaHint");
+    if (el) el.style.display = el.style.display === "none" ? "block" : "none";
+  });
+  $("btnToggleSol")?.addEventListener("click", () => {
+    const el = $("sfidaSol");
+    if (el) el.style.display = el.style.display === "none" ? "block" : "none";
+  });
   body.querySelectorAll("[data-v]").forEach((b) => (b.onclick = () => {
     const j = +b.dataset.v, v = L.passi[les.i].verifica; les.answers[les.i] = j; if (j === v.corretta) les.firstTry++; renderLesson(); }));
   $("lReveal")?.addEventListener("click", () => { les.ex++; renderLesson(); });
@@ -1894,6 +2057,8 @@ document.addEventListener("keydown", (e) => {
 
 // ============================================================== avvio
 (async () => {
+  setTheme(getTheme());
+  $("btnThemeToggle")?.addEventListener("click", cycleTheme);
   COURSES = await getJ("/api/courses");
   setView("study");  // l'app si apre sempre su Studia (corso e punto in cui eri restano ricordati)
   refreshFoot(); setInterval(refreshFoot, 60000);

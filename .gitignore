@@ -9,6 +9,8 @@ migration_plan.json
 media_migration_log.json
 PIANO.md
 backend/scripts/
+1_Anno/
+2_Anno/
 
 # Ambiente e cache
 __pycache__/

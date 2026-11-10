@@ -654,6 +654,24 @@ def study_topic(topic_id: int):
     return {**dict(t), "units": units}
 
 
+@app.get("/api/study/topics/{topic_id}/script.m")
+def study_topic_script_m(topic_id: int):
+    """Scarica lo script MATLAB dell'argomento (.m), pronto per l'esecuzione in MATLAB/Octave."""
+    from ..study import lesson
+    try:
+        out = lesson.get(topic_id)
+    except KeyError:
+        raise HTTPException(404, "Argomento non trovato")
+    lab = (out.get("lesson") or {}).get("laboratorio_pratico")
+    if not lab or not lab.get("codice"):
+        raise HTTPException(404, "Nessuno script di laboratorio pratico disponibile per questo argomento")
+    
+    code = lab["codice"]
+    filename = f"lab_topic_{topic_id}.m"
+    return PlainTextResponse(code, media_type="text/x-matlab",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
 # --- Export e novità ---------------------------------------------------------------
 
 def _download(path: Path, media_type: str) -> FileResponse:
