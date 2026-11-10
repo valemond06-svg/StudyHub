@@ -41,6 +41,20 @@ def courses():
     return [dict(r) for r in rows]
 
 
+@app.get("/api/courses/{course_id}")
+def course_detail(course_id: int):
+    with session() as db:
+        row = db.execute(
+            """SELECT c.id, c.fullname, c.year_of_study, c.passed, c.active, c.priority, c.folder,
+                      COUNT(l.id) AS lectures, SUM(l.status IN ('media_ok','trascritta')) AS ready
+               FROM courses c LEFT JOIN lectures l ON l.course_id = c.id
+               WHERE c.id = ? GROUP BY c.id""", (course_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Course not found")
+        return dict(row)
+
+
 @app.get("/api/courses/{course_id}/lectures")
 def lectures(course_id: int):
     with session() as db:
