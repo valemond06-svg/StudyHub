@@ -15,32 +15,47 @@ from __future__ import annotations
 import json
 import queue
 import threading
+from dataclasses import asdict
 from datetime import datetime
 
 from ..ai.llm import run_json
 from ..db import session
+from .archetype import get_course_archetype
 from .bank import _unit_text
 
 MAX_SOURCE_CHARS = 45_000
 
-SYSTEM = """Sei il miglior tutor universitario possibile per uno studente di Ingegneria che si annoia facilmente
-ma deve preparare l'esame SUL SERIO. Insegna UN argomento partendo dal materiale del corso (appunti delle
-lezioni, trascrizioni, slide, dispense, esercitazioni): lo studente non deve aver bisogno di rivedere i video.
+BASE_SYSTEM = """Sei il miglior docente e tutor universitario di Ingegneria (UniVR).
+Insegna l'argomento in modo rigoroso, chiaro e orientato sia alla teoria d'esame sia alla pratica applicativa.
 
-Come insegnare:
-- Parti dal perché: a cosa serve, dove si usa, perché è all'esame. Poi dall'intuizione, poi il formalismo.
-- Passi brevi (60-140 parole ciascuno), uno per idea, in ordine logico. Linguaggio semplice e diretto
-  (dai del tu), ma rigoroso: definizioni ed enunciati esatti, come li vuole il docente.
-- "intuizione_md": un'immagine mentale, un'analogia o un caso concreto che fa "scattare" l'idea.
-- Ogni passo ha una mini-verifica IMMEDIATA sul passo stesso (non banale, non a trabocchetto) con la spiegazione
-  del perché la risposta è quella.
-- L'esempio svolto deve essere nello stile dell'esame: dividi la soluzione in passi; per ogni passo scrivi la
-  domanda che lo studente dovrebbe farsi ("cosa faresti ora?") e la risposta.
-- Formule in LaTeX con $...$ e $$...$$. In italiano.
-- Circuiti e schemi visivi (FONDAMENTALE): se l'argomento riguarda circuiti elettrici (es. nodi, maglie, partitori, transitori, MOS) o concetti visivi, includi SEMPRE schemi grafici chiari! Usa diagrammi circuitali ASCII/Unicode (es. nodi contrassegnati [A], [B], versi maglie ↻, rami con resistori e generatori) oppure frammenti SVG inline. Non spiegare mai un circuito solo a parole!
-- Laboratorio Pratico & Esercizio MATLAB / Codice (FONDAMENTALE per Ingegneria): se l'argomento ha applicazioni pratiche al calcolatore, numeriche o di laboratorio (specialmente in corsi come Metodi Statistici per l'Ingegneria, Sistemi e Segnali, Visione Artificiale, Sistemi Operativi), compila SEMPRE il blocco "laboratorio_pratico"! Fornisci codice MATLAB reale, pulito, commentato, vettorizzato ed eseguibile. Spiega i comandi chiave, indica l'output della Command Window / grafico, e proponi un esercizio sfida con suggerimento e codice soluzione sbloccabile.
-- Basati sul materiale fornito; se aggiungi un chiarimento che non c'è, scrivi "(integrazione)".
-- Se nel materiale c'è il minuto della lezione (▶ mm:ss) indica nei passi "inizio_s" in secondi."""
+Regole tassative per la lezione:
+1. "perche_md": Spiega a cosa serve concretamente l'argomento nell'ingegneria e perché è fondamentale all'esame.
+2. "passi": 3-5 passi brevi, chiari, logici. Ognuno con spiegazione_md, intuizione_md (analogia o caso concreto), e verifica a risposta multipla non banale.
+3. "esempio": Esempio da esame svolto passo-passo (domanda/risposta per ogni passaggio) con risultato finale chiaro.
+4. "laboratorio_pratico" (FONDAMENTALE per Ingegneria):
+   - "titolo": Titolo del laboratorio pratico / palestra di calcolo / analisi.
+   - "software": Software o ambiente di riferimento (es. MATLAB, GCC/POSIX C, Python/OpenCV, KaTeX/Analisi).
+   - "dataset": Dataset, circuito, o matrice dati di partenza.
+   - "consegna_md": Descrizione precisa dell'obiettivo pratico.
+   - "codice": Codice sorgente completo, commentato riga per riga, pulito ed eseguibile (o schema circuitale ASCII completo, o passaggi di dimostrazione formale).
+   - "spiegazione_md": Spiegazione approfondita dei comandi chiave, della sintassi o delle regole matematiche/circuitali utilizzate.
+   - "output_atteso": Output esatto della console, del terminale o verifica numerica.
+   - "sfida": Esercizio sfida per lo studente con "consegna_md", "suggerimento_md" e "soluzione_codice" (codice o calcolo completo della soluzione).
+5. "errori_tipici": 2-3 errori comuni commessi dagli studenti (sia concettuali sia di sintassi/calcolo).
+6. "riassunto_md": Formule, teoremi e comandi chiave da ricordare a memoria."""
+
+
+def build_system_prompt(course_id: int, course_name: str) -> str:
+    arch = get_course_archetype(course_id, course_name)
+    return (
+        f"{BASE_SYSTEM}\n\n"
+        f"ARCHETIPO DIDATTICO ED ESAME PER QUESTO CORSO ({arch.title} - {arch.badge}):\n"
+        f"{arch.system_prompt_addon}\n\n"
+        f"METODOLOGIA DI STUDIO ED ESAME:\n{arch.study_methodology_md}\n\n"
+        f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme allo schema richiesto."
+    )
+
+SYSTEM = BASE_SYSTEM
 
 SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -142,8 +157,20 @@ def generate(topic_id: int) -> dict:
               f"Altri argomenti del corso (NON spiegarli qui, al massimo richiamali):\n"
               + "\n".join(f"- {s}" for s in siblings[:80])
               + f"\n\n=== Materiale del corso ===\n{material}\n\nScrivi la lezione interattiva su «{t['name']}».")
-    res = run_json(SYSTEM, prompt, SCHEMA, quality="accurato")
+    arch = get_course_archetype(t["course_id"], course)
+    sys_prompt = build_system_prompt(t["course_id"], course)
+    res = run_json(sys_prompt, prompt, SCHEMA, quality="accurato")
     data = res.data
+    if data.get("laboratorio_pratico"):
+        lab = data["laboratorio_pratico"]
+        lab.setdefault("archetype_id", arch.archetype_id)
+        lab.setdefault("badge", arch.badge)
+        lab.setdefault("software", arch.software_default)
+        lab.setdefault("file_extension", arch.file_extension)
+        lab.setdefault("button_label", arch.lab_button_label)
+        lab.setdefault("console_title", arch.console_title)
+        lab.setdefault("code_language", arch.code_language)
+        lab.setdefault("artifact_name", f"{arch.artifact_name.split('.')[0]}_{topic_id}{arch.file_extension}")
     import random
     for p in data.get("passi", []):
         v = p.get("verifica")
@@ -230,10 +257,22 @@ def get(topic_id: int) -> dict:
         lec = db.execute("SELECT title FROM lectures WHERE id=?", (t["lecture_id"],)).fetchone() if t and t["lecture_id"] else None
     if not t:
         raise KeyError(topic_id)
-    out = {"topic": {**dict(t), "lecture": lec[0] if lec else None}, "status": row["status"] if row else None,
+    arch = get_course_archetype(t["course_id"])
+    out = {"topic": {**dict(t), "lecture": lec[0] if lec else None}, "archetype": asdict(arch),
+           "status": row["status"] if row else None,
            "message": row["message"] if row else None, "completed_at": row["completed_at"] if row else None}
     if row and row["status"] == "pronta":
-        out["lesson"] = json.loads(row["data"])
+        les_data = json.loads(row["data"])
+        if les_data.get("laboratorio_pratico"):
+            lab = les_data["laboratorio_pratico"]
+            lab.setdefault("archetype_id", arch.archetype_id)
+            lab.setdefault("badge", arch.badge)
+            lab.setdefault("button_label", arch.lab_button_label)
+            lab.setdefault("console_title", arch.console_title)
+            lab.setdefault("code_language", arch.code_language)
+            lab.setdefault("file_extension", arch.file_extension)
+            lab.setdefault("artifact_name", f"{arch.artifact_name.split('.')[0]}_{topic_id}{arch.file_extension}")
+        out["lesson"] = les_data
     return out
 
 

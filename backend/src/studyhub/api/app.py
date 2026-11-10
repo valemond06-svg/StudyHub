@@ -398,13 +398,23 @@ def study_courses():
         ids = [r[0] for r in db.execute("""SELECT id FROM courses WHERE active=1 AND folder IS NOT NULL
                                            ORDER BY priority DESC, year_of_study DESC, fullname""")]
     out = []
+    from ..study.archetype import get_course_archetype
     for cid in ids:
         ov, pr = mastery.overview(cid), bank.prepare_status(cid)
         nxt = next(((i + 1, t["name"]) for i, t in enumerate(ov["topics"]) if not t["learned"]), None)
-        out.append({"id": cid, "name": ov["course"]["fullname"], "ready_exam": ov["ready_exam"], "exam": ov["exam"],
-                    "learned": sum(1 for t in ov["topics"] if t["learned"]), "next": nxt,
-                    "n_topics": len(ov["topics"]), "n_items": ov["n_items"], "due": ov["due"],
-                    "units": pr["units"], "running": pr["running"]})
+        arch = get_course_archetype(cid, ov["course"]["fullname"])
+        out.append({
+            "id": cid, "name": ov["course"]["fullname"],
+            "archetype_id": arch.archetype_id,
+            "archetype_title": arch.title,
+            "archetype_badge": arch.badge,
+            "accent_color": arch.accent_color,
+            "software_default": arch.software_default,
+            "ready_exam": ov["ready_exam"], "exam": ov["exam"],
+            "learned": sum(1 for t in ov["topics"] if t["learned"]), "next": nxt,
+            "n_topics": len(ov["topics"]), "n_items": ov["n_items"], "due": ov["due"],
+            "units": pr["units"], "running": pr["running"]
+        })
     out.sort(key=lambda c: (c["n_items"] == 0 and not c["units"], c["exam"] is None))
     return out
 
@@ -652,6 +662,46 @@ def study_topic(topic_id: int):
             """SELECT DISTINCT u.kind, u.ref_id, u.title, u.page_from FROM study_items i
                JOIN study_units u ON u.id=i.unit_id WHERE i.topic_id=?""", (topic_id,))]
     return {**dict(t), "units": units}
+
+
+@app.get("/api/courses/{course_id}/archetype")
+def get_course_archetype_api(course_id: int):
+    """Restituisce il profilo didattico adattivo, il formato esame e le strategie per il corso."""
+    from dataclasses import asdict
+    from ..study.archetype import get_course_archetype
+    with session() as db:
+        course = db.execute("SELECT fullname FROM courses WHERE id=?", (course_id,)).fetchone()
+        name = course[0] if course else ""
+    return asdict(get_course_archetype(course_id, name))
+
+
+@app.get("/api/courses/{course_id}/moodle-strategy")
+def get_course_moodle_strategy_api(course_id: int):
+    """Restituisce la strategia adattiva di download e classificazione dei materiali Moodle per il corso."""
+    from dataclasses import asdict
+    from ..study.moodle_strategy import evaluate_course_moodle_strategy
+    return asdict(evaluate_course_moodle_strategy(course_id))
+
+
+@app.get("/api/study/topics/{topic_id}/artifact")
+def study_topic_artifact(topic_id: int):
+    """Scarica il file di laboratorio pratico (es. .m per MATLAB, .c per C/POSIX, .py per Python, .cir per SPICE, .tex per Matematica)."""
+    from ..study import lesson
+    from ..study.archetype import get_course_archetype
+    try:
+        out = lesson.get(topic_id)
+    except KeyError:
+        raise HTTPException(404, "Argomento non trovato")
+    lab = (out.get("lesson") or {}).get("laboratorio_pratico")
+    if not lab or not lab.get("codice"):
+        raise HTTPException(404, "Nessun laboratorio pratico disponibile per questo argomento")
+    
+    course_id = out["topic"]["course_id"]
+    arch = get_course_archetype(course_id)
+    code = lab["codice"]
+    filename = f"lab_{arch.archetype_id.lower()}_topic_{topic_id}{arch.file_extension}"
+    return PlainTextResponse(code, media_type=arch.mime_type,
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.get("/api/study/topics/{topic_id}/script.m")

@@ -613,19 +613,67 @@ function md(text) {
   let html = marked.parse(s, { mangle: false, headerIds: false });
   html = html.replace(/\u0000(\d+)\u0000/g, (_, i) => { try { return katex.renderToString(math[i].tex, { displayMode: math[i].display, throwOnError: false }); } catch { return esc(math[i].tex); } });
   html = html.replace(/<pre><code class="language-circuit">([\s\S]*?)<\/code><\/pre>/g, (_, code) =>
-    `<div class="circuit-box"><div class="small" style="font-weight:700;margin-bottom:8px;color:#38bdf8;letter-spacing:0.04em">⚡ SCHEMA DEL CIRCUITO</div><pre class="circuit">${code}</pre></div>`
+    `<div class="circuit-box"><div class="small" style="font-weight:700;margin-bottom:8px;color:#f59e0b;letter-spacing:0.04em">⚡ SCHEMA DEL CIRCUITO</div><pre class="circuit">${code}</pre></div>`
   );
   html = html.replace(/<pre><code class="language-(?:matlab|octave|m)">([\s\S]*?)<\/code><\/pre>/g, (_, code) =>
-    `<div class="lab-box"><div class="lab-tabs"><span class="small" style="font-weight:700;color:var(--accent)">💻 MATLAB SCRIPT</span></div><div class="code-container"><pre class="matlab-code"><code>${highlightMatlab(code)}</code></pre></div></div>`
+    `<div class="lab-box"><div class="lab-tabs"><span class="small" style="font-weight:700;color:var(--accent)">🔬 MATLAB / OCTAVE</span></div><div class="code-container"><pre class="matlab-code"><code>${highlightAdaptiveCode(code, "matlab")}</code></pre></div></div>`
+  );
+  html = html.replace(/<pre><code class="language-(?:c|cpp|h)">([\s\S]*?)<\/code><\/pre>/g, (_, code) =>
+    `<div class="lab-box"><div class="lab-tabs"><span class="small" style="font-weight:700;color:#10b981">💻 SORGENTE C (POSIX)</span></div><div class="code-container"><pre class="matlab-code"><code>${highlightAdaptiveCode(code, "c")}</code></pre></div></div>`
+  );
+  html = html.replace(/<pre><code class="language-(?:python|py)">([\s\S]*?)<\/code><\/pre>/g, (_, code) =>
+    `<div class="lab-box"><div class="lab-tabs"><span class="small" style="font-weight:700;color:#06b6d4">🐍 SCRIPT PYTHON / OPENCV</span></div><div class="code-container"><pre class="matlab-code"><code>${highlightAdaptiveCode(code, "python")}</code></pre></div></div>`
   );
   return html.replace(/▶\s*(\d{1,2}(?::\d{2}){1,2})/g, (_, ts) => `<span class="ts" data-t="${ts.split(":").reduce((a, b) => a * 60 + +b, 0)}">▶ ${ts}</span>`);
 }
 const mdInline = (t) => md(t).replace(/^<p>|<\/p>\s*$/g, "");
 
-function highlightMatlab(code) {
+function highlightAdaptiveCode(code, lang = "matlab") {
   if (!code) return "";
   const escHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const lines = code.split("\n");
+  lang = (lang || "matlab").toLowerCase();
+
+  if (lang === "c" || lang === "cpp" || lang === "h" || lang === "csrc") {
+    const kwds = new Set(["int","char","void","float","double","long","short","unsigned","signed","struct","union","enum","typedef","sizeof","if","else","for","while","do","switch","case","default","break","continue","return","goto","static","extern","const","volatile","auto","register"]);
+    const fns = new Set(["printf","fprintf","sprintf","scanf","malloc","calloc","realloc","free","exit","perror","fork","execvp","execlp","wait","waitpid","pthread_create","pthread_join","pthread_mutex_lock","pthread_mutex_unlock","pthread_mutex_init","sem_wait","sem_post","sem_init","pipe","read","write","close","open","sleep","usleep"]);
+    return lines.map((line) => {
+      let comIdx = line.indexOf("//");
+      let codePart = comIdx !== -1 ? line.slice(0, comIdx) : line;
+      let comPart = comIdx !== -1 ? line.slice(comIdx) : "";
+      codePart = escHtml(codePart);
+      codePart = codePart.replace(/(#include\s+&lt;[^&]+&gt;|#define\s+\w+)/g, '<span style="color:#f43f5e;font-weight:700">$1</span>');
+      codePart = codePart.replace(/(['"][^'"]*['"])/g, '<span class="m-str">$1</span>');
+      codePart = codePart.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="m-num">$1</span>');
+      codePart = codePart.replace(/\b([a-zA-Z_]\w*)\b/g, (m) => {
+        if (kwds.has(m)) return `<span class="m-kwd">${m}</span>`;
+        if (fns.has(m)) return `<span class="m-fn" style="color:#38bdf8">${m}</span>`;
+        return m;
+      });
+      return codePart + (comPart ? `<span class="m-com">${escHtml(comPart)}</span>` : "");
+    }).join("\n");
+  }
+
+  if (lang === "python" || lang === "py") {
+    const kwds = new Set(["def","class","return","import","from","as","if","elif","else","for","while","in","not","and","or","is","try","except","finally","with","lambda","yield","pass","break","continue","global","True","False","None"]);
+    const fns = new Set(["print","len","range","enumerate","zip","map","filter","sorted","sum","min","max","int","float","str","list","dict","set","tuple","cv2","np","plt","imread","imshow","imwrite","cvtColor","GaussianBlur","Sobel","Canny","findContours"]);
+    return lines.map((line) => {
+      let comIdx = line.indexOf("#");
+      let codePart = comIdx !== -1 ? line.slice(0, comIdx) : line;
+      let comPart = comIdx !== -1 ? line.slice(comIdx) : "";
+      codePart = escHtml(codePart);
+      codePart = codePart.replace(/(['"][^'"]*['"])/g, '<span class="m-str">$1</span>');
+      codePart = codePart.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="m-num">$1</span>');
+      codePart = codePart.replace(/\b([a-zA-Z_]\w*)\b/g, (m) => {
+        if (kwds.has(m)) return `<span class="m-kwd">${m}</span>`;
+        if (fns.has(m)) return `<span class="m-fn" style="color:#06b6d4">${m}</span>`;
+        return m;
+      });
+      return codePart + (comPart ? `<span class="m-com">${escHtml(comPart)}</span>` : "");
+    }).join("\n");
+  }
+
+  // Default MATLAB / Octave
   const kwds = new Set(["function","end","if","else","elseif","for","while","switch","case","otherwise","try","catch","return","break","continue","global","persistent","clear","clc","close","hold","grid"]);
   const fns = new Set(["mean","median","mode","std","var","cov","corr","corrcoef","histogram","histcounts","boxplot","plot","subplot","scatter","stem","figure","title","xlabel","ylabel","legend","xlim","ylim","load","save","readtable","regress","fitlm","normpdf","normcdf","norminv","tpdf","tcdf","tinv","chi2pdf","chi2cdf","chi2inv","fpdf","fcdf","finv","ttest","ttest2","anova1","length","size","sum","prod","sqrt","exp","log","zeros","ones","eye","linspace","rand","randn","disp","fprintf"]);
   return lines.map((line) => {
@@ -647,6 +695,8 @@ function highlightMatlab(code) {
     return codePart + (comPart ? `<span class="m-com">${escHtml(comPart)}</span>` : "");
   }).join("\n");
 }
+
+function highlightMatlab(code) { return highlightAdaptiveCode(code, "matlab"); }
 
 function showToast(msg) {
   const t = document.createElement("div");
@@ -867,7 +917,7 @@ async function loadStudyPicker() {
     const units = Object.values(c.units || {}).reduce((a, b) => a + b, 0);
     const state = c.running ? '<span class="spin"></span> analisi in corso' : c.n_items ? `${c.learned}/${c.n_topics} argomenti imparati${c.next ? ` · prossimo: ${c.next[0]}. ${esc(c.next[1])}` : ""}` : units ? "da analizzare" : "non ancora analizzato";
     return `<div class="card" data-c="${c.id}"><div class="ring sm" style="--p:${pct(c.ready_exam)};--ring:${ringColor(c.ready_exam)}"><div><b>${c.n_items ? pct(c.ready_exam) + "%" : "—"}</b></div></div>
-      <div style="min-width:0"><div class="n">${esc(shortName(c.name))}</div><div class="muted small">${state}</div>
+      <div style="min-width:0"><div class="n" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span>${esc(shortName(c.name))}</span>${c.archetype_badge ? `<span class="pill sm" style="font-size:10px;background:${c.accent_color}18;color:${c.accent_color};border:1px solid ${c.accent_color}44">${esc(c.archetype_badge)}</span>` : ""}</div><div class="muted small">${state}</div>
       <div class="small">${c.exam ? `<span class="pill ${c.exam.days_left <= 14 ? "warn" : ""}">esame tra ${c.exam.days_left} gg</span> ` : ""}${c.due ? `<span class="pill ai">${c.due} da ripassare</span>` : ""}</div></div></div>`;
   }).join("")}</div>
   ${list.length ? "" : '<p class="muted">Nessun corso ancora: segui i passi qui sopra.</p>'}
@@ -913,7 +963,10 @@ async function loadStudyCourse(cid, quiet = false) {
   sCourse = cid; store.set("sCourse", cid); store.set("lastCourse", cid);
   const body = $("studyBody"); body.className = "study";
   if (!quiet) body.innerHTML = '<p class="muted">Carico…</p>';
-  let d = await getJ(`/api/study/${cid}`);
+  let [d, arch] = await Promise.all([
+    getJ(`/api/study/${cid}`),
+    getJ(`/api/courses/${cid}/archetype`).catch(() => null)
+  ]);
   if (!Object.keys(d.prepare.units).length) {  // prima volta: guardo cosa c'è (senza AI)
     body.innerHTML = '<p class="muted"><span class="spin"></span> Guardo tutto il materiale del corso fino a oggi…</p>';
     await getJ(`/api/study/${cid}/scan`); d = await getJ(`/api/study/${cid}`);
@@ -921,11 +974,11 @@ async function loadStudyCourse(cid, quiet = false) {
     getJ(`/api/study/${cid}/scan`).then((s) => { if (s.added && view === "study" && !run && sCourse === cid) loadStudyCourse(cid, true); }).catch(() => {});
   }
   if (view !== "study" || run || les || sCourse !== cid) return;
-  renderStudyCourse(d);
+  renderStudyCourse(d, arch);
   if (d.prepare.running) startPrepPoll(cid, d.prepare.ready);
 }
 
-function renderStudyCourse(d) {
+function renderStudyCourse(d, arch = null) {
   const cid = d.course.id, v = d.verdict, p = d.prepare;
   $("title").textContent = shortName(d.course.fullname);
   $("subtitle").textContent = d.exam ? `Appello ${d.exam.date} · tra ${d.exam.days_left} giorni` : "Nessun appello in calendario: stima a 14 giorni";
@@ -947,8 +1000,26 @@ function renderStudyCourse(d) {
       <button data-min="25"><b>Breve · 25 min</b><span>ripasso e punti deboli</span></button>
       <button data-min="45" class="primary"><b>Standard · 45 min</b><span>ripasso, argomenti nuovi, esercizio finale</span></button>
       <button data-min="90"><b>Lunga · 90 min</b><span>come una mezza giornata di studio vero</span></button></div></div>` : "";
+  
+  const archHtml = arch ? `
+    <div class="card archetype-card" style="border-left:4px solid ${arch.accent_color}; margin-bottom:14px; background:var(--panel);">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px">
+        <span class="pill" style="background:${arch.accent_color}22; color:${arch.accent_color}; font-weight:700; border:1px solid ${arch.accent_color}66">${esc(arch.badge)}</span>
+        <span class="small muted">Archetipo Didattico: <b>${esc(arch.title)}</b> · Ambiente: <code>${esc(arch.software_default)}</code></span>
+        <div style="flex:1"></div>
+        <button class="btn sm ghost" id="btnMoodleStrat">📋 Strategia Moodle & Materiali</button>
+      </div>
+      <div style="font-size:13px; line-height:1.5; color:var(--text); margin-bottom:6px"><b>🎯 Formato & Requisiti d'Esame:</b> ${esc(arch.exam_format_summary)}</div>
+      <div style="font-size:12px; color:var(--text-muted); line-height:1.4"><b>💡 Metodologia d'Apprendimento Adattiva:</b><br>${md(arch.study_methodology_md)}</div>
+      <div id="moodleStratBox" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--line);">
+        <div class="small" style="font-weight:700; color:var(--accent); margin-bottom:6px">ANALISI INTELLIGENTE MATERIALI MOODLE:</div>
+        <div id="moodleStratContent" class="small muted"><span class="spin"></span> Analisi documenti in corso…</div>
+      </div>
+    </div>` : "";
+
   $("studyBody").innerHTML = `
     <div><button class="btn sm ghost" id="sBack">← Tutti i corsi</button></div>
+    ${archHtml}
     ${learn}
     <div class="card shero">
       <div class="ring" style="--p:${pct(d.ready_exam)};--ring:${ringColor(d.ready_exam)}"><div><b>${d.n_items ? pct(d.ready_exam) + "%" : "—"}</b><span class="small muted">all'esame</span></div></div>
@@ -968,6 +1039,43 @@ function renderStudyCourse(d) {
       <p class="muted small">Nell'ordine del corso. Colore = padronanza misurata (rosso fragile → verde pronto) · ✓ = lezione fatta · ●●● = pesa molto all'esame.</p></div>` : ""}`;
   const b = $("studyBody");
   $("sBack").onclick = loadStudyPicker;
+
+  const btnStrat = $("btnMoodleStrat");
+  if (btnStrat) {
+    btnStrat.onclick = async () => {
+      const box = $("moodleStratBox");
+      if (!box) return;
+      if (box.style.display !== "none") { box.style.display = "none"; return; }
+      box.style.display = "block";
+      const content = $("moodleStratContent");
+      try {
+        const strat = await getJ(`/api/courses/${cid}/moodle-strategy`);
+        content.innerHTML = `
+          <div style="margin-bottom:8px">
+            <b>${esc(strat.download_policy_summary)}</b>
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+            <span class="pill" style="background:#10b98122;color:#10b981;font-weight:600">🎯 TIER 1 (Critici Esame): ${strat.tier1_count}</span>
+            <span class="pill" style="background:#0284c722;color:#0284c7;font-weight:600">📚 TIER 2 (Supporto): ${strat.tier2_count}</span>
+            <span class="pill" style="background:#64748b22;color:#64748b;font-weight:600">🚫 TIER 3 (Esclusi): ${strat.tier3_count}</span>
+          </div>
+          <div style="max-height:220px;overflow-y:auto;background:var(--bg);padding:8px 10px;border-radius:6px;border:1px solid var(--line)">
+            ${strat.selected_items.map((it) => `
+              <div style="display:flex;align-items:flex-start;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+                <span class="pill sm" style="font-size:10px;font-weight:700;${it.tier === 1 ? 'background:#10b98122;color:#10b981' : (it.tier === 2 ? 'background:#0284c722;color:#0284c7' : 'background:#64748b22;color:#64748b')}">T${it.tier}</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(it.path)}">${esc(it.title)}</div>
+                  <div style="color:var(--text-muted);font-size:11px">${esc(it.motivo)} · <i>${esc(it.adattamento_didattico)}</i></div>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        `;
+      } catch (err) {
+        content.innerHTML = `<span style="color:var(--warn)">Errore nel caricamento della strategia: ${esc(err.message)}</span>`;
+      }
+    };
+  }
   b.querySelectorAll("[data-exch]").forEach((a) => (a.onclick = async () => {
     if (!confirm(`Escludere il capitolo «${a.dataset.exch}»? Non entrerà più in lezioni, sessioni e prontezza. Puoi rimetterlo quando vuoi.`)) return;
     await postJ(`/api/study/${cid}/chapters`, { chapter: a.dataset.exch, exclude: true }); loadStudyCourse(cid, true); }));
@@ -1044,7 +1152,7 @@ async function openLesson(tid, opts = {}) {
 }
 async function loadLesson() {
   const d = await getJ(`/api/study/topics/${les.tid}/lesson`);
-  les.topic = d.topic; les.data = d.lesson; les.status = d.status; les.message = d.message;
+  les.topic = d.topic; les.data = d.lesson; les.status = d.status; les.message = d.message; les.archetype = d.archetype;
   if (!opts_inSession()) $("subtitle").textContent = d.topic.name;
   renderLesson();
   if (!les.data && d.status !== "errore") lesPoll = setTimeout(() => { if (les && !les.data && view === "study") loadLesson(); }, 6000);
@@ -1173,24 +1281,40 @@ function renderLesson() {
       ${helperHtml()}`;
   } else if (les.phase === "pratica") {
     const LP = L.laboratorio_pratico;
+    const arch = les.archetype || {
+      title: "Laboratorio Pratico",
+      badge: "🔬 Laboratorio Pratico",
+      accent_color: "var(--accent)",
+      software_default: LP.software || "MATLAB",
+      lab_button_label: "Scarica Codice",
+      console_title: "Output Console Simulato",
+      code_language: "matlab",
+      file_extension: ".txt"
+    };
+    const codeLang = LP.code_language || arch.code_language || "matlab";
+    const downloadUrl = `/api/study/topics/${t.id}/artifact`;
+    const downloadName = LP.artifact_name || (`lab_${arch.archetype_id ? arch.archetype_id.toLowerCase() : 'code'}_topic_${t.id}${LP.file_extension || arch.file_extension || '.txt'}`);
+    const btnLabel = LP.button_label || arch.lab_button_label || "Scarica File";
+    const consoleTitle = LP.console_title || arch.console_title || "Output Atteso";
+
     ctx = `${LP.titolo || ""}\n${LP.consegna_md || ""}\n${LP.spiegazione_md || ""}`;
-    inner = `<div class="stepname">Laboratorio Sperimentale · ${esc(LP.software || "MATLAB")}</div>
-      <h2>${esc(LP.titolo || "Laboratorio Pratico al Calcolatore")}</h2>
-      ${LP.dataset ? `<div class="small muted" style="margin-bottom:8px"><b>Dataset / File:</b> <code>${esc(LP.dataset)}</code></div>` : ""}
+    inner = `<div class="stepname">${esc(arch.badge || "Laboratorio Sperimentale")} · ${esc(LP.software || arch.software_default)}</div>
+      <h2>${esc(LP.titolo || arch.lab_section_title || "Laboratorio Pratico al Calcolatore")}</h2>
+      ${LP.dataset ? `<div class="small muted" style="margin-bottom:8px"><b>Ambiente / Dataset:</b> <code>${esc(LP.dataset)}</code></div>` : ""}
       <div class="md">${md(LP.consegna_md)}</div>
       <div class="lab-box">
         <div class="lab-tabs">
-          <span class="small" style="font-weight:700;color:var(--accent)">💻 SCRIPT ${esc(LP.software || "MATLAB")}</span>
+          <span class="small" style="font-weight:700;color:${arch.accent_color || 'var(--accent)'}">${esc(arch.badge || '💻 SORGENTE')}</span>
           <div style="flex:1"></div>
           <button class="btn sm" id="btnCopyCode" title="Copia codice negli appunti">📋 Copia</button>
-          <a class="btn sm" href="/api/study/topics/${t.id}/script.m" download="script_topic_${t.id}.m" title="Scarica script .m">💾 Scarica .m</a>
+          <a class="btn sm" href="${downloadUrl}" download="${downloadName}" title="Scarica file">💾 ${esc(btnLabel)}</a>
         </div>
         <div class="code-container">
-          <pre class="matlab-code"><code>${highlightMatlab(LP.codice)}</code></pre>
+          <pre class="matlab-code"><code>${highlightAdaptiveCode(LP.codice, codeLang)}</code></pre>
         </div>
         ${LP.output_atteso ? `
         <div class="output-container">
-          <div class="output-header">Output Atteso (Command Window / Grafico)</div>
+          <div class="output-header">${esc(consoleTitle)}</div>
           <pre class="console-output">${esc(LP.output_atteso)}</pre>
         </div>` : ""}
       </div>
@@ -1205,8 +1329,8 @@ function renderLesson() {
         </div>
         <div id="sfidaHint" class="sfida-hint" style="display:none"><div class="md"><b>Suggerimento:</b> ${md(LP.sfida.suggerimento_md || "")}</div></div>
         <div id="sfidaSol" class="sfida-sol" style="display:none">
-          <div class="sol-title">✓ Soluzione Codice:</div>
-          <pre class="matlab-code"><code>${highlightMatlab(LP.sfida.soluzione_codice || "")}</code></pre>
+          <div class="sol-title">✓ Soluzione Verificata:</div>
+          <pre class="matlab-code"><code>${highlightAdaptiveCode(LP.sfida.soluzione_codice || "", codeLang)}</code></pre>
         </div>
       </div>` : ""}
       ${helperHtml()}
