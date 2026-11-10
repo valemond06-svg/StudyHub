@@ -57,6 +57,7 @@ def get_local_llm_url() -> str | None:
     # 3. LAN Wi-Fi (192.168.10.89)
     # 4. Proxy Locale (127.0.0.1:8081)
     candidates.extend([
+        "http://10.10.10.1:8081",
         "http://10.10.10.1:8080",
         "http://100.83.194.37:8080",
         "http://192.168.10.89:8080",
