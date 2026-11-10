@@ -23,8 +23,8 @@ from ..paths import uni_path
 
 MODEL = "sonnet"
 PROFILE_VERSION = "profile-v1"
-MAX_EXAM_IMAGES = 16
-MAX_EXAM_DOCS = 16
+MAX_EXAM_IMAGES = 8
+MAX_EXAM_DOCS = 3
 SYLLABUS_SECTION = re.compile(r"registro|programma|diario|argomenti|syllabus", re.I)
 
 
@@ -203,9 +203,12 @@ def build_profile(course_id: int, force: bool = False) -> dict:
     h = hashlib.sha256(json.dumps([PROFILE_VERSION, intro, used], ensure_ascii=False).encode()).hexdigest()
     jp, mp = profile_paths(course)
     if jp.exists() and not force:
-        old = json.loads(jp.read_text(encoding="utf-8"))
-        if old.get("input_hash") == h:
-            return {**old, "cached": True}
+        try:
+            old = json.loads(jp.read_text(encoding="utf-8"))
+            if old.get("formato") or old.get("sintesi_md"):
+                return {**old, "cached": True}
+        except Exception:
+            pass
     text_prompt = "\n\n".join(b["text"] for b in content if b.get("type") == "text" and "text" in b)
     res = run_json(PROFILE_SYSTEM, text_prompt, PROFILE_SCHEMA, quality="accurato")
     payload = {**res.data, "course_id": course_id, "input_hash": h, "sources": used, "model": res.model,
