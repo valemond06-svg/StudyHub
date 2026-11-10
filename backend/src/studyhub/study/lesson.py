@@ -182,7 +182,6 @@ def generate(topic_id: int) -> dict:
                 random.shuffle(_opts)
                 v["opzioni"] = _opts
                 v["corretta"] = _opts.index(_val)
-    data = res.data
     for p in data.get("passi", []):  # verifiche malformate: meglio un passo senza verifica che una sbagliata
         v = p.get("verifica") or {}
         if not (len(v.get("opzioni") or []) >= 2 and 0 <= int(v.get("corretta", -1)) < len(v["opzioni"])):
