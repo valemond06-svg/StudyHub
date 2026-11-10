@@ -244,7 +244,7 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
             crit_ok = [bool(c) for c in crits]
             raw = sum(crit_ok) / len(rubric)
         else:
-            raw = float(payload.get("self_score", 0))
+            raw = float(payload.get("self_score") or 0)
         score = min(SELF_CAP, raw)
     rating = _rating(score, conf)
     card = Card.from_json(it["fsrs"]) if it["fsrs"] else Card()

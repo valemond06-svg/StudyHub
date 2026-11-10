@@ -10,7 +10,7 @@ import hashlib
 import json
 from datetime import datetime
 
-from ..ai.claude_runner import run
+from ..ai.llm import run_json
 from ..ai.lecture_notes import existing
 from ..db import session
 from ..paths import uni_path
@@ -72,9 +72,8 @@ def generate(lecture_id: int, n_questions: int = 10) -> dict:
                          (lecture_id, h)).fetchone()
         if row:
             return {"id": row["id"], "cached": True}
-    content = [{"type": "text", "text": f"=== Appunti della lezione ===\n{notes}\n\n"
-                                        f"Prepara un quiz di {n_questions} domande."}]
-    res = run(GEN_SYSTEM, content, GEN_SCHEMA, model=GEN_MODEL)
+    res = run_json(GEN_SYSTEM, f"=== Appunti della lezione ===\n{notes}\n\nPrepara un quiz di {n_questions} domande.",
+                   GEN_SCHEMA, quality="accurato")
     with session() as db:
         qid = db.execute("INSERT INTO quizzes (course_id, lecture_id, title, questions, input_hash, created_at) "
                          "VALUES (?,?,?,?,?,?)",
@@ -122,7 +121,7 @@ def submit(quiz_id: int, answers: list) -> dict:
     if open_items:
         text = "\n\n".join(f"--- Domanda {i} ({q['tipo']}) ---\n{q['testo_md']}\n\nRisposta modello:\n{q['soluzione_md']}"
                            f"\n\nRisposta dello studente:\n{a}" for i, q, a in open_items)
-        res = run(GRADE_SYSTEM, [{"type": "text", "text": text}], GRADE_SCHEMA, model=GRADE_MODEL)
+        res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
         utilization = res.utilization
         by_idx = {v["indice"]: v for v in res.data["valutazioni"]}
         for i, _q, _a in open_items:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from ..ai.claude_runner import run
+from ..ai.llm import run_json
 from ..db import session
 from ..search import search
 
@@ -101,20 +101,21 @@ def ask(thread_id: int, question: str) -> dict:
                 (f"\n\n=== Conversazione finora ===\n{conv}" if conv else "") +
                 f"\n\n=== Domanda dello studente ===\n{question}"}]
     system = SYSTEM + (SOCRATIC if th["mode"] == "socratico" else "")
-    res = run(system, content, SCHEMA, model=MODEL)
+    res = run_json(system, content[0]["text"], SCHEMA, quality="accurato")
     used = set(res.data.get("fonti_usate") or [])
     cited = [s for s in sources if s["n"] in used] or sources[:0]
-    u = res.usage
+    u = res.usage or {}
     tin = (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0) + (u.get("cache_creation_input_tokens") or 0)
+    tout = u.get("output_tokens") or 0
     with session() as db:
         db.execute("INSERT INTO tutor_messages (thread_id, role, content, created_at) VALUES (?,?,?,?)",
                    (thread_id, "user", question, _now()))
         db.execute("""INSERT INTO tutor_messages (thread_id, role, content, citations, tokens_in, tokens_out, created_at)
                       VALUES (?,?,?,?,?,?,?)""",
                    (thread_id, "assistant", res.data["risposta_md"], json.dumps(sources, ensure_ascii=False), tin,
-                    u.get("output_tokens"), _now()))
+                    tout, _now()))
         if not th.get("title"):
             db.execute("UPDATE tutor_threads SET title=? WHERE id=?", (question[:80], thread_id))
     return {"answer": res.data["risposta_md"], "sources": sources, "cited": [s["n"] for s in cited],
-            "outside": res.data.get("fuori_materiale"), "tokens_in": tin, "tokens_out": u.get("output_tokens"),
+            "outside": res.data.get("fuori_materiale"), "tokens_in": tin, "tokens_out": tout,
             "utilization": res.utilization}

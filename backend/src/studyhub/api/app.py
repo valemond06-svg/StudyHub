@@ -411,10 +411,15 @@ def course_exam(course_id: int):
     return {"profile": prof, "profile_md": md, "sims": exam.list_sims(course_id)}
 
 
+class ProfileRequest(BaseModel):
+    force: bool = False
+
+
 @app.post("/api/courses/{course_id}/exam/profile")
-def course_exam_profile(course_id: int, force: bool = False):
+def course_exam_profile(course_id: int, body: ProfileRequest | None = None, force: bool = False):
     from ..study import exam
-    return _ai_call(exam.build_profile, course_id, force)
+    f = (body.force if body else False) or force
+    return _ai_call(exam.build_profile, course_id, f)
 
 
 @app.post("/api/courses/{course_id}/exam/sims")
@@ -635,11 +640,16 @@ def study_overview(course_id: int):
     return {**mastery.overview(course_id), "prepare": bank.prepare_status(course_id)}
 
 
+class PrepareRequest(BaseModel):
+    limit: int | None = None
+
+
 @app.post("/api/study/{course_id}/prepare")
-def study_prepare(course_id: int, limit: int | None = None):
+def study_prepare(course_id: int, body: PrepareRequest | None = None, limit: int | None = None):
     """Avviato SOLO da un clic: analizza il materiale non ancora trasformato in domande."""
     from ..study import bank
-    return bank.start_prepare(course_id, limit)
+    lim = (body.limit if body else None) or limit
+    return bank.start_prepare(course_id, lim)
 
 
 @app.get("/api/study/{course_id}/scan")
@@ -831,9 +841,6 @@ def study_topic_artifact(topic_id: int):
                              headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
-@app.get("/api/study/topics/{topic_id}/script.m")
-def study_topic_script_m(topic_id: int):
-    """Scarica lo script MATLAB dell'argomento (.m), pronto per l'esecuzione in MATLAB/Octave."""
 @app.get("/api/study/topics/{topic_id}/script.m")
 def study_topic_script_m(topic_id: int):
     """Scarica lo script MATLAB dell'argomento (.m), pronto per l'esecuzione in MATLAB/Octave."""

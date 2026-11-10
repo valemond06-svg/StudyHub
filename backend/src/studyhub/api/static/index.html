@@ -1241,6 +1241,12 @@ async function loadLesson() {
   const d = await getJ(`/api/study/topics/${les.tid}/lesson`);
   les.topic = d.topic; les.data = d.lesson; les.status = d.status; les.message = d.message; les.archetype = d.archetype;
   if (!opts_inSession()) $("subtitle").textContent = d.topic.name;
+  if (les.data) {
+    const ph = lessonPhases();
+    if (ph.length && (les.phase === "intro" || !ph.includes(les.phase))) {
+      les.phase = ph[0];
+    }
+  }
   renderLesson();
   if (!les.data && d.status !== "errore") lesPoll = setTimeout(() => { if (les && !les.data && view === "study") loadLesson(); }, 6000);
 }
