@@ -32,6 +32,41 @@ GEMINI_MODELS = {"veloce": "gemini-3.8-flash-low", "accurato": "gemini-3.8-flash
 CLAUDE_MODELS = {"veloce": "haiku", "accurato": "sonnet"}
 LOCAL_LLM_URL = os.environ.get("STUDYHUB_LOCAL_LLM", "http://127.0.0.1:8081")
 
+# Discovery automatico dell'LLM locale: prima 127.0.0.1, poi LAN PC Fisso, poi Tailscale
+_ACTIVE_LOCAL_URL: str | None = None
+_LAST_LOCAL_CHECK: float = 0.0
+
+
+def get_local_llm_url() -> str | None:
+    global _ACTIVE_LOCAL_URL, _LAST_LOCAL_CHECK
+    now = time.time()
+    if _ACTIVE_LOCAL_URL and (now - _LAST_LOCAL_CHECK < 15.0):
+        return _ACTIVE_LOCAL_URL
+
+    custom = os.environ.get("STUDYHUB_LOCAL_LLM")
+    candidates = [custom] if custom else []
+    candidates.extend([
+        "http://127.0.0.1:8081",
+        "http://192.168.10.89:8081",
+        "http://100.83.194.37:8081",
+    ])
+    for cand in candidates:
+        if not cand:
+            continue
+        try:
+            req = urllib.request.Request(f"{cand}/health")
+            with urllib.request.urlopen(req, timeout=0.6) as r:
+                if r.status == 200:
+                    _ACTIVE_LOCAL_URL = cand
+                    _LAST_LOCAL_CHECK = now
+                    return _ACTIVE_LOCAL_URL
+        except Exception:
+            continue
+
+    _ACTIVE_LOCAL_URL = None
+    _LAST_LOCAL_CHECK = now
+    return None
+
 
 @dataclass
 class LLMResult:
@@ -42,12 +77,7 @@ class LLMResult:
 
 
 def _check_local() -> bool:
-    try:
-        req = urllib.request.Request(f"{LOCAL_LLM_URL}/health")
-        with urllib.request.urlopen(req, timeout=0.6) as r:
-            return r.status == 200
-    except Exception:
-        return False
+    return get_local_llm_url() is not None
 
 
 def _agy_exe() -> str | None:
@@ -79,7 +109,8 @@ def provider_order() -> list[str]:
 
 def _local(system: str, text: str, schema: dict, quality: str) -> LLMResult:
     t0 = time.time()
-    url = f"{LOCAL_LLM_URL}/v1/chat/completions"
+    base_url = get_local_llm_url() or LOCAL_LLM_URL
+    url = f"{base_url}/v1/chat/completions"
     prompt = (
         f"{system}\n\nNON inserire tag <think> o ragionamenti preliminari. "
         f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme a questo schema:\n"
