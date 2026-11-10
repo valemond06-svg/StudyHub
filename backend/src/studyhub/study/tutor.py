@@ -104,9 +104,10 @@ def ask(thread_id: int, question: str) -> dict:
     res = run_json(system, content[0]["text"], SCHEMA, quality="accurato")
     used = set(res.data.get("fonti_usate") or [])
     cited = [s for s in sources if s["n"] in used] or sources[:0]
-    u = res.usage or {}
+    u = getattr(res, "usage", {}) or {}
     tin = (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0) + (u.get("cache_creation_input_tokens") or 0)
     tout = u.get("output_tokens") or 0
+    utilization = getattr(res, "utilization", 1.0)
     with session() as db:
         db.execute("INSERT INTO tutor_messages (thread_id, role, content, created_at) VALUES (?,?,?,?)",
                    (thread_id, "user", question, _now()))
@@ -118,4 +119,4 @@ def ask(thread_id: int, question: str) -> dict:
             db.execute("UPDATE tutor_threads SET title=? WHERE id=?", (question[:80], thread_id))
     return {"answer": res.data["risposta_md"], "sources": sources, "cited": [s["n"] for s in cited],
             "outside": res.data.get("fuori_materiale"), "tokens_in": tin, "tokens_out": tout,
-            "utilization": res.utilization}
+            "utilization": utilization}

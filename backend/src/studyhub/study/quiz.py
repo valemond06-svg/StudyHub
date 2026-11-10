@@ -122,7 +122,7 @@ def submit(quiz_id: int, answers: list) -> dict:
         text = "\n\n".join(f"--- Domanda {i} ({q['tipo']}) ---\n{q['testo_md']}\n\nRisposta modello:\n{q['soluzione_md']}"
                            f"\n\nRisposta dello studente:\n{a}" for i, q, a in open_items)
         res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
-        utilization = res.utilization
+        utilization = getattr(res, "utilization", 1.0)
         by_idx = {v["indice"]: v for v in res.data["valutazioni"]}
         for i, _q, _a in open_items:
             v = by_idx.get(i, {"punteggio": 0, "feedback_md": "Valutazione non disponibile."})
