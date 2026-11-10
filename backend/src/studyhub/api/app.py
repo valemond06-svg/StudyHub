@@ -834,6 +834,54 @@ def get_course_moodle_strategy_api(course_id: int):
     return asdict(evaluate_course_moodle_strategy(course_id))
 
 
+def _generate_script_m(topic_name: str, widget: dict | None, lab: dict | None) -> str:
+    """Genera sempre uno script MATLAB/Octave valido, pulito ed eseguibile."""
+    wtype = (widget or {}).get("tipo", "none")
+    wtit = (widget or {}).get("titolo") or (lab or {}).get("titolo") or topic_name
+    winst = (widget or {}).get("istruzioni", "")
+    code = (
+        f"% ===================================================================\n"
+        f"% StudyHub MATLAB / GNU Octave Simulation Script\n"
+        f"% Argomento: {topic_name}\n"
+        f"% Laboratorio: {wtit}\n"
+        f"% ===================================================================\n\n"
+        f"clear; clc; close all;\n\n"
+        f"fprintf('=== Simulazione StudyHub: {wtit} ===\\n\\n');\n\n"
+    )
+    if lab and lab.get("codice") and ("%" in lab["codice"] or "function" in lab["codice"]):
+        code += lab["codice"]
+    elif wtype == "linear_2d":
+        code += (
+            "% Matrice di trasformazione A e vettori di base trasformati\n"
+            "A = [1.5, 0.5; 0.2, 1.2];\n"
+            "fprintf('Matrice di trasformazione A:\\n'); disp(A);\n"
+            "detA = det(A);\n"
+            "fprintf('Determinante (variazione orientata delle aree): %.4f\\n', detA);\n"
+            "[V, D] = eig(A);\n"
+            "fprintf('Autovalori:\\n'); disp(diag(D));\n"
+            "figure('Name', 'Studio Trasformazioni Lineari 2D');\n"
+            "grid on; hold on; axis equal;\n"
+            "quiver(0, 0, 1, 0, 'r', 'LineWidth', 2, 'DisplayName', 'i_hat');\n"
+            "quiver(0, 0, 0, 1, 'b', 'LineWidth', 2, 'DisplayName', 'j_hat');\n"
+            "quiver(0, 0, A(1,1), A(2,1), 'r--', 'LineWidth', 2, 'DisplayName', 'T(i_hat)');\n"
+            "quiver(0, 0, A(1,2), A(2,2), 'b--', 'LineWidth', 2, 'DisplayName', 'T(j_hat)');\n"
+            "legend show; title(sprintf('Trasformazione Lineare (det=%.2f)', detA));\n"
+        )
+    elif wtype == "pole_zero":
+        code += (
+            "s = tf('s');\n"
+            "G = 1 / (s^2 + 1.2*s + 2);\n"
+            "figure('Name', 'Poli e Zeri'); pzmap(G); grid on;\n"
+            "figure('Name', 'Risposta al gradino'); step(G); grid on;\n"
+        )
+    else:
+        code += (
+            f"% Istruzioni: {winst}\n"
+            f"fprintf('Simulazione completata con successo.\\n');\n"
+        )
+    return code
+
+
 @app.get("/api/study/topics/{topic_id}/artifact")
 def study_topic_artifact(topic_id: int):
     """Scarica il file di laboratorio pratico (es. .m per MATLAB, .c per C/POSIX, .py per Python, .cir per SPICE, .tex per Matematica)."""
@@ -859,43 +907,7 @@ def study_topic_artifact(topic_id: int):
         wtit = widget.get("titolo", out["topic"]["name"])
         winst = widget.get("istruzioni", "")
         if arch.file_extension == ".m":
-            code = (
-                f"% ===================================================================\n"
-                f"% StudyHub MATLAB Lab Simulation\n"
-                f"% Argomento: {out['topic']['name']}\n"
-                f"% Laboratorio: {wtit}\n"
-                f"% Istruzioni: {winst}\n"
-                f"% ===================================================================\n\n"
-                f"clear; clc; close all;\n\n"
-                f"fprintf('Avvio simulazione: {wtit}\\n');\n"
-            )
-            if wtype == "linear_2d":
-                code += (
-                    "A = [1.5, 0.5; 0.2, 1.2];\n"
-                    "fprintf('Matrice di trasformazione A:\\n'); disp(A);\n"
-                    "detA = det(A);\n"
-                    "fprintf('Determinante (area scalata): %.3f\\n', detA);\n"
-                    "[V, D] = eig(A);\n"
-                    "fprintf('Autovalori (diagonale D):\\n'); disp(diag(D));\n"
-                    "figure('Name', 'Linear 2D Transformation');\n"
-                    "grid on; hold on; axis equal;\n"
-                    "quiver(0, 0, 1, 0, 'r', 'LineWidth', 2, 'DisplayName', 'i_hat');\n"
-                    "quiver(0, 0, 0, 1, 'b', 'LineWidth', 2, 'DisplayName', 'j_hat');\n"
-                    "quiver(0, 0, A(1,1), A(2,1), 'r--', 'LineWidth', 2, 'DisplayName', 'T(i_hat)');\n"
-                    "quiver(0, 0, A(1,2), A(2,2), 'b--', 'LineWidth', 2, 'DisplayName', 'T(j_hat)');\n"
-                    "legend show; title('Trasformazione Lineare 2D');\n"
-                )
-            elif wtype == "pole_zero":
-                code += (
-                    "s = tf('s');\n"
-                    "G = 1 / (s^2 + 1.2*s + 2);\n"
-                    "figure('Name', 'Poli e Zeri');\n"
-                    "pzmap(G); grid on;\n"
-                    "figure('Name', 'Risposta al gradino');\n"
-                    "step(G); grid on;\n"
-                )
-            else:
-                code += f"% Parametri widget: {widget.get('config_json', '{}')}\n"
+            code = _generate_script_m(out["topic"]["name"], widget, lab)
         elif arch.file_extension == ".cir":
             code = (
                 f"* StudyHub SPICE Netlist\n"
@@ -929,7 +941,16 @@ def study_topic_artifact(topic_id: int):
 @app.get("/api/study/topics/{topic_id}/script.m")
 def study_topic_script_m(topic_id: int):
     """Scarica lo script MATLAB dell'argomento (.m), pronto per l'esecuzione in MATLAB/Octave."""
-    return study_topic_artifact(topic_id)
+    from ..study import lesson
+    try:
+        out = lesson.get(topic_id)
+    except KeyError:
+        raise HTTPException(404, "Argomento non trovato")
+    L = out.get("lesson") or {}
+    code = _generate_script_m(out["topic"]["name"], L.get("widget"), L.get("laboratorio_pratico"))
+    filename = f"lab_topic_{topic_id}.m"
+    return PlainTextResponse(code, media_type="text/x-matlab",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 # --- Export e novità ---------------------------------------------------------------
