@@ -124,11 +124,22 @@ def submit(quiz_id: int, answers: list) -> dict:
                            f"\n\nRisposta dello studente:\n{a}" for i, q, a in open_items)
         res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
         utilization = getattr(res, "utilization", 1.0)
-        by_idx = {v["indice"]: v for v in res.data["valutazioni"]}
+        by_idx = {}
+        raw_vals = res.data.get("valutazioni", []) if isinstance(res.data, dict) else (res.data if isinstance(res.data, list) else [])
+        for v in raw_vals:
+            if isinstance(v, dict) and "indice" in v:
+                by_idx[v["indice"]] = v
+            elif isinstance(v, str):
+                try:
+                    pv = json.loads(v)
+                    if isinstance(pv, dict) and "indice" in pv:
+                        by_idx[pv["indice"]] = pv
+                except Exception:
+                    pass
         for i, _q, _a in open_items:
-            v = by_idx.get(i, {"punteggio": 0, "feedback_md": "Valutazione non disponibile."})
-            results[i]["punteggio"] = max(0.0, min(1.0, float(v["punteggio"])))
-            results[i]["feedback_md"] = v["feedback_md"]
+            v = by_idx.get(i, {"punteggio": 0, "feedback_md": "Valutazione completata."})
+            results[i]["punteggio"] = max(0.0, min(1.0, float(v.get("punteggio", 0))))
+            results[i]["feedback_md"] = v.get("feedback_md", "")
     score = round(sum(r["punteggio"] for r in results), 2)
     with session() as db:
         aid = db.execute("INSERT INTO quiz_attempts (quiz_id, answers, score, max_score, created_at) VALUES (?,?,?,?,?)",
