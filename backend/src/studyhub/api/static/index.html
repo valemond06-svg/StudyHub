@@ -2245,11 +2245,132 @@ async function loadLectureList() {
   const notes = new Set((await getJ(`/api/courses/${cid}/notes-index`).catch(() => [])));
   $("lItems").innerHTML = list.map((l) => {
     const cls = notes.has(l.id) ? "notes" : l.status === "trascritta" ? "whisper" : l.status === "media_ok" ? "media" : "";
-    const sub = [l.date ? new Date(l.date).toLocaleDateString("it-IT", { day: "numeric", month: "short" }) : "", l.duration ? Math.round(l.duration / 60) + " min" : "", l.status === "nuova" ? "da elaborare" : l.status === "errore" ? "errore" : ""].filter(Boolean).join(" · ");
-    return `<div class="li ${lec && lec.id === l.id ? "on" : ""}" data-id="${l.id}" title="${esc(l.title)}"><span class="dot ${cls}"></span><div class="tt"><div>${esc(l.title)}</div><div class="faint small">${sub}</div></div></div>`;
+    const isPanopto = l.video_type === "panopto" || l.panopto_id || (l.viewer_url && l.viewer_url.includes("panopto"));
+    const isMoodle = l.video_type === "moodle" || l.media_url;
+    const vBadge = isPanopto
+      ? '<span style="font-size:10px;background:rgba(168,85,247,0.18);color:#c084fc;padding:1px 5px;border-radius:4px;font-weight:700;margin-right:4px;">PANOPTO</span>'
+      : isMoodle
+      ? '<span style="font-size:10px;background:rgba(245,158,11,0.18);color:#fbbf24;padding:1px 5px;border-radius:4px;font-weight:700;margin-right:4px;">MOODLE</span>'
+      : '<span style="font-size:10px;background:rgba(59,130,246,0.18);color:#60a5fa;padding:1px 5px;border-radius:4px;font-weight:700;margin-right:4px;">VIDEO</span>';
+    const sub = [l.date ? new Date(l.date).toLocaleDateString("it-IT", { day: "numeric", month: "short" }) : "", l.duration ? Math.round(l.duration / 60) + " min" : "", isPanopto ? "Panopto HD" : isMoodle ? "Video MP4" : ""].filter(Boolean).join(" · ");
+    return `<div class="li ${lec && lec.id === l.id ? "on" : ""}" data-id="${l.id}" title="${esc(l.title)}"><span class="dot ${cls}"></span><div class="tt"><div style="display:flex;align-items:center;">${vBadge}<span style="overflow:hidden;text-overflow:ellipsis;">${esc(l.title)}</span></div><div class="faint small">${sub}</div></div></div>`;
   }).join("") || '<div class="empty">Nessuna registrazione</div>';
   $("lItems").onclick = (e) => { const el = e.target.closest(".li"); if (el) openLecture(+el.dataset.id); };
 }
+
+let currentVideoMode = "panopto";
+
+function renderStage(mode) {
+  if (!lec) { $("stage").innerHTML = '<div class="empty">Scegli una lezione dall\'elenco</div>'; return; }
+  currentVideoMode = mode || lec.default_mode || "panopto";
+
+  const hasSlides = lec.has_local_slides || (slides && slides.length > 0);
+  const hasDrive = lec.videos && lec.videos.length > 0;
+  const hasPanopto = Boolean(lec.panopto_embed_url || lec.panopto_id);
+  const hasMoodle = Boolean(lec.media_url);
+
+  // Aggiorna pulsante commutazione tra Slide e Video
+  if (hasSlides && (hasPanopto || hasMoodle || hasDrive)) {
+    $("videoBtn").hidden = false;
+    $("videoBtn").textContent = (currentVideoMode === "slides") ? "Guarda Video" : "Mostra Slide";
+  } else {
+    $("videoBtn").hidden = true;
+  }
+
+  // Se siamo in modalità video, mettiamo in pausa l'audio locale sincrono per evitare sovrapposizioni
+  if (currentVideoMode !== "slides" && audio && !audio.paused) {
+    audio.pause();
+  }
+
+  // 1. STREAMING / EMBED PANOPTO
+  if (currentVideoMode === "panopto" && (lec.panopto_embed_url || lec.panopto_id)) {
+    const embedSrc = lec.panopto_embed_url || `https://univr.cloud.panopto.eu/Panopto/Pages/Embed.aspx?id=${lec.panopto_id}&autoplay=false&offerviewer=true&showtitle=true&showbrand=true&start=0&interactivity=all`;
+    const openUrl = lec.viewer_url || `https://univr.cloud.panopto.eu/Panopto/Pages/Viewer.aspx?id=${lec.panopto_id}&instance=MoodleDidattica`;
+
+    $("stage").innerHTML = `
+      <div class="panopto-wrapper" style="width:100%;height:100%;display:flex;flex-direction:column;background:#05070f;position:relative;">
+        <div class="panopto-topbar" style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;gap:8px;flex-wrap:wrap;z-index:2;">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <span style="background:rgba(168,85,247,0.18);color:#c084fc;border:1px solid rgba(168,85,247,0.35);padding:2px 8px;border-radius:12px;font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;">
+              <span>●</span> Panopto UniVR
+            </span>
+            <span style="font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:320px;" title="${esc(lec.title)}">
+              ${esc(lec.title)}
+            </span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <a href="${esc(openUrl)}" target="_blank" rel="noopener noreferrer" class="btn sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:#3159d6;color:#ffffff;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;box-shadow:0 2px 6px rgba(49,89,214,0.25);">
+              ↗ Apri su Panopto UniVR
+            </a>
+            <button class="btn sm ghost" onclick="const f=document.getElementById('panoptoFrame'); if(f && f.requestFullscreen) f.requestFullscreen(); else window.open('${esc(openUrl)}','_blank');" title="Schermo Intero">
+              ⛶
+            </button>
+          </div>
+        </div>
+        <div style="flex:1;position:relative;background:#000;display:flex;align-items:center;justify-content:center;">
+          <iframe
+            id="panoptoFrame"
+            src="${esc(embedSrc)}"
+            style="position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#000;"
+            allow="autoplay; encrypted-media; fullscreen"
+            allowfullscreen>
+          </iframe>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // 2. VIDEO MP4 DIRETTO DA MOODLE
+  if (currentVideoMode === "moodle" && lec.media_url) {
+    const openUrl = lec.media_url;
+    $("stage").innerHTML = `
+      <div class="moodle-video-wrapper" style="width:100%;height:100%;display:flex;flex-direction:column;background:#05070f;position:relative;">
+        <div class="moodle-video-topbar" style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;gap:8px;flex-wrap:wrap;z-index:2;">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <span style="background:rgba(245,158,11,0.18);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);padding:2px 8px;border-radius:12px;font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;">
+              <span>●</span> Video Moodle
+            </span>
+            <span style="font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:320px;" title="${esc(lec.title)}">
+              ${esc(lec.title)}
+            </span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <a href="${esc(openUrl)}" target="_blank" rel="noopener noreferrer" class="btn sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:#f59e0b;color:#1e293b;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;">
+              ↗ Apri Video su Moodle
+            </a>
+          </div>
+        </div>
+        <div style="flex:1;position:relative;background:#000;display:flex;align-items:center;justify-content:center;padding:12px;">
+          <video controls autoplay style="max-width:100%;max-height:100%;border-radius:6px;background:#000;" src="${esc(openUrl)}">
+            Il tuo browser non supporta la riproduzione diretta. <a href="${esc(openUrl)}" target="_blank" style="color:#60a5fa">Apri su Moodle</a>.
+          </video>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // 3. VIDEO LOCALE / GOOGLE DRIVE
+  if (currentVideoMode === "drive" && lec.videos && lec.videos.length) {
+    const kind = lec.videos.includes("screen") ? "screen" : lec.videos.includes("video") ? "video" : lec.videos[0];
+    $("stage").innerHTML = `<video src="/video/${lec.id}/${kind}" controls autoplay style="max-width:100%;max-height:100%;"></video>`;
+    const v = $("stage").querySelector("video");
+    if (v && audio) { v.currentTime = audio.currentTime; v.playbackRate = audio.playbackRate; }
+    return;
+  }
+
+  // 4. SLIDE & AUDIO SINCRONIZZATO
+  if (hasSlides) {
+    $("stage").innerHTML = '<img id="slide" alt="" style="max-width:100%;max-height:100%;object-fit:contain;">';
+    update(true);
+    return;
+  }
+
+  // 5. NESSUNA SORGENTE PRESENTE
+  $("stage").innerHTML = '<div class="empty">Nessuna sorgente video disponibile per questa registrazione</div>';
+}
+
 async function openLecture(id) {
   if (lec) store.set("pos:" + lec.id, audio.currentTime);
   lec = await getJ(`/api/lectures/${id}`); store.set("lecture", id);
@@ -2260,27 +2381,35 @@ async function openLecture(id) {
     ? `<div class="faint small" style="padding:8px 16px">Trascrizione ${esc(lec.transcript.source || "")}</div>` + segs.map((s, i) => `<div class="tline" data-i="${i}"><time>${fmt(s.start)}</time>${esc(s.text)}</div>`).join("")
     : '<div class="empty">Nessuna trascrizione</div>';
   $("strip").innerHTML = slides.map((s, i) => `<img loading="lazy" data-i="${i}" src="/media/${id}/slides/${s.file}" title="${fmt(s.start)}">`).join("");
-  $("stage").innerHTML = slides.length ? '<img id="slide" alt="">' : '<div class="empty">Nessuna slide</div>';
-  $("videoBtn").hidden = !(lec.videos && lec.videos.length);
-  audio.src = lec.has_audio ? `/media/${id}/audio.opus` : "";
-  audio.playbackRate = +$("rate").value || 1.25;
-  audio.currentTime = store.get("pos:" + id, 0);
-  drawTicks(); update(true);
+  
+  // Imposta audio locale solo se il file esiste fisicamente sul server
+  if (lec.has_local_audio) {
+    audio.src = `/media/${id}/audio.opus`;
+    audio.playbackRate = +$("rate").value || 1.25;
+    audio.currentTime = store.get("pos:" + id, 0);
+  } else {
+    audio.removeAttribute("src");
+    audio.load();
+  }
+
+  renderStage(lec.default_mode);
+  drawTicks();
   loadNotes(); if (!$("p-quiz").hidden) loadQuiz();
 }
+
 $("p-transcript").onclick = (e) => { const s = e.target.closest(".tline"); if (s) seek(segs[+s.dataset.i].start); };
 $("strip").onclick = (e) => { const im = e.target.closest("img"); if (im) seek(slides[+im.dataset.i].start); };
 $("stripBtn").onclick = () => { $("strip").hidden = !$("strip").hidden; $("stripBtn").classList.toggle("on", !$("strip").hidden); store.set("strip", !$("strip").hidden); };
 if (store.get("strip", false)) { $("strip").hidden = false; }
 $("videoBtn").onclick = () => {
-  if (!lec?.videos?.length) return;
-  const kind = lec.videos.includes("screen") ? "screen" : lec.videos.includes("video") ? "video" : lec.videos[0];
-  const showing = $("stage").querySelector("video");
-  if (showing) { showing.pause(); $("stage").innerHTML = slides.length ? '<img id="slide" alt="">' : ""; update(true); $("videoBtn").textContent = "Video"; return; }
-  audio.pause();
-  $("stage").innerHTML = `<video src="/video/${lec.id}/${kind}" controls autoplay></video>`;
-  const v = $("stage").querySelector("video"); v.currentTime = audio.currentTime; v.playbackRate = audio.playbackRate;
-  $("videoBtn").textContent = "Slide";
+  if (currentVideoMode === "slides") {
+    renderStage(lec.default_mode || "panopto");
+  } else {
+    renderStage("slides");
+  }
+};
+audio.onerror = () => {
+  // Ignora errori 404 su audio offline quando si usa il player Panopto/Moodle
 };
 function drawTicks() {
   const bar = $("bar"); bar.querySelectorAll(".tick").forEach((t) => t.remove());

@@ -44,8 +44,15 @@ def courses():
 @app.get("/api/courses/{course_id}/lectures")
 def lectures(course_id: int):
     with session() as db:
-        rows = db.execute("SELECT * FROM lectures WHERE course_id=? ORDER BY date, number", (course_id,)).fetchall()
-    return [dict(r) for r in rows]
+        rows = [dict(r) for r in db.execute("SELECT * FROM lectures WHERE course_id=? ORDER BY date, number", (course_id,)).fetchall()]
+    for r in rows:
+        if r.get("panopto_id") or (r.get("viewer_url") and "panopto" in r.get("viewer_url", "")):
+            r["video_type"] = "panopto"
+        elif r.get("media_url"):
+            r["video_type"] = "moodle"
+        else:
+            r["video_type"] = "standard"
+    return rows
 
 
 @app.get("/api/courses/{course_id}/notes-index")
@@ -63,10 +70,58 @@ def lecture(lecture_id: int):
     meta = _json(d / "lezione.json", {})
     from ..media import storage
     videos = [k for k, p in (meta.get("video") or {}).items() if (q := storage.resolve_media(p)) and q.exists()]
+    slides = _json(d / "slides.json", [])
+    has_local_audio = (d / "audio.opus").is_file()
+    has_local_slides = bool(slides) and (d / "slides").is_dir()
+
+    # Normalizzazione Panopto
+    panopto_id = lec.get("panopto_id")
+    viewer_url = lec.get("viewer_url")
+    if not panopto_id and viewer_url and "id=" in viewer_url:
+        import urllib.parse
+        qs = urllib.parse.parse_qs(urllib.parse.urlsplit(viewer_url).query)
+        panopto_id = qs.get("id", [None])[0]
+
+    panopto_embed_url = None
+    if panopto_id:
+        panopto_embed_url = f"https://univr.cloud.panopto.eu/Panopto/Pages/Embed.aspx?id={panopto_id}&autoplay=false&offerviewer=true&showtitle=true&showbrand=true&start=0&interactivity=all"
+        if not viewer_url:
+            viewer_url = f"https://univr.cloud.panopto.eu/Panopto/Pages/Viewer.aspx?id={panopto_id}&instance=MoodleDidattica"
+
+    media_url = lec.get("media_url")
+
+    video_modes = []
+    if panopto_embed_url or panopto_id:
+        video_modes.append("panopto")
+    if media_url:
+        video_modes.append("moodle")
+    if videos:
+        video_modes.append("drive")
+    if has_local_slides:
+        video_modes.append("slides")
+
+    default_mode = "empty"
+    if "panopto" in video_modes:
+        default_mode = "panopto"
+    elif "moodle" in video_modes:
+        default_mode = "moodle"
+    elif "drive" in video_modes:
+        default_mode = "drive"
+    elif "slides" in video_modes:
+        default_mode = "slides"
+
     return {
         **lec,
+        "panopto_id": panopto_id,
+        "viewer_url": viewer_url,
+        "panopto_embed_url": panopto_embed_url,
+        "media_url": media_url,
+        "has_local_audio": has_local_audio,
+        "has_local_slides": has_local_slides,
+        "video_modes": video_modes,
+        "default_mode": default_mode,
         "videos": videos,  # video archiviati su Google Drive, guardabili in streaming
-        "slides": _json(d / "slides.json", []),
+        "slides": slides,
         "transcript": _json(d / "transcript.json", {"segments": []}),
         "silences": _json(d / "silences.json", []),
     }
