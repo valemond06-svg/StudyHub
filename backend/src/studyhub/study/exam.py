@@ -222,9 +222,9 @@ def build_profile(course_id: int, force: bool = False) -> dict:
 # --- Simulazioni --------------------------------------------------------------------
 
 SIM_SYSTEM = """Sei il docente del corso e prepari una SIMULAZIONE D'ESAME nuova, realistica, nello stesso formato,
-livello e stile degli appelli passati e del profilo d'esame. Non copiare gli esercizi: crea varianti nuove degli
-esercizi tipo e domande di teoria dal programma. Rispetta struttura, parti e punteggi ufficiali (es. quiz di
-sbarramento, parti con minimo). Per ogni domanda: soluzione completa con i passaggi e criteri di correzione
+livello e stile degli appelli passati e del profilo d'esame. Non copiare gli esercizi: crea 3 quesiti/esercizi
+rappresentativi (uno per argomento chiave). Rispetta struttura, parti e punteggi ufficiali.
+Per ogni domanda: formulazione precisa, soluzione essenziale con i passaggi matematici chiave e criteri di correzione
 (come si assegnano i punti). Formule in LaTeX ($...$). In italiano."""
 
 SIM_SCHEMA = {

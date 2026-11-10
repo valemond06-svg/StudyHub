@@ -152,7 +152,7 @@ def _local(system: str, text: str, schema: dict, quality: str) -> LLMResult:
             data=json.dumps(payload).encode("utf-8"),
             headers=headers
         )
-        with urllib.request.urlopen(req, timeout=300) as r:
+        with urllib.request.urlopen(req, timeout=600) as r:
             res = json.loads(r.read().decode("utf-8"))
     except Exception as e:
         raise ClaudeError(f"Local LLM error: {e}")
