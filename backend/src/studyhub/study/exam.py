@@ -256,13 +256,13 @@ def generate_sim(course_id: int) -> dict:
     with session() as db:
         course = _course(db, course_id)
         rules = _exam_rules(db, course_id)
-        exams = _past_exams(db, course)[:2]  # 2 appelli come riferimento di stile bastano
-        exam_content, _ = _exam_docs_content(db, exams, 3)
+        exams = _past_exams(db, course)[:1]  # 1 appello recente come riferimento di stile
+        exam_content, _ = _exam_docs_content(db, exams, 2)
     slim = {k: profile[k] for k in ("formato", "argomenti", "esercizi_tipo", "teoria_richiesta")}
     content = [{"type": "text", "text": f"Corso: {course['fullname']}\n\n=== Regole d'esame ===\n{rules}\n\n"
                                         f"=== Profilo d'esame ===\n{json.dumps(slim, ensure_ascii=False)}"},
-               *exam_content, {"type": "text", "text": "\nCrea la simulazione d'esame."}]
-    text_prompt = "\n\n".join(b["text"] for b in content if b.get("type") == "text" and "text" in b)
+               *exam_content, {"type": "text", "text": "\nCrea una simulazione d'esame completa e bilanciata (3-4 quesiti/esercizi essenziali) secondo lo schema."}]
+    text_prompt = "\n\n".join(b["text"] for b in content if b.get("type") == "text" and "text" in b)[:10000]
     res = run_json(SIM_SYSTEM, text_prompt, SIM_SCHEMA, quality="accurato")
     with session() as db:
         sid = db.execute("INSERT INTO exam_sims (course_id, title, duration_min, content, created_at) VALUES (?,?,?,?,?)",
