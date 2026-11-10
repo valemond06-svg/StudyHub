@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pymupdf
 
-from ..ai.claude_runner import image_block, run
-from ..ai.lecture_notes import _exam_rules, _render
+from ..ai.llm import run_json
+from ..ai.lecture_notes import _exam_rules
 from ..db import session
 from ..paths import uni_path
 
@@ -135,7 +135,6 @@ def _exam_docs_content(db, docs: list[dict], max_images: int) -> tuple[list[dict
             text = doc[p["page"] - 1].get_text("text").strip()
             if (p["is_scan"] or (p["is_visual"] and len(text) < 300)) and n_img < max_images:
                 content.append({"type": "text", "text": f"--- pagina {p['page']} (immagine) ---"})
-                content.append(image_block(_render(path, p["page"], d["sha256"])))
                 n_img += 1
             elif text:
                 content.append({"type": "text", "text": f"--- pagina {p['page']} ---\n{text}"})
@@ -207,13 +206,14 @@ def build_profile(course_id: int, force: bool = False) -> dict:
         old = json.loads(jp.read_text(encoding="utf-8"))
         if old.get("input_hash") == h:
             return {**old, "cached": True}
-    res = run(PROFILE_SYSTEM, content, PROFILE_SCHEMA, model=MODEL)
+    text_prompt = "\n\n".join(b["text"] for b in content if b.get("type") == "text" and "text" in b)
+    res = run_json(PROFILE_SYSTEM, text_prompt, PROFILE_SCHEMA, quality="accurato")
     payload = {**res.data, "course_id": course_id, "input_hash": h, "sources": used, "model": res.model,
                "created_at": _now(), "prompt_version": PROFILE_VERSION}
     jp.parent.mkdir(parents=True, exist_ok=True)
     jp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     mp.write_text(_profile_md(res.data, course), encoding="utf-8")
-    return {**payload, "cached": False, "utilization": res.utilization}
+    return {**payload, "cached": False, "utilization": getattr(res, "utilization", 1.0)}
 
 
 # --- Simulazioni --------------------------------------------------------------------
@@ -259,12 +259,13 @@ def generate_sim(course_id: int) -> dict:
     content = [{"type": "text", "text": f"Corso: {course['fullname']}\n\n=== Regole d'esame ===\n{rules}\n\n"
                                         f"=== Profilo d'esame ===\n{json.dumps(slim, ensure_ascii=False)}"},
                *exam_content, {"type": "text", "text": "\nCrea la simulazione d'esame."}]
-    res = run(SIM_SYSTEM, content, SIM_SCHEMA, model=MODEL)
+    text_prompt = "\n\n".join(b["text"] for b in content if b.get("type") == "text" and "text" in b)
+    res = run_json(SIM_SYSTEM, text_prompt, SIM_SCHEMA, quality="accurato")
     with session() as db:
         sid = db.execute("INSERT INTO exam_sims (course_id, title, duration_min, content, created_at) VALUES (?,?,?,?,?)",
                          (course_id, res.data["titolo"], res.data["durata_min"],
                           json.dumps(res.data, ensure_ascii=False), _now())).lastrowid
-    return {"id": sid, "utilization": res.utilization}
+    return {"id": sid, "utilization": getattr(res, "utilization", 1.0)}
 
 
 def list_sims(course_id: int) -> list[dict]:
@@ -335,12 +336,17 @@ def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None
         for url in (a.get("immagini") or [])[:4]:
             if n_img >= 16 or not url.startswith("data:image/"):
                 continue
-            mtype, b64 = url[5:].split(";base64,", 1)
-            content.append({"type": "image", "source": {"type": "base64", "media_type": mtype, "data": b64}})
+            content.append({"type": "text", "text": "[Foto allegata dallo studente per lo svolgimento]"})
             n_img += 1
     content.append({"type": "text", "text": "\nCorreggi la prova secondo lo schema."})
-    res = run(GRADE_SYSTEM, content, GRADE_SCHEMA, model=MODEL)
+    text_prompt = "\n\n".join(b["text"] for b in content if b.get("type") == "text" and "text" in b)
+    res = run_json(GRADE_SYSTEM, text_prompt, GRADE_SCHEMA, quality="veloce")
     g = res.data
+    if isinstance(g.get("valutazioni"), str):
+        try:
+            g["valutazioni"] = json.loads(g["valutazioni"])
+        except Exception:
+            pass
     stored = [{k: v for k, v in (answers[i] if i < len(answers) else {}).items() if k != "immagini"}
               | {"n_immagini": len((answers[i] if i < len(answers) else {}).get("immagini") or [])}
               for i in range(len(sim["domande"]))]
@@ -350,4 +356,4 @@ def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None
                          (sim_id, json.dumps(stored, ensure_ascii=False), json.dumps(g, ensure_ascii=False),
                           g["voto_30"], int(g["superato"]), elapsed_min, _now())).lastrowid
     sol = [{"soluzione_md": q["soluzione_md"], "corretta": q["corretta"], "punti_max": q["punti"]} for q in sim["domande"]]
-    return {"attempt_id": aid, **g, "soluzioni": sol, "utilization": res.utilization}
+    return {"attempt_id": aid, **g, "soluzioni": sol, "utilization": getattr(res, "utilization", 1.0)}
