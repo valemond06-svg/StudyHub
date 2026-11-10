@@ -843,13 +843,84 @@ def study_topic_artifact(topic_id: int):
         out = lesson.get(topic_id)
     except KeyError:
         raise HTTPException(404, "Argomento non trovato")
-    lab = (out.get("lesson") or {}).get("laboratorio_pratico")
-    if not lab or not lab.get("codice"):
-        raise HTTPException(404, "Nessun laboratorio pratico disponibile per questo argomento")
+    
+    L = out.get("lesson") or {}
+    lab = L.get("laboratorio_pratico")
+    widget = L.get("widget")
     
     course_id = out["topic"]["course_id"]
     arch = get_course_archetype(course_id)
-    code = lab["codice"]
+    
+    code = None
+    if lab and lab.get("codice"):
+        code = lab["codice"]
+    elif widget and widget.get("tipo") and widget.get("tipo") != "none":
+        wtype = widget.get("tipo")
+        wtit = widget.get("titolo", out["topic"]["name"])
+        winst = widget.get("istruzioni", "")
+        if arch.file_extension == ".m":
+            code = (
+                f"% ===================================================================\n"
+                f"% StudyHub MATLAB Lab Simulation\n"
+                f"% Argomento: {out['topic']['name']}\n"
+                f"% Laboratorio: {wtit}\n"
+                f"% Istruzioni: {winst}\n"
+                f"% ===================================================================\n\n"
+                f"clear; clc; close all;\n\n"
+                f"fprintf('Avvio simulazione: {wtit}\\n');\n"
+            )
+            if wtype == "linear_2d":
+                code += (
+                    "A = [1.5, 0.5; 0.2, 1.2];\n"
+                    "fprintf('Matrice di trasformazione A:\\n'); disp(A);\n"
+                    "detA = det(A);\n"
+                    "fprintf('Determinante (area scalata): %.3f\\n', detA);\n"
+                    "[V, D] = eig(A);\n"
+                    "fprintf('Autovalori (diagonale D):\\n'); disp(diag(D));\n"
+                    "figure('Name', 'Linear 2D Transformation');\n"
+                    "grid on; hold on; axis equal;\n"
+                    "quiver(0, 0, 1, 0, 'r', 'LineWidth', 2, 'DisplayName', 'i_hat');\n"
+                    "quiver(0, 0, 0, 1, 'b', 'LineWidth', 2, 'DisplayName', 'j_hat');\n"
+                    "quiver(0, 0, A(1,1), A(2,1), 'r--', 'LineWidth', 2, 'DisplayName', 'T(i_hat)');\n"
+                    "quiver(0, 0, A(1,2), A(2,2), 'b--', 'LineWidth', 2, 'DisplayName', 'T(j_hat)');\n"
+                    "legend show; title('Trasformazione Lineare 2D');\n"
+                )
+            elif wtype == "pole_zero":
+                code += (
+                    "s = tf('s');\n"
+                    "G = 1 / (s^2 + 1.2*s + 2);\n"
+                    "figure('Name', 'Poli e Zeri');\n"
+                    "pzmap(G); grid on;\n"
+                    "figure('Name', 'Risposta al gradino');\n"
+                    "step(G); grid on;\n"
+                )
+            else:
+                code += f"% Parametri widget: {widget.get('config_json', '{}')}\n"
+        elif arch.file_extension == ".cir":
+            code = (
+                f"* StudyHub SPICE Netlist\n"
+                f"* Topic: {out['topic']['name']}\n"
+                f"* Title: {wtit}\n"
+                f"VCC 1 0 DC 15\n"
+                f"VEE 2 0 DC -15\n"
+                f"VIN 3 0 SIN(0 1 1kHz)\n"
+                f"R1 3 4 10k\n"
+                f"RF 4 5 100k\n"
+                f".tran 0.01ms 5ms\n"
+                f".end\n"
+            )
+        else:
+            code = (
+                f"# StudyHub Simulation Script\n"
+                f"# Topic: {out['topic']['name']}\n"
+                f"# Title: {wtit}\n"
+                f"# Instructions: {winst}\n\n"
+                f"print('StudyHub Interactive Lab: {wtit}')\n"
+            )
+
+    if not code:
+        raise HTTPException(404, "Nessun laboratorio pratico disponibile per questo argomento")
+    
     filename = f"lab_{arch.archetype_id.lower()}_topic_{topic_id}{arch.file_extension}"
     return PlainTextResponse(code, media_type=arch.mime_type,
                              headers={"Content-Disposition": f'attachment; filename="{filename}"'})
