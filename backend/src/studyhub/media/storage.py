@@ -25,23 +25,27 @@ LOG_FILE = settings.app_dir / "media_migration_log.json"
 
 
 def media_root() -> Path | None:
-    """La cartella su Drive, se configurata e raggiungibile (Drive avviato, unità montata).
+    """La cartella dei media (su Drive o locale), se configurata e raggiungibile.
 
-    Su Linux un percorso Windows ("G:/…") non vale: sarebbe relativo e i video finirebbero in una cartella `G:`
-    locale. Lì si usa `STUDYHUB_MEDIA_ROOT`, poi `media_root_linux`, poi ~/GoogleDrive/StudyHub, solo se il mount
-    rclone è attivo (altrimenti si scriverebbe nella cartella vuota sotto il punto di mount)."""
+    Su Windows si usa `media_root` (es. "G:/Il mio Drive/StudyHub").
+    Su Linux si usa `STUDYHUB_MEDIA_ROOT` o `media_root_linux` se impostati,
+    altrimenti il fallback ~/GoogleDrive/StudyHub (solo se il mount rclone è attivo)."""
     if os.name == "nt":
         root = settings.extra.get("media_root")
     else:
-        root = (os.environ.get("STUDYHUB_MEDIA_ROOT") or settings.extra.get("media_root_linux")
-                or str(Path.home() / "GoogleDrive" / "StudyHub"))
-        mount = Path(root).expanduser()
-        while not mount.exists() and mount != mount.parent:
-            mount = mount.parent
-        while not os.path.ismount(mount) and mount != mount.parent:
-            mount = mount.parent
-        if not Path(root).is_absolute() or mount == Path.home() or mount in Path.home().parents:
-            return None  # Drive non montato: i video restano dove sono
+        explicit = os.environ.get("STUDYHUB_MEDIA_ROOT") or settings.extra.get("media_root_linux")
+        if explicit:
+            root = explicit
+        else:
+            default_path = Path.home() / "GoogleDrive" / "StudyHub"
+            mount = default_path
+            while not mount.exists() and mount != mount.parent:
+                mount = mount.parent
+            while not os.path.ismount(mount) and mount != mount.parent:
+                mount = mount.parent
+            if not default_path.is_absolute() or mount == Path.home() or mount in Path.home().parents:
+                return None  # Drive non montato: i video restano dove sono
+            root = str(default_path)
     if not root:
         return None
     p = Path(root).expanduser()
