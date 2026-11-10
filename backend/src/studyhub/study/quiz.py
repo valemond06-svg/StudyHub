@@ -22,6 +22,7 @@ GEN_SYSTEM = """Sei un docente universitario che prepara un quiz di verifica in 
 dell'esame del corso. Basati SOLO sugli appunti forniti. Mescola: domande a scelta multipla (4 opzioni,
 una sola corretta, distrattori plausibili che colpiscono errori tipici), vero/falso, domande aperte di
 teoria (definizioni, enunciati, dimostrazioni) ed esercizi brevi con soluzione. Formule in LaTeX ($...$).
+Sii conciso e sintetico: mantieni testi ed opzioni brevi (max 1-2 frasi) e soluzioni essenziali.
 Per ogni domanda indica il minuto della lezione (secondi) se lo conosci dagli appunti."""
 
 GEN_SCHEMA = {
@@ -79,7 +80,7 @@ def generate(lecture_id: int, n_questions: int = 10) -> dict:
                          "VALUES (?,?,?,?,?,?)",
                          (out["course_id"], lecture_id, res.data["titolo"],
                           json.dumps(res.data["domande"], ensure_ascii=False), h, _now())).lastrowid
-    return {"id": qid, "cached": False, "utilization": res.utilization}
+    return {"id": qid, "cached": False, "utilization": getattr(res, "utilization", 1.0)}
 
 
 def get(quiz_id: int, with_solutions: bool = False) -> dict:
