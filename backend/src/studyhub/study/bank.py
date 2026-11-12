@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -320,13 +321,13 @@ def _store(unit: dict, course_id: int, data: dict, refs: dict) -> int:
             if q["tipo"] == "multipla":
                 if not (len(q["opzioni"]) >= 2 and 0 <= q["corretta"] < len(q["opzioni"])):
                     continue
-                import random
-                _opts = list(q["opzioni"])
-                _val = _opts[q["corretta"]]
-                random.shuffle(_opts)
-                q["opzioni"] = _opts
-                q["corretta"] = _opts.index(_val)
-                continue
+                # Rimescolo le opzioni (i modelli mettono la giusta quasi sempre per prima o per ultima)
+                # e riallineo l'indice. Si lavora per posizione, non con .index(): due opzioni uguali
+                # farebbero puntare l'indice a quella sbagliata.
+                posizioni = list(range(len(q["opzioni"])))
+                random.shuffle(posizioni)
+                q["corretta"] = posizioni.index(q["corretta"])
+                q["opzioni"] = [q["opzioni"][i] for i in posizioni]
             if q["tipo"] == "vero_falso" and q["corretta"] not in (0, 1):
                 continue
             key = hashlib.sha1(f"{unit['id']}:{q['testo_md'].strip().lower()}".encode()).hexdigest()
