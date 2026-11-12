@@ -38,5 +38,13 @@ dependencies = [
 requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
 
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
 [project.scripts]
 studyhub = "studyhub.cli:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
