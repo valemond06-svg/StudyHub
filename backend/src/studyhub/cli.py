@@ -409,3 +409,26 @@ def status():
 
 if __name__ == "__main__":
     app()
+
+
+@app.command("ripara-crocette")
+def ripara_crocette(applica: bool = typer.Option(False, "--applica", help="Rimetti in coda le unità (altrimenti si elenca soltanto)")):
+    """Unità preparate senza domande a scelta multipla (bug di bank._store dal 27/10): le elenca; con --applica
+    le rimette in coda per la rigenerazione, dopo aver fatto una copia del database."""
+    from .study import repair
+    with session() as db:
+        units = repair.units_without_multiple_choice(db)
+    if not units:
+        console.print("[green]Nessuna unità da riparare.[/]")
+        return
+    table = Table("id", "corso", "unità", "data", "domande")
+    for u in units:
+        table.add_row(str(u["id"]), (u["course"] or "?")[:30], (u["title"] or "")[:50], u["day"] or "", str(u["n_items"]))
+    console.print(table)
+    console.print(f"{len(units)} unità pronte senza nessuna domanda a scelta multipla.")
+    if not applica:
+        console.print("[yellow]Nessuna modifica fatta.[/] Per rimetterle in coda: studyhub ripara-crocette --applica")
+        return
+    console.print(f"Copia del database: {repair.backup_db()}")
+    n = repair.requeue([u["id"] for u in units])
+    console.print(f"[green]{n} unità rimesse in coda.[/] Ora «Analizza il corso» le rigenera (le domande con storico si conservano).")

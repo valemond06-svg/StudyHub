@@ -1,5 +1,15 @@
 # Changelog — StudyHub
 
+## 2026-11-12 (secondo giro) — foto nella correzione, chiave, riparazione crocette
+
+- **Foto dei compiti**: `exam.grade_sim` allega le foto (1600 px, JPEG, max 6) a un server locale con vista o a Claude;
+  senza vista la correzione avviene sul solo testo e lo dice chiaramente (campo `foto` e avviso nel commento).
+- **Chiave del modello locale fuori dal codice**: STUDYHUB_LOCAL_LLM_KEY, config, LOCAL_LLM_API_KEY, file
+  ~/.config/brain-llm/api-key. **ATTENZIONE: la vecchia chiave resta nella storia di git e va ruotata
+  (decisione di Valentino).**
+- **`studyhub ripara-crocette`**: elenca le unità preparate senza domande a scelta multipla; con `--applica` backup
+  del DB e rimessa in coda. **`ai/jobs.py`**: l'indicizzazione fallita non trasforma più il job in errore.
+
 ## 2026-11-12 — Notte di lavoro: test, modello locale, diagnostica
 
 - **Test**: prima suite pytest (`cd backend && uv run pytest`): schema DB, FSRS, padronanza, piano, banca domande,
