@@ -1,5 +1,19 @@
 # Changelog — StudyHub
 
+## 2026-11-12 — Notte di lavoro: test, modello locale, diagnostica
+
+- **Test**: prima suite pytest (`cd backend && uv run pytest`): schema DB, FSRS, padronanza, piano, banca domande,
+  sessioni di studio, quiz, esami, ricerca, chunking, modello locale, doctor, smoke test degli endpoint. Database
+  temporanei, nessuna rete.
+- **Fix**: le domande a scelta multipla non venivano più salvate in `bank._store` (un `continue` rimasto dopo lo
+  shuffle del 27/10): le unità preparate da allora non hanno crocette e vanno rigenerate. I capitoli esclusi
+  (`hidden=2`) facevano cadere `build_queue`. Endpoint con id inesistente: 404 invece di 500. Indice domanda
+  negativo in sessione. Ricerca senza archivio vettoriale. Risposta senza JSON dal modello locale.
+- **Modello locale** (`ai/llm.py`): candidati in ordine (questa macchina, cavo, Tailscale, LAN), controllo di salute
+  in parallelo con timeout 1 s, cache 5 minuti invalidata sull'errore, ripiego sul server successivo se uno cade a
+  metà, `model: "local"` per il router Windows.
+- **Diagnostica**: `studyhub doctor` e `/api/setup` controllano database, modello locale, ffmpeg e cartelle dei corsi.
+
 ## 2026-10-27 — Aggiornamento v2.3 (Randomizzazione Risposte & Schemi Immersivi)
 
 ### 🔀 Risoluzione Bias Opzioni Multiple (FIX CRITICO)
