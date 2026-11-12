@@ -370,3 +370,40 @@ def test_list_for_lecture_riporta_il_miglior_punteggio(ambiente, db, monkeypatch
     quizmod.submit(qid, [0, 1, None])   # 2/3
     quizmod.submit(qid, [None, None, None])  # 0/3
     assert quizmod.list_for_lecture(1)[0]["best"] == pytest.approx(2 / 3)
+
+
+# --- capitoli esclusi dall'utente (study_topics.hidden = 2) -------------------------------------
+
+def test_capitolo_escluso_non_manda_in_crash_la_sessione(ambiente, db):
+    """Difetto reale: item_states filtrava solo hidden=1; le domande di un capitolo escluso da te (hidden=2)
+    restavano in coda e build_queue cadeva con KeyError (l'argomento non e' nell'elenco degli argomenti visibili)."""
+    inserisci_corso(db)
+    _argomento(db, 1, position=1)
+    _argomento(db, 2, position=2)
+    _domanda(db, 1, "richiamo")
+    _domanda(db, 2, "richiamo")
+    db.execute("UPDATE study_topics SET hidden=2, chapter='Analisi 1' WHERE id=2")
+    db.commit()
+    coda, snap = sess.build_queue(1, 60)
+    assert {e["topic"] for e in coda if e["t"] == "scheda"} == {1}
+    assert set(snap) == {"1"}
+    with session() as d:
+        escluse = {r[0] for r in d.execute("SELECT id FROM study_items WHERE topic_id=2")}
+    assert not escluse & {e["item"] for e in coda if e["t"] == "domanda"}
+
+
+def test_capitolo_escluso_non_conta_nella_padronanza_ne_nelle_scadenze(ambiente, db):
+    from studyhub.study import mastery
+    inserisci_corso(db)
+    _argomento(db, 1)
+    _argomento(db, 2)
+    scaduta = _iso(datetime.now(timezone.utc) - timedelta(days=1))
+    a = _domanda(db, 1, "richiamo", due=scaduta, fsrs=_carta_json())
+    b = _domanda(db, 2, "richiamo", due=scaduta, fsrs=_carta_json())
+    db.execute("INSERT INTO study_attempts (item_id, score, created_at) VALUES (?, 1, '2026-11-01T10:00:00')", (a,))
+    db.execute("UPDATE study_topics SET hidden=2 WHERE id=2")
+    db.commit()
+    o = mastery.overview(1)
+    assert o["n_items"] == 1 and o["due"] == 1 and o["coverage"] == 1.0
+    assert [t["id"] for t in o["topics"]] == [1]
+    assert b  # la domanda esclusa esiste ancora nel database: si puo' rimettere il capitolo

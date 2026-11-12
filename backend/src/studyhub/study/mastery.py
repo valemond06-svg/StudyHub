@@ -49,7 +49,7 @@ def item_states(db, course_id: int) -> list[dict]:
     """Domande attive con l'esito delle ultime risposte (qualità = media mobile dei punteggi)."""
     items = [dict(r) for r in db.execute(
         """SELECT id, topic_id, kind, difficulty, fsrs, due FROM study_items WHERE course_id=? AND suspended=0
-           AND topic_id NOT IN (SELECT id FROM study_topics WHERE hidden=1)""", (course_id,))]
+           AND topic_id NOT IN (SELECT id FROM study_topics WHERE hidden<>0)""", (course_id,))]
     hist: dict[int, list] = defaultdict(list)
     for r in db.execute("""SELECT a.item_id, a.score, a.created_at FROM study_attempts a
                            JOIN study_items i ON i.id=a.item_id WHERE i.course_id=? ORDER BY a.id""", (course_id,)):
@@ -129,7 +129,8 @@ def overview(course_id: int) -> dict:
         sims = db.execute("""SELECT MAX(grade) FROM exam_attempts a JOIN exam_sims s ON s.id=a.sim_id
                              WHERE s.course_id=?""", (course_id,)).fetchone()[0]
         due = db.execute("""SELECT COUNT(*) FROM study_items WHERE course_id=? AND suspended=0 AND due IS NOT NULL
-                            AND due <= ?""", (course_id, now.replace(microsecond=0).isoformat())).fetchone()[0]
+                            AND due <= ? AND topic_id NOT IN (SELECT id FROM study_topics WHERE hidden<>0)""",
+                         (course_id, now.replace(microsecond=0).isoformat())).fetchone()[0]
     at_exam = (datetime.combine(date.fromisoformat(exam["date"]), datetime.min.time(), timezone.utc)
                if exam else now + timedelta(days=HORIZON_DAYS))
     m_now, m_exam = topic_mastery(items, now), topic_mastery(items, at_exam)
