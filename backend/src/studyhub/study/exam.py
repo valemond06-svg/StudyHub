@@ -16,7 +16,8 @@ from pathlib import Path
 
 import pymupdf
 
-from ..ai.llm import run_json
+from ..ai.llm import run_json, run_json_content
+from ..ai.vision import prepare_images
 from ..ai.lecture_notes import _exam_rules
 from ..db import session
 from ..paths import uni_path
@@ -295,7 +296,8 @@ def get_sim(sim_id: int, with_solutions: bool = False) -> dict:
 
 GRADE_SYSTEM = """Sei il docente e correggi una prova d'esame scritta, in italiano, con il rigore di un vero esame.
 Per ogni domanda assegna i punti secondo i criteri forniti (anche parziali). Le risposte possono essere testo e/o
-FOTO dello svolgimento a mano: leggile con attenzione. Poi applica le regole ufficiali del corso (sbarramenti,
+FOTO dello svolgimento a mano: leggile con attenzione; se una foto non ti è visibile NON inventarne il contenuto,
+assegna punti solo per ciò che leggi davvero e dillo nel commento. Poi applica le regole ufficiali del corso (sbarramenti,
 minimi per parte, conversione in trentesimi) e calcola il voto finale. Feedback utile: cosa è giusto, dov'è
 l'errore, cosa ripassare. Formule in LaTeX ($...$)."""
 
@@ -314,6 +316,23 @@ GRADE_SCHEMA = {
 }
 
 
+MAX_PHOTOS_PER_ANSWER = 4
+MAX_GRADE_PHOTOS = 6   # in totale per correzione (ogni foto pesa sul contesto del modello)
+
+
+def _photo_notice(requested: int, prepared: int, read: int) -> dict:
+    """Dice allo studente cosa è successo alle sue foto: mai lasciargli credere che siano state lette."""
+    avviso = None
+    if requested and read == 0:
+        avviso = (f"⚠ Le {requested} foto dello svolgimento NON sono state lette: nessun modello con vista era "
+                  "disponibile (o le foto non erano valide). La correzione si basa solo sul testo scritto, "
+                  "quindi i punti degli svolgimenti a mano non sono stati valutati.")
+    elif requested and read < requested:
+        avviso = (f"⚠ Lette {read} foto su {requested}: le altre sono state scartate (non valide o oltre il limite "
+                  f"di {MAX_GRADE_PHOTOS} per correzione).")
+    return {"allegate": requested, "lette": read, "avviso": avviso}
+
+
 def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None) -> dict:
     """answers[i] = {"testo": str|None, "scelta": int|None, "immagini": [dataURL base64, …]}"""
     sim = get_sim(sim_id, with_solutions=True)
@@ -321,7 +340,7 @@ def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None
         rules = _exam_rules(db, sim["course_id"])
     content: list[dict] = [{"type": "text", "text": f"=== Regole d'esame ufficiali ===\n{rules}\n\n"
                                                     f"=== Prova: {sim['titolo']} ===\n{sim['istruzioni_md']}"}]
-    n_img = 0
+    n_img = n_requested = 0
     for i, q in enumerate(sim["domande"]):
         a = answers[i] if i < len(answers) else {}
         head = (f"\n--- Domanda {i} · {q['parte']} · {q['tipo']} · {q['punti']:g} punti ---\n{q['testo_md']}\n"
@@ -334,17 +353,21 @@ def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None
                      " (già verificata: assegna tutti i punti se corretta, 0 altrimenti)")
             content.append({"type": "text", "text": head})
             continue
+        foto = [u for u in (a.get("immagini") or []) if isinstance(u, str)][:MAX_PHOTOS_PER_ANSWER]
+        n_requested += len(foto)
+        pronte, _scartate = prepare_images(foto, limit=max(0, MAX_GRADE_PHOTOS - n_img))
+        n_img += len(pronte)
         head += f"Risposta dello studente (testo): {a.get('testo') or '(nessun testo)'}"
+        if foto:
+            head += f"\nFoto dello svolgimento allegate dallo studente: {len(foto)} (di cui leggibili: {len(pronte)})."
         content.append({"type": "text", "text": head})
-        for url in (a.get("immagini") or [])[:4]:
-            if n_img >= 16 or not url.startswith("data:image/"):
-                continue
-            content.append({"type": "text", "text": "[Foto allegata dallo studente per lo svolgimento]"})
-            n_img += 1
+        content.extend(pronte)
     content.append({"type": "text", "text": "\nCorreggi la prova secondo lo schema."})
-    text_prompt = "\n\n".join(b["text"] for b in content if b.get("type") == "text" and "text" in b)
-    res = run_json(GRADE_SYSTEM, text_prompt, GRADE_SCHEMA, quality="veloce")
+    res = run_json_content(GRADE_SYSTEM, content, GRADE_SCHEMA, quality="veloce")
     g = res.data
+    foto_info = _photo_notice(n_requested, n_img, getattr(res, "images_sent", 0))
+    if foto_info["avviso"]:
+        g["commento_md"] = f"**{foto_info['avviso']}**\n\n{g.get('commento_md') or ''}"
     if isinstance(g.get("valutazioni"), str):
         try:
             g["valutazioni"] = json.loads(g["valutazioni"])
@@ -359,4 +382,4 @@ def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None
                          (sim_id, json.dumps(stored, ensure_ascii=False), json.dumps(g, ensure_ascii=False),
                           g["voto_30"], int(g["superato"]), elapsed_min, _now())).lastrowid
     sol = [{"soluzione_md": q["soluzione_md"], "corretta": q["corretta"], "punti_max": q["punti"]} for q in sim["domande"]]
-    return {"attempt_id": aid, **g, "soluzioni": sol, "utilization": getattr(res, "utilization", 1.0)}
+    return {"attempt_id": aid, **g, "foto": foto_info, "soluzioni": sol, "utilization": getattr(res, "utilization", 1.0)}

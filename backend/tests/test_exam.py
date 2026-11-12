@@ -23,6 +23,17 @@ def _falso(data):
     return run
 
 
+def _contenuto(falso):
+    """Adatta un falso run_json (system, text, ...) a run_json_content (system, blocchi, ...)."""
+    def run(system, content, schema, quality="accurato"):
+        testo = " ".join(b["text"] for b in content if b.get("type") == "text")
+        r = falso(system, testo, schema, quality)
+        r.images_sent = 0
+        run.visto = falso.visto
+        return r
+    return run
+
+
 @pytest.fixture
 def corso(ambiente, db):
     from studyhub.config import settings
@@ -81,7 +92,7 @@ def test_correzione_registra_tentativo_e_non_salva_le_foto(corso, monkeypatch):
     sid = exam.generate_sim(corso)["id"]
     correttore = _falso({"valutazioni": [{"indice": 1, "punti": 6, "feedback_md": "ok"}], "voto_30": 24.0,
                          "superato": True, "commento_md": "bene", "da_ripassare": []})
-    monkeypatch.setattr(exam, "run_json", correttore)
+    monkeypatch.setattr(exam, "run_json_content", _contenuto(correttore))
     r = exam.grade_sim(sid, [{"scelta": 1}, {"testo": "risposta", "immagini": ["data:image/png;base64,AAAA"] * 2}], 55.0)
     assert r["voto_30"] == 24.0 and [s["punti_max"] for s in r["soluzioni"]] == [2, 10]
     assert "CORRETTA" in correttore.visto and "ERRATA" not in correttore.visto
@@ -97,7 +108,7 @@ def test_correzione_crocetta_sbagliata_e_risposte_mancanti(corso, monkeypatch):
     monkeypatch.setattr(exam, "run_json", _falso(SIM))
     sid = exam.generate_sim(corso)["id"]
     correttore = _falso({"valutazioni": [], "voto_30": 0, "superato": False, "commento_md": "", "da_ripassare": []})
-    monkeypatch.setattr(exam, "run_json", correttore)
+    monkeypatch.setattr(exam, "run_json_content", _contenuto(correttore))
     exam.grade_sim(sid, [{"scelta": 0}])          # sbagliata; l'esercizio non è stato consegnato (lista più corta)
     assert "ERRATA" in correttore.visto and "(nessun testo)" in correttore.visto
     exam.grade_sim(sid, [{"scelta": None}, {}])   # crocetta saltata
@@ -107,7 +118,7 @@ def test_correzione_crocetta_sbagliata_e_risposte_mancanti(corso, monkeypatch):
 def test_valutazioni_come_stringa_json_vengono_decodificate(corso, monkeypatch):
     monkeypatch.setattr(exam, "run_json", _falso(SIM))
     sid = exam.generate_sim(corso)["id"]
-    monkeypatch.setattr(exam, "run_json", _falso({"valutazioni": '[{"indice": 0, "punti": 2, "feedback_md": "f"}]',
-                                                  "voto_30": 18, "superato": True, "commento_md": "", "da_ripassare": []}))
+    monkeypatch.setattr(exam, "run_json_content", _contenuto(_falso({"valutazioni": '[{"indice": 0, "punti": 2, "feedback_md": "f"}]',
+                                                  "voto_30": 18, "superato": True, "commento_md": "", "da_ripassare": []})))
     r = exam.grade_sim(sid, [{"scelta": 1}, {}])
     assert r["valutazioni"][0]["punti"] == 2
