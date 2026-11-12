@@ -37,6 +37,7 @@ class RetePulita:
 
     def __init__(self):
         self.host: dict[str, dict] = {}
+        self.json_get: dict = {}   # (base, percorso) -> corpo JSON (per /props e /v1/models)
         self.chiamate: list[tuple[str, str, str | None, dict]] = []   # (base, percorso, Authorization, payload)
         self.lock = threading.Lock()
 
@@ -64,6 +65,10 @@ class RetePulita:
             raise urllib.error.URLError("irraggiungibile")
         if cfg["ritardo"]:
             time.sleep(cfg["ritardo"])
+        if (base, percorso) in self.json_get:
+            return _Risposta(json.dumps(self.json_get[(base, percorso)]).encode())
+        if percorso == "/props":
+            raise urllib.error.HTTPError(url, 404, "no", {}, io.BytesIO(b"{}"))
         if percorso == "/health":
             esito = cfg["health"]
         elif percorso == "/v1/models":
@@ -156,7 +161,8 @@ def test_candidati_controllati_in_parallelo_non_in_serie(rete):
     assert time.monotonic() - t0 < 1.2
 
 
-def test_la_chiave_va_solo_alle_porte_8080(rete):
+def test_la_chiave_va_solo_alle_porte_8080(rete, monkeypatch):
+    monkeypatch.setenv("STUDYHUB_LOCAL_LLM_KEY", "chiave-di-prova")
     rete.su(LAPTOP).su(CAVO_BACKEND)
     llm.get_local_llm_url()
     assert rete.sonde(LAPTOP)[0][2] == f"Bearer {llm.get_local_llm_key()}"
@@ -297,7 +303,8 @@ def test_tutti_caduti_errore_con_il_dettaglio_e_numero_massimo_di_tentativi(rete
     assert LAPTOP in str(e.value) and CAVO in str(e.value)
 
 
-def test_nessun_server_sano_ultimo_tentativo_sul_fisso_via_tailscale(rete):
+def test_nessun_server_sano_ultimo_tentativo_sul_fisso_via_tailscale(rete, monkeypatch):
+    monkeypatch.setenv("STUDYHUB_LOCAL_LLM_KEY", "chiave-di-prova")
     # i controlli di salute falliscono ma la chat risponde (server occupato che tarda sull'health)
     rete.su(TAILSCALE, health=503, models=503)
     assert _chiama().data == {"x": 1}

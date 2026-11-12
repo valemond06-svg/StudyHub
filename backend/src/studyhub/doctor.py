@@ -57,6 +57,11 @@ def check_modello_locale() -> tuple[bool, str]:
         return False, f"controllo non riuscito: {e}"
     if url:
         return True, f"{url} (modello «{llm.get_local_llm_model()}»)"
+    rifiutati = llm.local_llm_auth_failures()
+    if rifiutati:
+        return False, ("server raggiunti ma senza chiave valida: " + ", ".join(rifiutati)
+                       + ". Imposta STUDYHUB_LOCAL_LLM_KEY (o local_llm_key in config.yaml, o il file "
+                       "~/.config/brain-llm/api-key).")
     return False, "nessun server risponde (provati: " + ", ".join(llm.local_llm_candidates()[:4]) + ", …)"
 
 

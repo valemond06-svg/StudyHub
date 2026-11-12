@@ -34,9 +34,6 @@ AGY_TIMEOUT_S = 8 * 60
 GEMINI_MODELS = {"veloce": "gemini-3.8-flash-low", "accurato": "gemini-3.8-flash-high"}
 CLAUDE_MODELS = {"veloce": "haiku", "accurato": "sonnet"}
 
-# Default Key per il PC Fisso Linux (Desktop-vale)
-DEFAULT_API_KEY = "qIlpO0Z0yxd5mYSiF7cjnB5s1WRxXrSHC5XKlnZhIY4"
-
 # --- Scoperta dell'LLM locale -------------------------------------------------------------------
 # Due macchine possono servire il modello:
 #  - il laptop Windows: router llama.cpp su 127.0.0.1:8080 (API OpenAI su /v1, modello "local", niente
@@ -65,14 +62,37 @@ MAX_LOCAL_ATTEMPTS = 3
 
 _cache: dict = {"url": None, "at": -1e9, "ttl": 0.0}
 _cache_lock = threading.Lock()
+_auth_failed: set[str] = set()     # server che rispondono 401/403: chiave mancante o sbagliata (per doctor)
+_vision: dict[str, tuple[float, bool | None]] = {}   # server -> (quando, supporta le immagini?)
 
 
 def _now() -> float:
     return time.monotonic()
 
 
+def _key_file() -> Path:
+    """Sul fisso la chiave sta qui (la usano anche gli altri servizi brain-llm)."""
+    return Path.home() / ".config" / "brain-llm" / "api-key"
+
+
 def get_local_llm_key() -> str:
-    return os.environ.get("STUDYHUB_LLM_KEY") or str(settings.extra.get("local_llm_key") or DEFAULT_API_KEY)
+    """Chiave del server LLM locale, mai scritta nel codice. In ordine: STUDYHUB_LOCAL_LLM_KEY (e il vecchio
+    STUDYHUB_LLM_KEY), config.yaml (local_llm_key), LOCAL_LLM_API_KEY, file ~/.config/brain-llm/api-key.
+    Stringa vuota se non c'è: i server senza chiave (laptop) funzionano lo stesso. Il valore non va mai stampato."""
+    for name in ("STUDYHUB_LOCAL_LLM_KEY", "STUDYHUB_LLM_KEY"):
+        v = (os.environ.get(name) or "").strip()
+        if v:
+            return v
+    v = str(settings.extra.get("local_llm_key") or "").strip()
+    if v:
+        return v
+    v = (os.environ.get("LOCAL_LLM_API_KEY") or "").strip()
+    if v:
+        return v
+    try:
+        return _key_file().read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def get_local_llm_model() -> str:
@@ -109,14 +129,23 @@ def _probe(base: str) -> bool:
             req = urllib.request.Request(base + path, headers=_auth_headers(base))
             with urllib.request.urlopen(req, timeout=HEALTH_TIMEOUT_S) as r:
                 if r.status == 200:
+                    _auth_failed.discard(base)
                     return True
         except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                _auth_failed.add(base)
+                return False
             if e.code == 404:
                 continue  # niente /health: provo /v1/models
             return False
         except Exception:
             return False
     return False
+
+
+def local_llm_auth_failures() -> list[str]:
+    """Server raggiunti ma che hanno rifiutato la chiave (o la richiedono e non c'è)."""
+    return sorted(_auth_failed)
 
 
 def invalidate_local_llm(url: str | None = None) -> None:
@@ -160,6 +189,7 @@ class LLMResult:
     provider: str      # local | gemini | claude
     model: str
     duration_s: float
+    images_sent: int = 0   # foto davvero consegnate a un modello con vista (0 = nessuna letta)
 
 
 def _check_local() -> bool:
@@ -193,11 +223,15 @@ def provider_order() -> list[str]:
     return chain
 
 
+class NoVision(ClaudeError):
+    """Nessun server locale raggiungibile sa leggere le immagini."""
+
+
 class _HostDown(Exception):
     """Il server non risponde (rete, 5xx, chiave rifiutata): vale la pena provare un'altra macchina."""
 
 
-def _post_chat(base: str, payload: dict) -> dict:
+def _post_chat(base: str, payload: dict, has_images: bool = False) -> dict:
     headers = {"Content-Type": "application/json", **_auth_headers(base)}
     req = urllib.request.Request(f"{base}/v1/chat/completions", data=json.dumps(payload).encode("utf-8"),
                                  headers=headers)
@@ -205,7 +239,18 @@ def _post_chat(base: str, payload: dict) -> dict:
         with urllib.request.urlopen(req, timeout=LOCAL_TIMEOUT_S) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
+        corpo = ""
+        if has_images:
+            try:
+                corpo = e.read().decode("utf-8", "replace")[:600]
+            except Exception:
+                pass
+            if re.search(r"image|mmproj|multimodal|vision", corpo, re.I):
+                _vision[base] = (_now(), False)   # llama.cpp senza mmproj: da ora non si riprova
+                raise NoVision(f"{base} non legge le immagini")
         # 5xx e chiave/percorso rifiutati: è la macchina; altri 4xx (richiesta sbagliata) falliscono ovunque.
+        if e.code in (401, 403):
+            _auth_failed.add(base)
         if e.code >= 500 or e.code in (401, 403, 404):
             raise _HostDown(f"{base}: HTTP {e.code}")
         raise ClaudeError(f"Local LLM error: HTTP {e.code} da {base}")
@@ -238,8 +283,108 @@ def _extract_json(raw: str):
     return data
 
 
-def _local(system: str, text: str, schema: dict, quality: str) -> LLMResult:
+def _get_json(base: str, path: str):
+    try:
+        req = urllib.request.Request(base + path, headers=_auth_headers(base))
+        with urllib.request.urlopen(req, timeout=HEALTH_TIMEOUT_S * 3) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _vision_from_models(models, wanted: str) -> bool | None:
+    """Router llama.cpp: /v1/models elenca per ogni modello gli argomenti di avvio; --mmproj = ha la vista."""
+    data = models.get("data") if isinstance(models, dict) else None
+    if not isinstance(data, list) or not data:
+        return None
+    entry = next((m for m in data if isinstance(m, dict) and (m.get("id") == wanted or wanted in (m.get("aliases") or []))),
+                 data[0] if isinstance(data[0], dict) else None)
+    if not entry:
+        return None
+    caps = entry.get("capabilities")
+    if isinstance(caps, list) and any(str(c).lower() in ("vision", "multimodal", "image") for c in caps):
+        return True
+    args = (entry.get("status") or {}).get("args")
+    if isinstance(args, list):
+        return "--mmproj" in args
+    return None
+
+
+def server_vision(base: str) -> bool | None:
+    """True/False se il server dichiara di leggere (o no) le immagini, None se non si capisce (si prova e si ripiega).
+    llama-server singolo: /props -> modalities.vision. Router: /v1/models -> argomenti di avvio (--mmproj)."""
+    hit = _vision.get(base)
+    if hit and _now() - hit[0] < CACHE_OK_S:
+        return hit[1]
+    props = _get_json(base, "/props")
+    mod = props.get("modalities") if isinstance(props, dict) else None
+    if isinstance(mod, dict) and "vision" in mod:
+        verdict: bool | None = bool(mod["vision"])
+    else:
+        verdict = _vision_from_models(_get_json(base, "/v1/models"), get_local_llm_model())
+    _vision[base] = (_now(), verdict)
+    return verdict
+
+
+def local_llm_healthy(exclude: tuple | list = ()) -> list[str]:
+    """Tutti i server sani, in ordine di priorità (controlli in parallelo)."""
+    skip = {_norm(u) for u in exclude}
+    cands = [c for c in local_llm_candidates() if c not in skip]
+    if not cands:
+        return []
+    pool = ThreadPoolExecutor(max_workers=len(cands), thread_name_prefix="llm-health")
+    try:
+        futures = [pool.submit(_probe, c) for c in cands]
+        return [c for c, f in zip(cands, futures) if f.result()]
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _openai_blocks(blocks: list[dict]) -> list[dict]:
+    out = []
+    for b in blocks:
+        if b.get("type") == "image":
+            out.append({"type": "image_url", "image_url": {"url": f"data:{b['media_type']};base64,{b['data']}"}})
+        else:
+            out.append({"type": "text", "text": b["text"]})
+    return out
+
+
+def _local_vision(system: str, content: list[dict], schema: dict) -> tuple[dict, str]:
+    """Come _local, ma con foto: solo su un server che le legge. Ritorna (risposta grezza, server)."""
+    intro = (f"{system}\n\nNON inserire tag <think> o ragionamenti preliminari. "
+             f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme a questo schema:\n"
+             f"{json.dumps(schema, ensure_ascii=False)}")
+    payload = {
+        "model": get_local_llm_model(),
+        "messages": [{"role": "user", "content": _openai_blocks([{"type": "text", "text": intro}, *content])}],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2,
+        "max_tokens": 5120,
+    }
+    errors = []
+    for base in local_llm_healthy():
+        if server_vision(base) is False:
+            errors.append(f"{base}: senza vista")
+            continue
+        try:
+            return _post_chat(base, payload, has_images=True), base
+        except NoVision as e:
+            errors.append(str(e))
+        except _HostDown as e:
+            invalidate_local_llm(base)
+            errors.append(str(e))
+    raise NoVision("nessun server locale con vista (" + "; ".join(errors or ["nessun server raggiungibile"]) + ")")
+
+
+def _local(system: str, text: str, schema: dict, quality: str, content: list[dict] | None = None) -> LLMResult:
     t0 = time.time()
+    if content and any(b.get("type") == "image" for b in content):
+        res, _base = _local_vision(system, content, schema)
+        msg = (res.get("choices") or [{}])[0].get("message", {})
+        raw = msg.get("content") or msg.get("reasoning_content") or ""
+        return LLMResult(_extract_json(raw), "local", res.get("model", "local-qwen3.6-35b"),
+                         round(time.time() - t0, 1), images_sent=sum(1 for b in content if b.get("type") == "image"))
     prompt = (
         f"{system}\n\nNON inserire tag <think> o ragionamenti preliminari. "
         f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme a questo schema:\n"
@@ -333,3 +478,29 @@ def run_json(system: str, text: str, schema: dict, quality: str = "accurato") ->
         except (ClaudeError, RateLimited, OSError) as e:
             errors.append(f"{prov}: {e}")
     raise ClaudeError(" · ".join(errors))
+
+
+def run_json_content(system: str, content: list[dict], schema: dict, quality: str = "accurato") -> LLMResult:
+    """Come run_json ma con contenuto misto: blocchi {"type": "text", "text"} e {"type": "image", "media_type", "data"}.
+
+    Le foto vanno solo a un modello con vista: server locale che le legge (rilevato da /props o /v1/models, altrimenti
+    si prova e si ripiega) oppure Claude. Gemini via agy non le riceve. Se nessuno può, la chiamata si rifà con il solo
+    testo e `images_sent` resta 0: chi chiama DEVE dirlo all'utente, le foto non sono state lette."""
+    images = [b for b in content if b.get("type") == "image"]
+    text = "\n\n".join(b["text"] for b in content if b.get("type") == "text")
+    if not images:
+        return run_json(system, text, schema, quality)
+    for prov in provider_order():
+        try:
+            if prov == "local":
+                return _local(system, text, schema, quality, content=content)
+            if prov == "claude":
+                blocks = [{"type": "image", "source": {"type": "base64", "media_type": b["media_type"], "data": b["data"]}}
+                          if b.get("type") == "image" else b for b in content]
+                res = claude_run(system, blocks, schema, model=CLAUDE_MODELS[quality])
+                return LLMResult(res.data, "claude", res.model, res.duration_s, images_sent=len(images))
+        except (ClaudeError, RateLimited, OSError):
+            continue  # NoVision, host caduto, quota: si prova il successivo
+    res = run_json(system, text, schema, quality)
+    res.images_sent = 0
+    return res

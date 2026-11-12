@@ -24,8 +24,14 @@ def ambiente(tmp_path, monkeypatch):
     monkeypatch.setattr(Settings, "db_path", property(lambda self: db_file))
     monkeypatch.setattr(settings, "uni_root", uni)
     monkeypatch.setattr(settings, "extra", {})
-    for var in ("STUDYHUB_LOCAL_LLM", "STUDYHUB_LLM_KEY"):
+    for var in ("STUDYHUB_LOCAL_LLM", "STUDYHUB_LLM_KEY", "STUDYHUB_LOCAL_LLM_KEY", "LOCAL_LLM_API_KEY",
+                "STUDYHUB_LLM_MODEL"):
         monkeypatch.delenv(var, raising=False)
+    # Mai la chiave vera: il file ~/.config/brain-llm/api-key viene sostituito da uno inesistente nel tmp.
+    from studyhub.ai import llm
+    monkeypatch.setattr(llm, "_key_file", lambda: tmp_path / "nessuna-chiave")
+    llm._auth_failed.clear()
+    llm._vision.clear()
     return tmp_path
 
 
