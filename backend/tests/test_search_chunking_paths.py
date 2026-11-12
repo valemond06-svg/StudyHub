@@ -166,3 +166,18 @@ def test_ensure_course_dirs_e_percorsi_relativi(ambiente):
     assert all((cartella / s).is_dir() for s in paths.COURSE_SUBDIRS)
     assert paths.rel_to_uni(cartella / "moodle") == "1_Anno/Algebra/moodle"
     assert paths.uni_path("1_Anno/Algebra/moodle") == cartella / "moodle"
+
+
+def test_archivio_vettoriale_mai_creato_non_rompe_la_ricerca(ambiente, db, monkeypatch):
+    """Difetto reale: con sqlite-vec caricato e nessun documento indicizzato, knn() cadeva con
+    'no such table: vec_chunks' e /api/search rispondeva 500 invece dei soli risultati testuali."""
+    import numpy as np
+    from studyhub import db as dbmod
+    if not dbmod.VEC_AVAILABLE:
+        pytest.skip("sqlite-vec non caricabile su questa macchina")
+    inserisci_corso(db, 1)
+    _indicizza(db, 1, 1, "autovalori e autovettori")
+    db.commit()
+    monkeypatch.setattr(search, "embed_query", lambda q: np.ones(1024, np.float32))
+    r = search.search("autovalori")
+    assert r["semantic"] is False and len(r["results"]) == 1

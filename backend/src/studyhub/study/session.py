@@ -150,6 +150,13 @@ def start(course_id: int, minutes: int = 45, focus_topic: int | None = None) -> 
     return get(sid)
 
 
+def _entry(q: dict, idx: int) -> dict:
+    """La voce `idx` della coda. Un indice fuori range (o negativo: Python lo leggerebbe dalla fine) è un errore."""
+    if not 0 <= idx < len(q["entries"]):
+        raise ValueError("Domanda inesistente in questa sessione.")
+    return q["entries"][idx]
+
+
 def _load(db, sid: int) -> tuple[dict, dict]:
     row = db.execute("SELECT * FROM study_sessions WHERE id=?", (sid,)).fetchone()
     if not row:
@@ -207,7 +214,7 @@ def reveal(sid: int, idx: int) -> dict:
     Da qui in poi la risposta a quella domanda non si può più cambiare."""
     with session() as db:
         s, q = _load(db, sid)
-        entry = q["entries"][idx]
+        entry = _entry(q, idx)
         if entry["t"] != "domanda":
             raise ValueError("Non è una domanda.")
         entry["revealed"] = True
@@ -222,7 +229,7 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
     confidence 1-3; seconds."""
     with session() as db:
         s, q = _load(db, sid)
-        entry = q["entries"][idx]
+        entry = _entry(q, idx)
         if entry["t"] != "domanda" or entry.get("done"):
             raise ValueError("Questa domanda è già stata corretta.")
         it = dict(db.execute("SELECT * FROM study_items WHERE id=?", (entry["item"],)).fetchone())

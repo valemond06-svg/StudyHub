@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 
 from .db import session
 from .ingest import vectors
@@ -50,7 +51,9 @@ def search(q: str, course_ids: list[int] | None = None, limit: int = 20, semanti
                 for rank, (cid, _sim) in enumerate(vectors.knn(db, qv, CANDIDATES, course_ids)):
                     scores[cid] = scores.get(cid, 0) + 1 / (RRF_K + rank)
                 semantic_ok = True
-            except EmbeddingError:
+            except (EmbeddingError, sqlite3.OperationalError):
+                # Ollama spento, oppure archivio vettoriale mai creato (nessun documento indicizzato):
+                # la ricerca per parole funziona comunque.
                 pass
         top = sorted(scores, key=scores.get, reverse=True)[:limit]
         if not top:

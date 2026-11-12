@@ -278,6 +278,20 @@ def _ai_call(fn, *args):
         raise HTTPException(400, str(e))
 
 
+_EXISTS = {"course": "courses", "thread": "tutor_threads", "quiz": "quizzes", "sim": "exam_sims",
+           "session": "study_sessions", "topic": "study_topics"}
+_LABEL = {"course": "Corso", "thread": "Conversazione", "quiz": "Quiz", "sim": "Simulazione", "session": "Sessione",
+          "topic": "Argomento"}
+
+
+def _need(kind: str, ident: int) -> None:
+    """404 leggibile se l'id non esiste (prima: eccezione non gestita e 500 con la UI ferma)."""
+    with session() as db:
+        found = db.execute(f"SELECT 1 FROM {_EXISTS[kind]} WHERE id=?", (ident,)).fetchone()
+    if not found:
+        raise HTTPException(404, f"{_LABEL[kind]} non trovato/a")
+
+
 @app.get("/api/flashcards/due")
 def cards_due(course_id: int | None = None, limit: int = 50):
     from ..study import flashcards
@@ -347,6 +361,7 @@ def tutor_ask(thread_id: int, body: Ask):
     from ..study import tutor
     if not body.question.strip():
         raise HTTPException(400, "Domanda vuota")
+    _need("thread", thread_id)
     return _ai_call(tutor.ask, thread_id, body.question.strip()[:4000])
 
 
@@ -378,6 +393,7 @@ class Submit(BaseModel):
 @app.post("/api/quizzes/{quiz_id}/submit")
 def quiz_submit(quiz_id: int, body: Submit):
     from ..study import quiz
+    _need("quiz", quiz_id)
     return _ai_call(quiz.submit, quiz_id, body.answers)
 
 
@@ -399,6 +415,7 @@ def plan():
 @app.post("/api/exams")
 def exam_add(body: NewExam):
     from ..study import exam
+    _need("course", body.course_id)
     try:
         return {"id": exam.add_exam(body.course_id, body.date, body.kind, body.note)}
     except ValueError:
@@ -415,6 +432,7 @@ def exam_delete(exam_id: int):
 @app.get("/api/courses/{course_id}/exam")
 def course_exam(course_id: int):
     from ..study import exam
+    _need("course", course_id)
     prof = exam.get_profile(course_id)
     md = None
     if prof:
@@ -459,6 +477,7 @@ class SimSubmit(BaseModel):
 @app.post("/api/sims/{sim_id}/submit")
 def sim_submit(sim_id: int, body: SimSubmit):
     from ..study import exam
+    _need("sim", sim_id)
     return _ai_call(exam.grade_sim, sim_id, body.answers, body.elapsed_min)
 
 
@@ -650,6 +669,7 @@ def _order_in_background(course_id: int) -> None:
 @app.get("/api/study/{course_id}")
 def study_overview(course_id: int):
     from ..study import bank, mastery
+    _need("course", course_id)
     _order_in_background(course_id)
     return {**mastery.overview(course_id), "prepare": bank.prepare_status(course_id)}
 
@@ -662,6 +682,7 @@ class PrepareRequest(BaseModel):
 def study_prepare(course_id: int, body: PrepareRequest | None = None, limit: int | None = None):
     """Avviato SOLO da un clic: analizza il materiale non ancora trasformato in domande."""
     from ..study import bank
+    _need("course", course_id)
     lim = (body.limit if body else None) or limit
     return bank.start_prepare(course_id, lim)
 
@@ -670,6 +691,7 @@ def study_prepare(course_id: int, body: PrepareRequest | None = None, limit: int
 def study_scan(course_id: int):
     """Quante unità nuove ci sono (senza AI): serve a proporre l'aggiornamento dopo un sync."""
     from ..study import bank
+    _need("course", course_id)
     res = bank.sync_units(course_id)
     return {**bank.prepare_status(course_id), "added": res["added"], "skipped": res["skipped"]}
 
@@ -717,18 +739,24 @@ class Answer(BaseModel):
 @app.post("/api/study/sessions/{sid}/answer")
 def study_session_answer(sid: int, body: Answer):
     from ..study import session as ss
+    _need("session", sid)
     return _ai_call(ss.answer, sid, body.idx, body.model_dump())
 
 
 @app.post("/api/study/sessions/{sid}/reveal/{idx}")
 def study_session_reveal(sid: int, idx: int):
     from ..study import session as ss
-    return ss.reveal(sid, idx)
+    _need("session", sid)
+    try:
+        return ss.reveal(sid, idx)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/study/sessions/{sid}/finish")
 def study_session_finish(sid: int):
     from ..study import session as ss
+    _need("session", sid)
     return ss.finish(sid)
 
 
@@ -794,6 +822,7 @@ class Ask(BaseModel):
 @app.post("/api/study/topics/{topic_id}/ask")
 def study_ask(topic_id: int, body: Ask):
     from ..study import lesson
+    _need("topic", topic_id)
     return {"answer_md": _ai_call(lesson.ask, topic_id, body.question, body.context, body.mode)}
 
 
@@ -968,6 +997,7 @@ def lecture_notes_pdf(lecture_id: int):
 @app.get("/api/courses/{course_id}/dispensa.pdf")
 def course_dispensa(course_id: int):
     from .. import export
+    _need("course", course_id)
     return _download(_ai_call(export.course_pdf, course_id), "application/pdf")
 
 
