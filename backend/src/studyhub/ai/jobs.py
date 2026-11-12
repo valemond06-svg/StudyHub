@@ -63,9 +63,39 @@ def _finish(job_id: int, status_: str, message: str | None = None) -> None:
         db.execute("UPDATE ai_jobs SET status=?, message=?, finished_at=? WHERE id=?", (status_, message, _now(), job_id))
 
 
-def _loop() -> None:
+def _process_job(job: dict) -> None:
+    """Esegue un job. Gli appunti riusciti restano "fatto" anche se l'indicizzazione poi fallisce
+    (prima il job veniva riscritto come "errore" pur avendo gli appunti pronti)."""
     from ..ingest.indexer import embed_pending, index_course
     from .lecture_notes import process
+    state["current"] = job["id"]
+    try:
+        res = process(job["target_id"])
+        _finish(job["id"], "fatto", "già elaborata" if res.get("cached") else res.get("md_path"))
+        try:
+            with session() as db:
+                course = dict(db.execute("SELECT c.* FROM courses c JOIN lectures l ON l.course_id=c.id WHERE l.id=?",
+                                         (job["target_id"],)).fetchone())
+            index_course(course)
+            try:
+                embed_pending()
+            except Exception:
+                pass  # Ollama spento: gli appunti restano cercabili per parole chiave
+        except Exception as e:
+            note = f"{res.get('md_path') or 'già elaborata'} · indicizzazione non riuscita: {str(e)[:200]}"
+            _finish(job["id"], "fatto", note)  # il lavoro è fatto; l'indice si rifà al prossimo "index"
+    except RateLimited as e:
+        _finish(job["id"], "in_coda", str(e))  # torna in coda: riprenderà quando riattivi
+        with session() as db:
+            db.execute("UPDATE ai_jobs SET status='in_coda', finished_at=NULL WHERE id=?", (job["id"],))
+        state["paused_reason"] = str(e)
+    except (ClaudeError, Exception) as e:
+        _finish(job["id"], "errore", str(e)[:500])
+    finally:
+        state["current"] = None
+
+
+def _loop() -> None:
     while True:
         _wake.wait(timeout=30)
         _wake.clear()
@@ -78,27 +108,7 @@ def _loop() -> None:
             job = _next_job()
             if not job:
                 break
-            state["current"] = job["id"]
-            try:
-                res = process(job["target_id"])
-                _finish(job["id"], "fatto", "già elaborata" if res.get("cached") else res.get("md_path"))
-                with session() as db:
-                    course = dict(db.execute("SELECT c.* FROM courses c JOIN lectures l ON l.course_id=c.id WHERE l.id=?",
-                                             (job["target_id"],)).fetchone())
-                index_course(course)
-                try:
-                    embed_pending()
-                except Exception:
-                    pass  # Ollama spento: gli appunti restano cercabili per parole chiave
-            except RateLimited as e:
-                _finish(job["id"], "in_coda", str(e))  # torna in coda: riprenderà quando riattivi
-                with session() as db:
-                    db.execute("UPDATE ai_jobs SET status='in_coda', finished_at=NULL WHERE id=?", (job["id"],))
-                state["paused_reason"] = str(e)
-            except (ClaudeError, Exception) as e:
-                _finish(job["id"], "errore", str(e)[:500])
-            finally:
-                state["current"] = None
+            _process_job(job)
 
 
 def _ensure_worker() -> None:
