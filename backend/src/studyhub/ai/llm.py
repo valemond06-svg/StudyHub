@@ -267,8 +267,10 @@ def _post_json(base: str, payload: dict, schema: dict, has_images: bool = False)
         payload["response_format"] = {"type": "json_object"}
         res = _post_chat(base, payload, has_images)
     if _finish_reason(res) == "length":
-        payload["max_tokens"] = min(int(payload.get("max_tokens") or 5120) * 2, MAX_TOKENS_CAP)
-        res = _post_chat(base, payload, has_images)
+        prima = int(payload.get("max_tokens") or 5120)
+        payload["max_tokens"] = min(prima * 2, MAX_TOKENS_CAP)
+        if payload["max_tokens"] > prima:  # già al tetto: riprovare darebbe la stessa troncatura
+            res = _post_chat(base, payload, has_images)
         if _finish_reason(res) == "length":
             raise ClaudeError(f"Local LLM error: risposta troncata da {base} anche con max_tokens={payload['max_tokens']}")
     return res
