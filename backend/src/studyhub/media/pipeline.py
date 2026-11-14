@@ -290,3 +290,15 @@ def process_lecture(lec: dict, course: dict, panopto: Panopto, whisper: bool = T
         shutil.rmtree(tmp, ignore_errors=True)  # mai lasciare video temporanei in giro
         _update(lec["id"], status="errore", error=str(e)[:500])
         raise
+
+
+def transcribe_ready(lec: dict, course: dict) -> dict:
+    """Whisper su una lezione che ha già l'audio su disco (status media_ok): nessuna rete.
+    Se fallisce, la lezione resta com'è e l'errore sale a chi chiama."""
+    ldir = uni_path(lec["folder"])
+    audio = ldir / "audio.opus"
+    if not audio.exists():
+        raise FileNotFoundError(f"audio mancante: {audio}")
+    res = transcribe(audio, ldir / "transcript.json", prompt=_glossary(course), duration_s=ff.probe(audio)["duration"])
+    _update(lec["id"], transcript_source="whisper", status="trascritta", error=None)
+    return res

@@ -1,0 +1,9 @@
+[Unit]
+Description=StudyHub: sync Moodle ogni giorno alle 06:15
+
+[Timer]
+OnCalendar=*-*-* 06:15
+Persistent=true
+
+[Install]
+WantedBy=timers.target

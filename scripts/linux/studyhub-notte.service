@@ -1,0 +1,11 @@
+[Unit]
+Description=StudyHub: turno di notte nativo (Whisper, embedding, poi unita di studio col 35B locale)
+After=brain-llm.service brain-llm-proxy.service
+
+[Service]
+Type=oneshot
+Environment=STUDYHUB_ROOT=%h/StudyHub
+Environment=STUDYHUB_LOCAL_LLM_URL=http://127.0.0.1:8081
+WorkingDirectory=%h/StudyHub/backend
+ExecStart=%h/StudyHub/backend/.venv/bin/studyhub notte --solo-locale --fino 04:15
+TimeoutStartSec=7h

@@ -31,6 +31,10 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
     from .ingest.embed import EmbeddingError
     from .ingest.indexer import embed_pending, index_course
 
+    from . import turno
+    if not force and turno.notte_attiva():  # il 35B lavora con la RAM al limite: niente Whisper né embedding
+        console.print("[yellow]Turno di notte in corso: salto.[/]")
+        return {"file": 0, "lezioni": 0, "avvisi": 0, "errori": []}
     if not force and is_running():  # l'elaborazione completa sta già facendo tutto questo
         console.print("[yellow]Elaborazione completa in corso: salto il sync automatico.[/]")
         return {"file": 0, "lezioni": 0, "avvisi": 0, "errori": []}

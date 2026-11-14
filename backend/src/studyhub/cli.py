@@ -260,6 +260,19 @@ def auto_sync(
                   f" · errori: {len(s['errori'])}")
 
 
+@app.command("notte")
+def notte(
+    solo_locale: bool = typer.Option(False, "--solo-locale", help="Solo il 35B locale (per ora l'unica modalità)"),
+    fino: str = typer.Option("04:15", help="Ora limite HH:MM per le unità del 35B"),
+    max_unita: int = typer.Option(0, help="Massimo di unità da elaborare (0 = senza limite)"),
+    max_trascrizioni: int = typer.Option(4, help="Massimo di lezioni da trascrivere con Whisper"),
+    fine_fase_gpu: str = typer.Option("00:30", help="Ora HH:MM oltre la quale Whisper ed embedding si fermano"),
+):
+    """Turno di notte: Whisper ed embedding, poi pulizia di Ollama, poi le unità di studio col 35B locale."""
+    from .notte import run
+    raise typer.Exit(run(solo_locale, fino, max_unita, max_trascrizioni, fine_fase_gpu))
+
+
 @app.command("brain-export")
 def brain_export():
     """Copia su Drive (`<media_root>/_brain`) il DB e gli avvisi/calendari dei corsi correnti per il Second Brain."""
