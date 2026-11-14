@@ -7,6 +7,9 @@ aspettare che finisca un job GPU.
 """
 from __future__ import annotations
 
+import threading
+import time
+
 import httpx
 import numpy as np
 
@@ -16,7 +19,9 @@ OLLAMA = "http://127.0.0.1:11434"
 MODEL = "bge-m3"
 DIM = 1024
 BATCH = 96
-GPU_LOCK_TIMEOUT_S = 30 * 60
+GPU_LOCK_TIMEOUT_S = 30 * 60  # per ogni blocco
+LOCK_BLOCK = 96  # testi per ogni presa del lock GPU (un batch Ollama)
+YIELD_S = 2.5  # pausa senza lock tra due blocchi (> poll 2 s del file_lock)
 
 
 class EmbeddingError(Exception):
@@ -36,16 +41,36 @@ def _embed(texts: list[str], options: dict, keep_alive) -> np.ndarray:
     return vecs
 
 
+def iter_embed_blocks(texts: list[str], stop_event: threading.Event | None = None):
+    """Calcola gli embedding a blocchi di LOCK_BLOCK testi, prendendo il lock GPU per ogni blocco.
+
+    Genera (indice_iniziale, vettori). Dopo ogni blocco il lock è rilasciato e, prima del
+    successivo, si attende YIELD_S: chi aspetta la GPU (Whisper, poll 2 s) riesce a prenderla.
+    Nessuna pausa dopo l'ultimo blocco. Se `stop_event` è impostato tra due blocchi, si ferma.
+    Se il lock non arriva entro GPU_LOCK_TIMEOUT_S, EmbeddingError: i blocchi già generati
+    sono già stati consegnati a chi consuma il generatore."""
+    for i in range(0, len(texts), LOCK_BLOCK):
+        if i:
+            if stop_event is not None and stop_event.is_set():
+                return
+            time.sleep(YIELD_S)
+            if stop_event is not None and stop_event.is_set():
+                return
+        try:
+            with gpu_lock("ollama bge-m3", timeout=GPU_LOCK_TIMEOUT_S):
+                vecs = np.vstack([_embed(texts[j:j + BATCH], {}, keep_alive=0)
+                                  for j in range(i, min(i + LOCK_BLOCK, len(texts)), BATCH)])
+        except LockTimeout as e:
+            raise EmbeddingError(f"GPU occupata da {str(e).split('occupato da ', 1)[-1]}: embeddings rimandati")
+        yield i, vecs
+
+
 def embed_documents(texts: list[str], on_progress=None) -> np.ndarray:
     out = []
-    try:
-        with gpu_lock("ollama bge-m3", timeout=GPU_LOCK_TIMEOUT_S):
-            for i in range(0, len(texts), BATCH):
-                out.append(_embed(texts[i:i + BATCH], {}, keep_alive=0))
-                if on_progress:
-                    on_progress(min(len(texts), i + BATCH), len(texts))
-    except LockTimeout as e:
-        raise EmbeddingError(f"GPU occupata da {str(e).split('occupato da ', 1)[-1]}: embeddings rimandati")
+    for i, vecs in iter_embed_blocks(texts):
+        out.append(vecs)
+        if on_progress:
+            on_progress(min(len(texts), i + LOCK_BLOCK), len(texts))
     return np.vstack(out) if out else np.zeros((0, DIM), np.float32)
 
 
