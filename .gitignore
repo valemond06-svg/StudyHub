@@ -21,3 +21,7 @@ cache/
 Microsoft/
 scratch/
 *.bak*
+
+# Copie di config (possono contenere chiavi)
+config.yaml.*
+!config.example.yaml
