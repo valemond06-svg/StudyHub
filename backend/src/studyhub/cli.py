@@ -289,13 +289,6 @@ def notte(
     raise typer.Exit(run(solo_locale, fino, max_unita, max_trascrizioni, fine_fase_gpu))
 
 
-@app.command("brain-export")
-def brain_export():
-    """Copia su Drive (`<media_root>/_brain`) il DB e gli avvisi/calendari dei corsi correnti per il Second Brain."""
-    from .brain_export import export
-    console.print(export())
-
-
 @app.command("elabora-tutto")
 def elabora_tutto():
     """Scarica ed elabora COMPLETAMENTE tutti i corsi attivi: Moodle, tutte le registrazioni (Whisper),

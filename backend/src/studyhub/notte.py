@@ -322,11 +322,26 @@ def run(solo_locale: bool = False, fino: str = "04:15", max_unita: int = 0, max_
         return 0
 
 
+def _evento(inizio: dt.datetime, esito: "Esito", ok: bool) -> None:
+    """Evento `studyhub.notte` per il Brain. Non fa mai fallire il turno."""
+    try:
+        from . import brain_events
+        data = {"trascritte": esito.trascritte, "unita_fatte": esito.fatte, "errori": esito.errori,
+                "saltate": esito.saltate, "durata_min": round((_now() - inizio).total_seconds() / 60),
+                "esito": "ok" if ok else "llm_giu"}
+        level = "error" if not ok else ("warn" if esito.errori > 0 else "info")
+        brain_events.send("studyhub.notte", data, level=level, id=f"studyhub-notte-{inizio:%Y%m%d}")
+    except Exception:
+        pass
+
+
 def _turno(lim: dt.datetime, fine_gpu: dt.datetime, max_unita: int, max_trascrizioni: int) -> int:
     from .config import settings
+    inizio = _now()
     url = llm_url()
     if not llm_risponde(url):
         log(f"LLM {url} non risponde: stop")
+        _evento(inizio, Esito(), False)
         return 1
     settings.extra["ai_provider"] = "local"  # solo in questo processo: config.yaml non cambia
     settings.extra["local_llm_url"] = url
@@ -341,4 +356,5 @@ def _turno(lim: dt.datetime, fine_gpu: dt.datetime, max_unita: int, max_trascriz
     fase3(lim, max_unita, esito)
     log(f"=== fine turno: trascritte {esito.trascritte}, unità fatte {esito.fatte}, errori {esito.errori}, "
         f"saltate (servono appunti Claude) {esito.saltate}")
+    _evento(inizio, esito, True)
     return 0

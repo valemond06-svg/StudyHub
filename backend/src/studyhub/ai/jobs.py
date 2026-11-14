@@ -244,6 +244,29 @@ def _do_ocr(job: dict) -> None:
         _finish(job["id"], "fatto", f"{doc['path']} · {n} chunk · unità non create: {str(e)[:200]}")
 
 
+def _evento_fallito(job: dict, errore: str) -> None:
+    """Se il job ha esaurito i tentativi (non tornerà negli arretrati) avvisa il Brain. Mai eccezioni."""
+    try:
+        from .. import brain_events
+        with session() as db:
+            n = db.execute("SELECT COUNT(*) FROM ai_jobs WHERE kind=? AND target_id=? AND status='errore'",
+                           (job.get("kind"), job["target_id"])).fetchone()[0]
+            if n < BACKLOG_MAX_ERRORS:
+                return
+            if job.get("kind") == "ocr":
+                r = db.execute("SELECT path FROM documents WHERE id=?", (job["target_id"],)).fetchone()
+            else:
+                r = db.execute("SELECT title FROM lectures WHERE id=?", (job["target_id"],)).fetchone()
+        titolo = (r[0] if r else "")
+        if job.get("kind") == "ocr":
+            titolo = str(titolo).replace("\\", "/").rsplit("/", 1)[-1]  # solo il nome del file, non il percorso
+        brain_events.send("studyhub.ai_job_fallito",
+                          {"job_id": job["id"], "kind": job.get("kind") or "lecture_notes",
+                           "titolo": str(titolo)[:200], "errore": errore[:200]}, level="warn")
+    except Exception:
+        pass
+
+
 def _process_job(job: dict) -> None:
     """Esegue un job per tipo. Il lavoro riuscito resta "fatto" anche se l'indicizzazione poi fallisce
     (prima il job veniva riscritto come "errore" pur avendo gli appunti pronti)."""
@@ -257,6 +280,7 @@ def _process_job(job: dict) -> None:
         _pause(str(e))
     except (ClaudeError, Exception) as e:
         _finish(job["id"], "errore", str(e)[:500])
+        _evento_fallito(job, str(e))
     finally:
         state["current"] = None
 
