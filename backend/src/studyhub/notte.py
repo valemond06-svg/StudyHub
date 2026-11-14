@@ -335,6 +335,24 @@ def _evento(inizio: dt.datetime, esito: "Esito", ok: bool) -> None:
         pass
 
 
+def _scrivi_ultimo(inizio: dt.datetime, esito: "Esito", ok: bool) -> None:
+    """`notte_ultimo.json` per il pannello della UI: scrittura atomica, un errore non fa fallire il turno."""
+    try:
+        from .config import LOCAL_DIR
+        fine = _now()
+        data = {"inizio": inizio.isoformat(timespec="seconds"), "fine": fine.isoformat(timespec="seconds"),
+                "esito": "ok" if ok else "llm_giu", "trascritte": esito.trascritte, "unita_fatte": esito.fatte,
+                "errori": esito.errori, "saltate": esito.saltate,
+                "durata_min": round((fine - inizio).total_seconds() / 60)}
+        LOCAL_DIR.mkdir(parents=True, exist_ok=True)
+        dest = LOCAL_DIR / "notte_ultimo.json"
+        tmp = dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, dest)
+    except Exception:
+        pass
+
+
 def _turno(lim: dt.datetime, fine_gpu: dt.datetime, max_unita: int, max_trascrizioni: int) -> int:
     from .config import settings
     inizio = _now()
@@ -342,6 +360,7 @@ def _turno(lim: dt.datetime, fine_gpu: dt.datetime, max_unita: int, max_trascriz
     if not llm_risponde(url):
         log(f"LLM {url} non risponde: stop")
         _evento(inizio, Esito(), False)
+        _scrivi_ultimo(inizio, Esito(), False)
         return 1
     settings.extra["ai_provider"] = "local"  # solo in questo processo: config.yaml non cambia
     settings.extra["local_llm_url"] = url
@@ -357,4 +376,5 @@ def _turno(lim: dt.datetime, fine_gpu: dt.datetime, max_unita: int, max_trascriz
     log(f"=== fine turno: trascritte {esito.trascritte}, unità fatte {esito.fatte}, errori {esito.errori}, "
         f"saltate (servono appunti Claude) {esito.saltate}")
     _evento(inizio, esito, True)
+    _scrivi_ultimo(inizio, esito, True)
     return 0

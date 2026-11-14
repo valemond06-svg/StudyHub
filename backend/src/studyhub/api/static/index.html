@@ -82,6 +82,10 @@
   .meter { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
   .meter > i { display: block; height: 100%; background: var(--accent); }
   .meter.hot > i { background: var(--warn); }
+  .meter:has(> u) { position: relative; overflow: visible; } .meter > u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--muted); text-decoration: none; }
+  .aipan-in { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .ainums { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; }
+  .ainums .n { display: flex; flex-direction: column; } .ainums .n b { font-size: 20px; } .ainums .n span { font-size: 11px; color: var(--muted); }
 
   .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .top { display: flex; align-items: center; gap: 12px; padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--panel); }
@@ -2136,6 +2140,8 @@ async function loadToday() {
       <div class="news" id="newsList" hidden>${news.map((n) => `<div class="it"><span>${{ file: "📄", lezione: "🎬", avviso: "📢", errore: "⚠" }[n.kind] || "•"}</span><div style="flex:1"><div>${esc(n.title)}</div><div class="muted small">${esc(n.body || "")}</div></div>${n.kind === "lezione" ? `<button class="btn sm" data-lec="${esc(n.ref)}">Apri</button>` : ""}</div>`).join("")}
       <div style="text-align:right;padding-top:6px"><button class="btn sm ghost" id="newsRead">Segna come lette</button></div></div></div>` : ""}
 
+    <div class="sect"><h2>Coda AI e turno di notte</h2><div class="card aipan" id="aiPanel"><div class="empty">Carico…</div></div></div>
+
     <div class="sect"><h2>Da fare oggi ${tasks.some((t) => t.ai) ? '<span class="pill ai">AI max 3 al giorno</span>' : ""}</h2>
       <div class="card tasks">${tasks.length ? tasks.map((t, i) => `<div class="task"><div class="t"><div>${esc(t.title)} ${t.ai ? '<span class="pill ai">AI</span>' : ""}</div><div class="muted small">${esc(t.detail || "")}</div></div><button class="btn sm" data-task="${i}">Vai</button></div>`).join("")
         : '<div class="empty">Niente in programma. Aggiungi un appello o apri una lezione.</div>'}</div></div>
@@ -2158,9 +2164,39 @@ async function loadToday() {
   body.querySelectorAll("[data-task]").forEach((b) => (b.onclick = () => runTask(tasks[+b.dataset.task])));
   body.querySelectorAll("[data-lec]").forEach((b) => (b.onclick = () => setView("lessons", { lecture: +b.dataset.lec })));
   $("goReview")?.addEventListener("click", () => setView("review"));
+  loadAiPanel(); clearInterval(aiPanTimer);
+  aiPanTimer = setInterval(() => { if (!document.hidden && $("aiPanel")) loadAiPanel(); else if (!$("aiPanel")) clearInterval(aiPanTimer); }, 60000);
   $("newsBar")?.addEventListener("click", () => ($("newsList").hidden = !$("newsList").hidden));
   $("newsRead")?.addEventListener("click", async () => { await postJ("/api/notifications/read"); loadToday(); });
   refreshFoot();
+}
+let aiPanTimer = null;
+async function loadAiPanel() {
+  const el = $("aiPanel"); if (!el) return;
+  let d; try { d = await getJ("/api/ai/pannello"); } catch { el.innerHTML = '<div class="empty">Pannello non disponibile.</div>'; return; }
+  const hhmm = (t) => new Date(t * 1000).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+  const q = d.coda, a = d.arretrati, f = d.finestra, n = d.notte, ps = q.per_stato || {};
+  const open = el.querySelector("details")?.open;
+  const pct = f.uso_pct;
+  const win = pct == null ? '<div class="muted small">Finestra Claude Pro: nessun dato recente</div>'
+    : `<div class="aibar"><div class="small">Finestra Claude Pro (5 ore): <b>${pct}%</b> · soglia arretrati ${f.soglia_pct}%</div>
+        <div class="meter ${pct >= f.soglia_pct ? "hot" : ""}"><i style="width:${Math.min(100, pct)}%"></i><u style="left:${f.soglia_pct}%"></u></div></div>`;
+  const pausa = f.arretrati_in_pausa ? `<div class="small"><span class="pill warn">arretrati in pausa fino alle ${hhmm(f.reset_alle)}</span></div>`
+    : f.coda_in_pausa ? `<div class="small"><span class="pill warn">coda in pausa</span> ${esc(f.coda_in_pausa)}</div>` : "";
+  const num = (v, l) => `<div class="n"><b>${v}</b><span>${l}</span></div>`;
+  const nums = `<div class="ainums">${num(ps.in_coda || 0, "in coda")}${num(ps.in_corso || 0, "in corso")}${num(a.trascritte_senza_appunti, "senza appunti")}
+    ${num(a.da_trascrivere, "da trascrivere")}${num(a.unita_nuove, "unità nuove")}${num(a.unita_lezione_attesa_sonnet, "attendono Sonnet")}</div>`;
+  const run = q.in_corso.length ? `<div class="small muted">In corso: ${q.in_corso.map((j) => esc(j.titolo || j.kind)).join(", ")}</div>` : "";
+  const errs = q.ultimi_errori.length ? `<details ${open ? "open" : ""}><summary class="muted small">Ultimi errori (${q.ultimi_errori.length})</summary>${q.ultimi_errori.map((e) =>
+    `<div class="small" style="margin-top:6px"><b>${esc(e.titolo || e.kind)}</b> <span class="faint">#${e.id} · ${esc(e.data || "")}</span><div class="muted">${esc(e.messaggio)}</div></div>`).join("")}</details>` : "";
+  let notte;
+  if (n.in_corso) notte = '<span class="pill ai">turno di notte in corso</span>';
+  else if (n.ultimo) { const u = n.ultimo;
+    notte = `<span class="small"><b>Ultimo turno di notte</b> ${esc(new Date(u.inizio).toLocaleDateString("it-IT", { day: "numeric", month: "short" }))} · <span class="pill ${u.esito === "ok" ? "ok" : "warn"}">${u.esito === "ok" ? "ok" : "LLM non raggiungibile"}</span>
+      · ${u.trascritte} trascritte · ${u.unita_fatte} unità · ${u.errori} errori · ${u.saltate} saltate · ${u.durata_min} min</span>`; }
+  else notte = '<span class="muted small">Nessun turno di notte registrato.</span>';
+  el.innerHTML = `<div class="aipan-in">${win}${pausa}${nums}${run}${errs}<div>${notte}</div>
+    <div class="faint small">Arretrati Claude: ${f.claude_backlog ? "attivi" : "spenti"}</div></div>`;
 }
 function runTask(t) {
   if (t.kind === "profile" || t.kind === "sim") return openCourse(t.course_id);

@@ -264,6 +264,13 @@ def ai_status():
     return jobs.status()
 
 
+@app.get("/api/ai/pannello")
+def ai_pannello():
+    """Coda AI, arretrati, finestra Pro e turno di notte: solo SQL e file locali, niente LLM né Claude."""
+    from ..ai import pannello
+    return pannello.dati()
+
+
 @app.post("/api/ai/cancel")
 def ai_cancel():
     from ..ai import jobs
