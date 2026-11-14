@@ -3,8 +3,8 @@
 # Tutto l'output del setup va su stderr: stdout resta quello di `studyhub`.
 set -euo pipefail
 
-export UV_PROJECT_ENVIRONMENT="$HOME/.studyhub/venv"
-export PLAYWRIGHT_BROWSERS_PATH="$HOME/.studyhub/ms-playwright"
+export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$HOME/.studyhub/venv}"
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.studyhub/ms-playwright}"
 export PYTHONUTF8=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
