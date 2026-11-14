@@ -7,11 +7,35 @@ App locale per studiare i corsi UniVR. Scarica da Moodle tutto il materiale dei 
 - **Prontezza**: una stima onesta per l'esame, cioè quello che hai dimostrato di sapere, non quello che hai letto.
 - **Video lezioni**: player con trascrizione sincronizzata, slide e appunti AI di ogni lezione.
 
-Tutto resta sul tuo PC. Il repository contiene solo il programma: nessun dato personale, nessun materiale dei corsi.
+Tutto resta sui tuoi computer. Il repository contiene solo il programma: nessun dato personale, nessun materiale dei corsi.
+
+## Dove gira
+
+- **PC fisso (Linux)**: è il server. StudyHub vi gira come servizio utente systemd `studyhub` sulla porta 8765; lì stanno il database,
+  i materiali, Whisper, Ollama e il modello locale (llama-server, 1 slot) usato di notte.
+- **Windows del laptop**: è un client. Apre l'app del fisso nel browser (`collega_al_fisso.bat`, che prova cavo diretto, Wi-Fi e Tailscale
+  sulla porta 8765). L'installazione locale su Windows (`installa.ps1`, `start.bat`) resta possibile per usarlo da solo.
+- **Second Brain**: StudyHub gli manda eventi (`brain_events.py`: `studyhub.sync`, `studyhub.notte`, `studyhub.ai_job_fallito`) con POST all'URL
+  indicato da `BRAIN_EVENT_URL` (endpoint `/ingest/event` del Brain); se il Brain non risponde, gli eventi restano in una coda locale di 200 righe.
+  Non c'è più nessuna copia del database su Drive: l'agente Ada legge il database in locale, sul fisso. Impostazioni: `brain_events` e
+  `brain_event_env` in `config.yaml`.
+
+### Lavoro automatico
+
+- **Sync** (`studyhub auto-sync`): Moodle, nuove registrazioni, indice; non chiama Claude e salta se il turno di notte o l'elaborazione completa
+  sono in corso. Prima di ogni sync le lezioni o le unità in errore tornano in coda con backoff (1 h, 6 h, 24 h, poi serve un intervento tuo).
+- **Appunti delle lezioni**: solo con Claude Sonnet, nella coda degli arretrati (`claude_backlog: true`): parte da sola finché la finestra Pro
+  è sotto il 70% (`claude_backlog_stop_at`). Anche i PDF scansionati (OCR) entrano nella stessa coda. Il modello locale (35B) non scrive gli
+  appunti: fa solo le domande e gli esercizi a valle.
+- **Turno di notte** (`studyhub notte --solo-locale`): fasi in sequenza, mai sovrapposte: Whisper ed embedding, scarico di Ollama dalla memoria,
+  unità di studio col 35B. Lo lancia `brain-notte.timer` ogni notte alle 22:30 tramite `notte.sh` del Brain, che esce subito se
+  `studyhub notte --conta` dice che non c'è lavoro. Dettagli in `scripts/linux/README.md`.
+- **Pannello «Coda AI e turno di notte»** nella vista Oggi: coda dei job, uso della finestra Claude e ultimo turno di notte.
+- **Correzione da foto**: anche nelle sessioni di studio, non solo negli esami simulati.
 
 ## Requisiti
 
-- Windows 10 o 11, con circa 10 GB liberi (più lo spazio per i video).
+- Windows 10 o 11 con circa 10 GB liberi (più lo spazio per i video), oppure Linux (`studyhub.sh`, come sul PC fisso).
 - Account UniVR con accesso a Moodle (`moodledidattica.univr.it`).
 - Almeno uno dei due abbonamenti AI (meglio entrambi):
   - **Google AI Pro** con **Antigravity** e la sua riga di comando `agy`: fa la maggior parte del lavoro (domande, lezioni, correzioni);
@@ -55,7 +79,7 @@ Tutto resta sul tuo PC. Il repository contiene solo il programma: nessun dato pe
 - **Studia → corso → ① Impara**: la prossima lezione interattiva, nell'ordine del programma.
 - **② Allenati**: sessione da 25 o 45 minuti, con ripasso di quello che stai per dimenticare, punti deboli e argomenti nuovi.
 - Nella mappa degli argomenti, «escludi capitolo» toglie le parti che non porti all'esame.
-- Ogni giorno alle 20 si può scaricare in automatico il materiale nuovo: `studyhub.bat schedule --time 20:00`.
+- Su Windows, ogni giorno alle 20 si può scaricare in automatico il materiale nuovo: `studyhub.bat schedule --time 20:00`. Sul fisso lo fa `studyhub-sync.timer` (esempi in `scripts/linux/`).
 
 ## Aggiornare
 

@@ -1,5 +1,26 @@
 # Changelog — StudyHub
 
+## 2026-11-14 — P1 e P2: coda arretrati, turno di notte nativo, eventi al Brain
+
+**P1** (su main, merge `2ae4539`)
+- **P1.1 appunti solo con Sonnet**: arretrati in coda da soli (`claude_backlog`), prima i corsi «corrente»; partono solo sotto la soglia
+  `claude_backlog_stop_at` (70% della finestra Pro). Il 35B non scrive più gli appunti: solo domande ed esercizi a valle.
+- **P1.2 `studyhub notte --solo-locale`**: Whisper/embedding, scarico di Ollama, unità col 35B; `turno.NOTTE_LOCK` tiene fuori `auto-sync`.
+  `studyhub notte --conta` stampa in JSON il lavoro in attesa: `notte.sh` esce subito se non c'è niente da fare.
+- **P1.3 riprese con backoff**: lezioni in errore e unità vuote/in errore tornano in coda dopo 1 h, 6 h, 24 h (3 riprese al massimo).
+- **P1.4 OCR in coda**: i PDF scansionati entrano nella coda AI con priorità sotto le lezioni; dopo l'OCR nascono le unità di studio.
+- **P1.5 embedding a blocchi**: il lock GPU si libera tra un blocco e l'altro; il lavoro già fatto resta salvato.
+
+**P2** (ramo `ai/studyhub-p2-20261114`)
+- **P2.1 eventi al Brain**: tolti `brain_export`, `brain-export` e la copia del DB su Drive. Nuovo `brain_events.send` (solo libreria standard,
+  mai eccezioni, coda locale di 200 righe): eventi `studyhub.sync`, `studyhub.notte`, `studyhub.ai_job_fallito`.
+- **P2.2 correzione da foto nelle sessioni di studio**: `POST /api/study/sessions/{sid}/photo`; l'esito entra in `study_attempts` (FSRS, XP, padronanza).
+- **P2.3 pannello «Coda AI e turno di notte»**: `/api/ai/pannello` e `notte_ultimo.json` scritto a fine turno; UI nella vista Oggi.
+- **P2.4 test e documentazione**: 51 test nuovi (sync Moodle, `autosync.run`, `fullrun`, trascrizione, pipeline delle lezioni), suite a 452.
+  **Fix**: `fullrun.is_running` su Linux diceva sempre «non in corso» (`os.remove` riesce anche su un file aperto), quindi un secondo
+  `elabora-tutto` partiva sopra il primo; ora usa `file_lock`. README (radice e backend) e docstring allineati: StudyHub gira sul fisso Linux,
+  Windows è un client.
+
 ## 2026-11-12 (secondo giro) — foto nella correzione, chiave, riparazione crocette
 
 - **Foto dei compiti**: `exam.grade_sim` allega le foto (1600 px, JPEG, max 6) a un server locale con vista o a Claude;

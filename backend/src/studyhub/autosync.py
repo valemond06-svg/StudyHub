@@ -1,8 +1,9 @@
-"""Sync automatico (pensato per l'Utilità di pianificazione di Windows).
+"""Sync automatico (sul fisso Linux `studyhub-sync.timer`; su Windows l'Utilità di pianificazione, `studyhub schedule`).
 
 Fa SOLO lavoro locale o di download: Moodle, nuove registrazioni Panopto (pipeline atomica e
-Whisper su GPU), indice di ricerca. Non chiama MAI Claude: gli appunti AI restano on-demand.
-Alla fine registra le novità e manda una notifica di Windows.
+Whisper su GPU), indice di ricerca. Non chiama MAI Claude: gli appunti delle lezioni li fa la coda
+degli arretrati (`ai/jobs.py`, solo Sonnet) o un click. Salta se il turno di notte o `elabora-tutto` sono in corso.
+Alla fine registra le novità (notifica di Windows dove c'è un desktop) e manda l'evento `studyhub.sync` al Brain.
 """
 from __future__ import annotations
 

@@ -15,8 +15,8 @@ systemctl --user enable --now studyhub-sync.timer      # sync alle 06:15
 systemctl --user start studyhub-notte.service
 ```
 
-`studyhub-notte.service` non ha un timer: ha senso solo se il 35B e libero e `brain-worker` e fermo.
-Se vuoi usarlo da solo, aggiungi un timer che lo avvii alle 22:30.
+`studyhub-notte.service` non ha un timer qui: in produzione il turno parte da `brain-notte.timer` del Brain, ogni notte alle 22:30,
+tramite `notte.sh` (sotto). Questa unita serve solo per lanciarlo da solo, con `brain-worker` fermo e il 35B libero.
 
 ## Il turno nativo
 
@@ -27,17 +27,21 @@ Se vuoi usarlo da solo, aggiungi un timer che lo avvii alle 22:30.
 3. unita di studio `nuova` col 35B (`127.0.0.1:8081`), fino all'ora limite.
 
 Tiene `~/.studyhub/notte.lock` (`turno.NOTTE_LOCK`): un secondo turno esce subito con codice 0 e `auto-sync`
-salta finche il turno gira. Esce con codice 1 se il 35B non risponde.
+salta finche il turno gira. Esce con codice 1 se il 35B non risponde. A fine turno scrive `~/.studyhub/notte_ultimo.json`
+(lo legge il pannello «Coda AI e turno di notte») e manda l'evento `studyhub.notte` al Brain.
+
+`studyhub notte --conta` stampa in JSON il lavoro in attesa (`trascrizioni`, `unita`) senza fare nulla: `notte.sh` lo chiama per primo
+e, se non c'e lavoro, esce subito senza fermare `brain-worker`.
 
 ## Come lo chiama `notte.sh` del Brain
 
-Al posto di `studyhub_locale.py` (dopo la pausa di `brain-worker`, lo scarico di Ollama e l'avvio del monitor RAM;
-questi ultimi due passaggi li fa gia il comando, lo scarico di Ollama nella fase 2):
+Dopo `--conta`, la pausa di `brain-worker`, lo scarico di Ollama e l'avvio del monitor RAM
+(il comando fa gia da se lo scarico di Ollama, nella fase 2):
 
 ```bash
 cd $HOME/StudyHub/backend && STUDYHUB_ROOT=$HOME/StudyHub timeout 6h .venv/bin/studyhub notte --solo-locale --fino 04:15 --max-unita $MAXU
 ```
 
-Il monitor RAM di `notte.sh` puo continuare a fare `pkill -f "studyhub notte"` al posto del vecchio nome dello script.
+Il monitor RAM di `notte.sh` ferma il turno con `pkill -f "studyhub notte"`.
 `notte.sh` scrive il proprio PID in `~/brain-riordino/notte.lock`: il comando nativo non lo controlla (il padre e proprio
 `notte.sh`), mentre `auto-sync` lo vede ancora come turno in corso.
