@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import zlib
 from datetime import datetime
 from pathlib import Path
@@ -19,8 +20,8 @@ from ..config import settings
 from ..db import session
 from ..paths import rel_to_uni, uni_path
 from . import vectors
+from . import embed
 from .chunking import chunk_code, chunk_markdown, chunk_pages, chunk_transcript
-from .embed import embed_documents
 from .extract import CODE_EXT, SUPPORTED, extract
 
 console = Console()
@@ -78,6 +79,15 @@ def _insert_chunks(db, doc_id: int, course_id: int, kind: str, chunks) -> int:
         [(doc_id, course_id, kind, c.page, c.t_start, c.t_end, c.heading, c.text) for c in chunks],
     )
     return len(chunks)
+
+
+def replace_chunks(db, doc_id: int, course_id: int, kind: str, chunks) -> int:
+    """Sostituisce i chunk di un documento (e i loro vettori) senza toccare il documento. Gli embedding si rifanno."""
+    vectors.ensure(db)
+    ids = [r[0] for r in db.execute("SELECT id FROM chunks WHERE doc_id=?", (doc_id,))]
+    vectors.delete(db, ids)
+    db.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
+    return _insert_chunks(db, doc_id, course_id, kind, chunks)
 
 
 def _drop_doc(db, doc_id: int) -> None:
@@ -186,18 +196,24 @@ def index_course(course: dict) -> dict:
     return stats
 
 
-def embed_pending(on_progress=None) -> int:
+def embed_pending(on_progress=None, stop_event: threading.Event | None = None) -> int:
+    """Calcola e salva gli embedding mancanti, un blocco (LOCK_BLOCK chunk) alla volta.
+
+    Ogni blocco è salvato nel DB appena calcolato: se il lock GPU scade a metà, EmbeddingError
+    propaga come prima ma il lavoro già fatto resta salvato (il giro successivo riparte dal resto).
+    Se `stop_event` è impostato tra un blocco e l'altro, si ferma pulito e ritorna quanti ne ha salvati."""
     with session() as db:
         vectors.ensure(db)
         rows = db.execute("SELECT id, course_id, heading, text FROM chunks WHERE embedding IS NULL ORDER BY id").fetchall()
     if not rows:
         return 0
     done = 0
-    for i in range(0, len(rows), 960):  # salva a blocchi: un'interruzione non fa perdere tutto
-        part = rows[i:i + 960]
-        vecs = embed_documents([f"{r['heading']}\n{r['text']}" for r in part],
-                               on_progress=lambda n, tot: on_progress and on_progress(done + n, len(rows)))
+    texts = [f"{r['heading']}\n{r['text']}" for r in rows]
+    for i, vecs in embed.iter_embed_blocks(texts, stop_event):
+        part = rows[i:i + len(vecs)]
         with session() as db:
             vectors.store(db, [r["id"] for r in part], [r["course_id"] for r in part], vecs)
         done += len(part)
+        if on_progress:
+            on_progress(done, len(rows))
     return done

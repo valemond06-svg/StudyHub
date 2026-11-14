@@ -353,12 +353,24 @@ def _post_chat_locked(base: str, payload: dict, has_images: bool, timeout: float
         raise _HostDown(f"{base}: {e}")
 
 
+# LaTeX scritto con un solo backslash dentro una stringa JSON: `\triangle`, `\rightarrow`, `\frac`, `\beta`
+# diventerebbero TAB, CR, form feed e backspace; `\sum`, `\cdot`, `\alpha` sono escape non validi.
+# `\n` resta un a capo, tranne i comandi LaTeX che iniziano per n (elenco chiuso: `\nella` è un a capo).
+_LATEX_N = r"(?:abla|eq|eg|u|ot|exists|leq|geq|mid|parallel|subseteq|subset|ewline|orm|atural|ewcommand|ewpage)(?![A-Za-z])"
+_JSON_ESCAPE = re.compile(r'\\(\\|[bfrt](?=[A-Za-z])|n(?=' + _LATEX_N + r')|u(?![0-9a-fA-F]{4})|[^"\\/bfnrtu])')
+
+
+def fix_latex_escapes(text_json: str) -> str:
+    """Raddoppia i backslash del LaTeX nel testo JSON grezzo, prima di json.loads. Le coppie `\\\\` restano."""
+    return _JSON_ESCAPE.sub(lambda m: m.group(0) if m.group(1) == "\\" else "\\\\" + m.group(1), text_json)
+
+
 def _extract_json(raw: str):
     """JSON dalla risposta del modello: toglie i blocchi <think>, prende il primo {...} e ripara se serve."""
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
     raw = re.sub(r"^.*?</think>", "", raw, flags=re.DOTALL)  # <think> aperto dal template, chiuso nella risposta
     match = re.search(r"\{.*\}", raw, re.DOTALL)
-    text_json = match.group(0) if match else raw
+    text_json = fix_latex_escapes(match.group(0) if match else raw)
     try:
         data = json.loads(text_json, strict=False)
     except Exception:

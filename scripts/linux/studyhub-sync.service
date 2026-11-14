@@ -1,0 +1,10 @@
+[Unit]
+Description=StudyHub: sync Moodle giornaliero (esce pulito se manca il login o se e in corso il turno di notte)
+
+[Service]
+Type=oneshot
+Environment=STUDYHUB_ROOT=%h/StudyHub
+WorkingDirectory=%h/StudyHub/backend
+ExecStart=%h/StudyHub/backend/.venv/bin/studyhub auto-sync --max-lectures 2
+TimeoutStartSec=3h
+Nice=10

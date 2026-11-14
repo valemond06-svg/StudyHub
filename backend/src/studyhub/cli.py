@@ -248,6 +248,16 @@ def ai_lesson(
             console.print(f"[yellow]Embeddings rimandati ({e}); gli appunti sono già cercabili per parole chiave.[/]")
 
 
+@app.command("ocr")
+def ocr_cmd(limit: int = typer.Option(None, help="Massimo di PDF da leggere in questo giro")):
+    """Legge con Claude (visione) i PDF scansionati o senza testo e ne crea le unità di studio. Usa la finestra Pro."""
+    from .ingest.ocr import run_pending
+    r = run_pending(limit, on_item=console.print)
+    console.print(f"Letti: {r['letti']} · restano: {r['restano']} · errori: {len(r['errori'])}")
+    for e in r["errori"]:
+        console.print(f"  [red]✗[/] {e}")
+
+
 @app.command("auto-sync")
 def auto_sync(
     max_lectures: int = typer.Option(2, help="Massimo di nuove registrazioni da elaborare per giro"),
@@ -258,6 +268,19 @@ def auto_sync(
     s = run(max_new_lectures=max_lectures, whisper=whisper)
     console.print(f"File nuovi: {s['file']} · lezioni pronte: {s['lezioni']} · corsi con nuovi avvisi: {s['avvisi']}"
                   f" · errori: {len(s['errori'])}")
+
+
+@app.command("notte")
+def notte(
+    solo_locale: bool = typer.Option(False, "--solo-locale", help="Solo il 35B locale (per ora l'unica modalità)"),
+    fino: str = typer.Option("04:15", help="Ora limite HH:MM per le unità del 35B"),
+    max_unita: int = typer.Option(0, help="Massimo di unità da elaborare (0 = senza limite)"),
+    max_trascrizioni: int = typer.Option(4, help="Massimo di lezioni da trascrivere con Whisper"),
+    fine_fase_gpu: str = typer.Option("00:30", help="Ora HH:MM oltre la quale Whisper ed embedding si fermano"),
+):
+    """Turno di notte: Whisper ed embedding, poi pulizia di Ollama, poi le unità di studio col 35B locale."""
+    from .notte import run
+    raise typer.Exit(run(solo_locale, fino, max_unita, max_trascrizioni, fine_fase_gpu))
 
 
 @app.command("brain-export")
