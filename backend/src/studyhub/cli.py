@@ -277,9 +277,15 @@ def notte(
     max_unita: int = typer.Option(0, help="Massimo di unità da elaborare (0 = senza limite)"),
     max_trascrizioni: int = typer.Option(4, help="Massimo di lezioni da trascrivere con Whisper"),
     fine_fase_gpu: str = typer.Option("00:30", help="Ora HH:MM oltre la quale Whisper ed embedding si fermano"),
+    conta: bool = typer.Option(False, "--conta", help="Stampa in JSON il lavoro in attesa ed esce (niente LLM)"),
 ):
     """Turno di notte: Whisper ed embedding, poi pulizia di Ollama, poi le unità di studio col 35B locale."""
     from .notte import run
+    if conta:
+        import json as _json
+        from .notte import conta as _conta
+        print(_json.dumps(_conta()))
+        raise typer.Exit(0)
     raise typer.Exit(run(solo_locale, fino, max_unita, max_trascrizioni, fine_fase_gpu))
 
 

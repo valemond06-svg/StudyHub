@@ -232,3 +232,26 @@ def test_autosync_salta_durante_il_turno(ambiente, monkeypatch, capsys):
         s = autosync.run()
     assert s == {"file": 0, "lezioni": 0, "avvisi": 0, "errori": []}
     assert "turno di notte in corso" in capsys.readouterr().out.lower()
+
+
+def test_conta_lavoro_in_attesa(turno_finto):
+    eventi, _ = turno_finto
+    _lezione(1)
+    _lezione(2, con_audio=False)  # senza audio: non trascrivibile
+    _unita(1, "documento", 10, "2026-10-01")
+    _unita(2, "lezione", 1, "2026-10-02")  # senza appunti: la fa Sonnet, non conta
+    _unita(3, "lezione", 3, "2026-10-03")
+    _appunti(3)
+    assert notte.conta() == {"trascrizioni": 1, "unita": 2}
+    assert eventi == []  # niente trascrizioni né LLM
+
+
+def test_conta_vuoto_da_cli(turno_finto):
+    import json
+
+    from typer.testing import CliRunner
+
+    from studyhub.cli import app
+    r = CliRunner().invoke(app, ["notte", "--conta"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output.strip().splitlines()[-1]) == {"trascrizioni": 0, "unita": 0}

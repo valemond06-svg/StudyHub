@@ -273,6 +273,33 @@ def fase3(fino: dt.datetime, max_unita: int, esito: Esito) -> None:
                 log(f"  unità {u['id']} ERRORE {e}")
 
 
+def conta() -> dict:
+    """Lavoro che il turno troverebbe adesso, senza farlo: lezioni da trascrivere e unità per il 35B.
+
+    Applica prima le riprese scadute e sincronizza le unità (come farebbe il turno), poi conta. Serve a
+    `notte.sh` per uscire subito, senza fermare brain-worker, quando non c'è niente da fare.
+    """
+    from .ai.lecture_notes import existing
+    from .db import session
+    from .fullrun import _courses
+    from .study import bank
+
+    _riprendi(lezioni=True, unita=True)
+    trascrizioni = len(lezioni_da_trascrivere())
+    unita = 0
+    for c in _courses():
+        try:
+            bank.sync_units(c["id"])
+        except Exception as e:
+            log(f"unità {c['fullname']}: {e}")
+            continue
+        with session() as db:
+            rows = db.execute("SELECT kind, ref_id FROM study_units WHERE course_id=? AND status='nuova'",
+                              (c["id"],)).fetchall()
+        unita += sum(1 for r in rows if r["kind"] != "lezione" or existing(r["ref_id"]))
+    return {"trascrizioni": trascrizioni, "unita": unita}
+
+
 def run(solo_locale: bool = False, fino: str = "04:15", max_unita: int = 0, max_trascrizioni: int = 4,
         fine_fase_gpu: str = "00:30") -> int:
     if not solo_locale:
