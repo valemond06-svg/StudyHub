@@ -16,6 +16,11 @@ extra_active_courses:
 
 # LLM locale (fisso, 1 slot): timeout di lettura in secondi, default 1200. STUDYHUB_LOCAL_LLM_TIMEOUT ha la precedenza.
 # local_llm_timeout_s: 1200
+# Arretrati degli appunti (solo Claude Sonnet): lezioni trascritte senza appunti e PDF scansionati (OCR)
+# entrano in coda da soli, prima i corsi correnti e le lezioni recenti. Si fermano quando la finestra
+# Claude Pro supera claude_backlog_stop_at e ripartono al reset. Da accendere su UNA sola macchina.
+# claude_backlog: true
+# claude_backlog_stop_at: 0.70
 
 # Trascrizione: auto = GPU NVIDIA se c'è, altrimenti CPU (più lenta). Oppure: cuda | cpu
 # whisper_device: auto
