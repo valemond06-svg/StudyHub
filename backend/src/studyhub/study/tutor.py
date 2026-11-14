@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from ..ai.claude_runner import ClaudeError
 from ..ai.llm import run_json
 from ..db import session
 from ..search import search
@@ -102,7 +103,11 @@ def ask(thread_id: int, question: str) -> dict:
                 f"\n\n=== Domanda dello studente ===\n{question}"}]
     system = SYSTEM + (SOCRATIC if th["mode"] == "socratico" else "")
     res = run_json(system, content[0]["text"], SCHEMA, quality="accurato")
-    used = set(res.data.get("fonti_usate") or [])
+    data = res.data
+    if not isinstance(data, dict) or not isinstance(data.get("risposta_md"), str) or not data["risposta_md"].strip():
+        raise ClaudeError("Il tutor non ha restituito una risposta valida.")
+    fonti = data.get("fonti_usate")
+    used = {n for n in fonti if isinstance(n, int) and not isinstance(n, bool)} if isinstance(fonti, list) else set()
     cited = [s for s in sources if s["n"] in used] or sources[:0]
     u = getattr(res, "usage", {}) or {}
     tin = (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0) + (u.get("cache_creation_input_tokens") or 0)
@@ -113,10 +118,10 @@ def ask(thread_id: int, question: str) -> dict:
                    (thread_id, "user", question, _now()))
         db.execute("""INSERT INTO tutor_messages (thread_id, role, content, citations, tokens_in, tokens_out, created_at)
                       VALUES (?,?,?,?,?,?,?)""",
-                   (thread_id, "assistant", res.data["risposta_md"], json.dumps(sources, ensure_ascii=False), tin,
+                   (thread_id, "assistant", data["risposta_md"], json.dumps(sources, ensure_ascii=False), tin,
                     tout, _now()))
         if not th.get("title"):
             db.execute("UPDATE tutor_threads SET title=? WHERE id=?", (question[:80], thread_id))
-    return {"answer": res.data["risposta_md"], "sources": sources, "cited": [s["n"] for s in cited],
-            "outside": res.data.get("fuori_materiale"), "tokens_in": tin, "tokens_out": tout,
+    return {"answer": data["risposta_md"], "sources": sources, "cited": [s["n"] for s in cited],
+            "outside": data.get("fuori_materiale"), "tokens_in": tin, "tokens_out": tout,
             "utilization": utilization}

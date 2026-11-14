@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from fsrs import Card, Rating
 
+from ..ai.claude_runner import ClaudeError
 from ..ai.llm import run_json
 from ..db import session
 from .flashcards import _iso, scheduler
@@ -199,7 +200,20 @@ def _grade_ai(it: dict, answer: str) -> tuple[float, str, list]:
             + ("Criteri:\n" + "\n".join(f"{i + 1}. {c}" for i, c in enumerate(rubric)) + "\n\n" if rubric else "")
             + f"Risposta dello studente:\n{answer}")
     res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
-    return max(0.0, min(1.0, float(res.data["punteggio"]))), res.data["feedback_md"], res.data.get("criteri_ok") or []
+    d = res.data
+    if not isinstance(d, dict):
+        raise ClaudeError("Il modello ha restituito una correzione non valida.")
+    try:
+        score = float(d.get("punteggio"))
+    except (TypeError, ValueError):
+        raise ClaudeError("Il modello ha restituito una correzione senza punteggio valido.")
+    if score != score:  # NaN
+        raise ClaudeError("Il modello ha restituito una correzione senza punteggio valido.")
+    feedback = d.get("feedback_md")
+    feedback = feedback if isinstance(feedback, str) else ""
+    crit = d.get("criteri_ok")
+    crit = [bool(c) for c in crit] if isinstance(crit, list) else []
+    return max(0.0, min(1.0, score)), feedback, crit
 
 
 def _source(db, it: dict) -> dict:

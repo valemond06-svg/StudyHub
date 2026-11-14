@@ -16,6 +16,7 @@ import threading
 from dataclasses import asdict
 from datetime import datetime
 
+from ..ai.claude_runner import ClaudeError
 from ..ai.llm import run_json
 from ..db import session
 from .archetype import get_course_archetype
@@ -215,6 +216,15 @@ def _sources(db, topic_id: int) -> tuple[dict, str]:
     return t, "\n\n".join(texts)
 
 
+def _passi(data: dict) -> list[dict]:
+    """I passi della lezione, scartando quelli che non sono oggetti (risposta del modello malformata)."""
+    passi = data.get("passi")
+    if not isinstance(passi, list):
+        return []
+    passi[:] = [p for p in passi if isinstance(p, dict)]
+    return passi
+
+
 def generate(topic_id: int) -> dict:
     with session() as db:
         t, material = _sources(db, topic_id)
@@ -230,8 +240,10 @@ def generate(topic_id: int) -> dict:
     sys_prompt = build_system_prompt(t["course_id"], course)
     res = run_json(sys_prompt, prompt, SCHEMA, quality="accurato")
     data = res.data
+    if not isinstance(data, dict):
+        raise ClaudeError("Il modello non ha restituito una lezione valida.")
 
-    if data.get("laboratorio_pratico"):
+    if isinstance(data.get("laboratorio_pratico"), dict):
         lab = data["laboratorio_pratico"]
         lab.setdefault("archetype_id", arch.archetype_id)
         lab.setdefault("badge", arch.badge)
@@ -243,12 +255,12 @@ def generate(topic_id: int) -> dict:
         lab.setdefault("artifact_name", f"{arch.artifact_name.split('.')[0]}_{topic_id}{arch.file_extension}")
 
     import random
-    for p in data.get("passi", []):
+    for p in _passi(data):
         v = p.get("verifica")
-        if v and "opzioni" in v and "corretta" in v and isinstance(v["opzioni"], list):
+        if isinstance(v, dict) and "opzioni" in v and "corretta" in v and isinstance(v["opzioni"], list):
             _opts = list(v["opzioni"])
             _c = v["corretta"]
-            if len(_opts) >= 2 and 0 <= _c < len(_opts):
+            if len(_opts) >= 2 and isinstance(_c, int) and 0 <= _c < len(_opts):
                 _val = _opts[_c]
                 random.shuffle(_opts)
                 v["opzioni"] = _opts
@@ -256,10 +268,10 @@ def generate(topic_id: int) -> dict:
 
     # Randomize sniper_sbarramento options if present
     sn = data.get("sniper_sbarramento")
-    if sn and "opzioni" in sn and "corretta" in sn and isinstance(sn["opzioni"], list):
+    if isinstance(sn, dict) and "opzioni" in sn and "corretta" in sn and isinstance(sn["opzioni"], list):
         _opts = list(sn["opzioni"])
         _c = sn["corretta"]
-        if len(_opts) >= 2 and 0 <= _c < len(_opts):
+        if len(_opts) >= 2 and isinstance(_c, int) and 0 <= _c < len(_opts):
             _val = _opts[_c]
             random.shuffle(_opts)
             sn["opzioni"] = _opts
@@ -270,16 +282,19 @@ def generate(topic_id: int) -> dict:
         data["perche_md"] = data["hook_robotica_md"]
     if not data.get("prerequisiti"):
         data["prerequisiti"] = []
-    if "ponte_carta_penna" in data and not data.get("esempio"):
+    if isinstance(data.get("ponte_carta_penna"), dict) and not data.get("esempio"):
         pcp = data["ponte_carta_penna"]
         data["esempio"] = {
             "testo_md": pcp.get("sfida_testo_md", ""),
             "passi": [{"domanda_md": "Come impostare e svolgere il calcolo?", "risposta_md": pcp.get("soluzione_passo_passo_md", "")}],
             "risultato_md": pcp.get("risultato_finale_md", "")
         }
-    for p in data.get("passi", []):  # verifiche malformate: meglio un passo senza verifica che una sbagliata
-        v = p.get("verifica") or {}
-        if not (len(v.get("opzioni") or []) >= 2 and 0 <= int(v.get("corretta", -1)) < len(v["opzioni"])):
+    for p in _passi(data):  # verifiche malformate: meglio un passo senza verifica che una sbagliata
+        v = p.get("verifica")
+        ops = v.get("opzioni") if isinstance(v, dict) else None
+        c = v.get("corretta") if isinstance(v, dict) else None
+        if not (isinstance(ops, list) and len(ops) >= 2 and isinstance(c, int) and not isinstance(c, bool)
+                and 0 <= c < len(ops)):
             p["verifica"] = None
     with session() as db:
         db.execute("""UPDATE study_lessons SET data=?, status='pronta', provider=?, message=NULL, created_at=?
@@ -384,4 +399,8 @@ def ask(topic_id: int, question: str, context: str = "", mode: str = "domanda") 
                     "concreto con numeri, poi generalizza.")
     text = (f"Argomento: {t['name']}\nScheda:\n{t['summary_md'] or ''}\n\nPasso che lo studente sta leggendo:\n{context}\n\n"
             f"Domanda dello studente: {question}")
-    return run_json(ASK_SYSTEM, text, ASK_SCHEMA, quality="veloce").data["risposta_md"]
+    data = run_json(ASK_SYSTEM, text, ASK_SCHEMA, quality="veloce").data
+    risposta = data.get("risposta_md") if isinstance(data, dict) else None
+    if not isinstance(risposta, str) or not risposta.strip():
+        raise ClaudeError("Il modello non ha restituito una risposta valida.")
+    return risposta

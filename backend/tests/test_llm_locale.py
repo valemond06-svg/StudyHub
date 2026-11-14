@@ -227,7 +227,7 @@ def test_la_richiesta_usa_v1_chat_e_il_modello_local(rete):
     base, percorso, auth, payload = rete.chat()[0]
     assert (base, percorso) == (LAPTOP, "/v1/chat/completions")
     assert payload["model"] == "local"
-    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["response_format"]["type"] == "json_schema"  # schema vincolato (P0.2)
     assert "sistema" in payload["messages"][0]["content"] and "testo" in payload["messages"][0]["content"]
     assert (r.data, r.provider, r.model) == ({"x": 1}, "local", "qwen-test")
 
@@ -285,7 +285,7 @@ def test_errore_di_richiesta_400_non_fa_giri_inutili(rete):
     rete.su(LAPTOP, chat=400).su(CAVO)
     with pytest.raises(ClaudeError, match="HTTP 400"):
         _chiama()
-    assert [c[0] for c in rete.chat()] == [LAPTOP]
+    assert [c[0] for c in rete.chat()] == [LAPTOP, LAPTOP]  # ripiego unico su json_object, nessun giro sugli altri server
 
 
 def test_chiave_rifiutata_401_prova_il_successivo(rete):

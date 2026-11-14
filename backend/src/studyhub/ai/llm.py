@@ -13,6 +13,7 @@ appunti superano il limite di 32 KB di Windows.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -231,6 +232,50 @@ class _HostDown(Exception):
     """Il server non risponde (rete, 5xx, chiave rifiutata): vale la pena provare un'altra macchina."""
 
 
+class _BadRequest(ClaudeError):
+    """HTTP 400 dal server locale (es. schema non convertibile in grammatica)."""
+
+
+MAX_TOKENS_CAP = 16384
+_schema_rifiutati: set[str] = set()   # hash degli schemi che il server ha rifiutato con 400: si usa json_object
+
+
+def _schema_key(schema: dict) -> str:
+    return hashlib.sha256(json.dumps(schema, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _post_json(base: str, payload: dict, schema: dict, has_images: bool = False) -> dict:
+    """_post_chat con schema JSON vincolato (grammatica) e gestione delle risposte troncate.
+    400 con lo schema: si ripiega UNA volta su json_object e lo si ricorda. finish_reason "length": si riprova
+    una volta con max_tokens doppio (tetto 16384); ancora troncata -> ClaudeError (si passa al provider dopo)."""
+    key = _schema_key(schema)
+    payload = dict(payload)
+    if key in _schema_rifiutati:
+        payload["response_format"] = {"type": "json_object"}
+    else:
+        payload["response_format"] = {"type": "json_schema",
+                                      "json_schema": {"name": "risposta", "schema": schema, "strict": True}}
+    try:
+        res = _post_chat(base, payload, has_images)
+    except _BadRequest:
+        if payload["response_format"]["type"] != "json_schema":
+            raise
+        _schema_rifiutati.add(key)
+        payload["response_format"] = {"type": "json_object"}
+        res = _post_chat(base, payload, has_images)
+    if _finish_reason(res) == "length":
+        payload["max_tokens"] = min(int(payload.get("max_tokens") or 5120) * 2, MAX_TOKENS_CAP)
+        res = _post_chat(base, payload, has_images)
+        if _finish_reason(res) == "length":
+            raise ClaudeError(f"Local LLM error: risposta troncata da {base} anche con max_tokens={payload['max_tokens']}")
+    return res
+
+
+def _finish_reason(res: dict) -> str | None:
+    ch = (res.get("choices") or [{}])[0]
+    return ch.get("finish_reason") if isinstance(ch, dict) else None
+
+
 def _post_chat(base: str, payload: dict, has_images: bool = False) -> dict:
     headers = {"Content-Type": "application/json", **_auth_headers(base)}
     req = urllib.request.Request(f"{base}/v1/chat/completions", data=json.dumps(payload).encode("utf-8"),
@@ -253,6 +298,8 @@ def _post_chat(base: str, payload: dict, has_images: bool = False) -> dict:
             _auth_failed.add(base)
         if e.code >= 500 or e.code in (401, 403, 404):
             raise _HostDown(f"{base}: HTTP {e.code}")
+        if e.code == 400:
+            raise _BadRequest(f"Local LLM error: HTTP 400 da {base}")
         raise ClaudeError(f"Local LLM error: HTTP {e.code} da {base}")
     except TimeoutError:
         # Il server è vivo ma lento (o la generazione è lunga): non si ricomincia da capo su un'altra macchina.
@@ -358,7 +405,6 @@ def _local_vision(system: str, content: list[dict], schema: dict) -> tuple[dict,
     payload = {
         "model": get_local_llm_model(),
         "messages": [{"role": "user", "content": _openai_blocks([{"type": "text", "text": intro}, *content])}],
-        "response_format": {"type": "json_object"},
         "temperature": 0.2,
         "max_tokens": 5120,
     }
@@ -368,7 +414,7 @@ def _local_vision(system: str, content: list[dict], schema: dict) -> tuple[dict,
             errors.append(f"{base}: senza vista")
             continue
         try:
-            return _post_chat(base, payload, has_images=True), base
+            return _post_json(base, payload, schema, has_images=True), base
         except NoVision as e:
             errors.append(str(e))
         except _HostDown as e:
@@ -395,7 +441,6 @@ def _local(system: str, text: str, schema: dict, quality: str, content: list[dic
         "messages": [
             {"role": "user", "content": prompt}
         ],
-        "response_format": {"type": "json_object"},
         "temperature": 0.2,
         "max_tokens": 5120,
     }
@@ -409,7 +454,7 @@ def _local(system: str, text: str, schema: dict, quality: str, content: list[dic
                 break
             base = FALLBACK_LOCAL_URL  # nessun controllo di salute ha risposto: ultimo tentativo alla cieca
         try:
-            res = _post_chat(base, payload)
+            res = _post_json(base, payload, schema)
             break
         except _HostDown as e:
             errors.append(str(e))
