@@ -25,7 +25,7 @@ import pymupdf
 
 from ..ai.claude_runner import RateLimited
 from ..ai.lecture_notes import _exam_rules, existing
-from ..ai.llm import run_json
+from ..ai.llm import effective_workers, run_json
 from ..config import settings
 from ..db import session
 from ..ingest.extract import extract
@@ -434,7 +434,7 @@ def _work(course_id: int, unit_ids: list[int]) -> None:
             job["stopped"] = limited
 
     try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=effective_workers()) as pool:
             list(pool.map(one, unit_ids))
     finally:
         job.update(running=False, current=None)

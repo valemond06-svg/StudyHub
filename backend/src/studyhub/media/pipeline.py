@@ -113,7 +113,7 @@ def process_moodle_video(lec: dict, course: dict, moodle, whisper: bool = True) 
             transcript = ldir / "transcript.json"
             if not transcript.exists():
                 console.print("    trascrizione Whisper (GPU)…")
-                res = transcribe(audio, transcript, prompt=_glossary(course))
+                res = transcribe(audio, transcript, prompt=_glossary(course), duration_s=ff.probe(audio)["duration"])
                 console.print(f"    trascritta in {res['elapsed_s']:.0f}s: {len(res['segments'])} segmenti")
                 _update(lec["id"], transcript_source="whisper", status="trascritta")
     except Exception as e:
@@ -282,7 +282,7 @@ def process_lecture(lec: dict, course: dict, panopto: Panopto, whisper: bool = T
             cur = json.loads(transcript.read_text(encoding="utf-8")) if transcript.exists() else {}
             if cur.get("source") != "whisper":
                 console.print("    trascrizione Whisper (GPU)…")
-                res = transcribe(audio, transcript, prompt=_glossary(course),
+                res = transcribe(audio, transcript, prompt=_glossary(course), duration_s=ff.probe(audio)["duration"],
                                  on_progress=lambda p: console.print(f"      {p:.0%}", end="\r"))
                 console.print(f"    trascritta in {res['elapsed_s']:.0f}s: {len(res['segments'])} segmenti")
                 _update(lec["id"], transcript_source="whisper", status="trascritta")
