@@ -21,6 +21,7 @@ from rich.console import Console
 
 from ..db import session
 from ..paths import rel_to_uni, safe_name, uni_path
+from ..study import riprese
 from ..sync.auth import MoodleSession
 from . import ff, storage
 from .audio import detect_silences, extract_audio
@@ -119,6 +120,7 @@ def process_moodle_video(lec: dict, course: dict, moodle, whisper: bool = True) 
     except Exception as e:
         shutil.rmtree(tmp, ignore_errors=True)
         _update(lec["id"], status="errore", error=str(e)[:500])
+        riprese.segna_fallita("lectures", lec["id"])
         raise
 
 
@@ -204,6 +206,8 @@ def _glossary(course: dict) -> str:
 
 def _update(lec_id: int, **fields) -> None:
     fields["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    if fields.get("status") in ("media_ok", "trascritta"):  # successo: si azzerano i tentativi (P1.3)
+        fields.update(attempts=0, next_retry_at=None)
     with session() as db:
         db.execute(f"UPDATE lectures SET {', '.join(f'{k}=?' for k in fields)} WHERE id=?",
                    (*fields.values(), lec_id))
@@ -289,6 +293,7 @@ def process_lecture(lec: dict, course: dict, panopto: Panopto, whisper: bool = T
     except Exception as e:
         shutil.rmtree(tmp, ignore_errors=True)  # mai lasciare video temporanei in giro
         _update(lec["id"], status="errore", error=str(e)[:500])
+        riprese.segna_fallita("lectures", lec["id"])
         raise
 
 

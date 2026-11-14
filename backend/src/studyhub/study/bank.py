@@ -30,6 +30,7 @@ from ..config import settings
 from ..db import session
 from ..ingest.extract import extract
 from ..paths import uni_path
+from . import riprese
 
 BANK_VERSION = "bank-v1"
 PART_MAX_CHARS = 30_000
@@ -283,6 +284,10 @@ def prepare_unit(unit_id: int) -> dict:
     with session() as db:
         db.execute("UPDATE study_units SET status=?, source_hash=?, provider=?, message=?, done_at=? WHERE id=?",
                    ("pronta" if added else "vuota", h, res.model, f"{added} domande", _now(), unit_id))
+    if added:
+        riprese.segna_riuscita("study_units", unit_id)
+    else:
+        riprese.segna_fallita("study_units", unit_id)  # 0 domande: si riprova con backoff (P1.3)
     return {"cached": False, "items": added, "provider": res.provider}
 
 
@@ -416,6 +421,7 @@ def _run_claimed(uid: int) -> str | None:
     except Exception as e:
         with session() as db:
             db.execute("UPDATE study_units SET status='errore', message=? WHERE id=?", (str(e)[:300], uid))
+        riprese.segna_fallita("study_units", uid)
     return None
 
 

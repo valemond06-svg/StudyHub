@@ -225,6 +225,13 @@ def fase2() -> None:
     log("fase 2 finita")
 
 
+def _riprendi(**kw) -> None:
+    from .study import riprese
+    r = riprese.riprendi_sicuro(log=log, **kw)
+    if any(r.values()):
+        log(f"riprese automatiche: {r}")
+
+
 def fase3(fino: dt.datetime, max_unita: int, esito: Esito) -> None:
     log("--- fase 3: unità di studio col 35B locale")
     from .ai.lecture_notes import existing
@@ -233,6 +240,7 @@ def fase3(fino: dt.datetime, max_unita: int, esito: Esito) -> None:
     from .study import bank
 
     bank.release_stale()
+    _riprendi(lezioni=False, unita=True)  # unità vuote/in errore scadute: rigenerabili nel turno di stanotte
     for c in _courses():
         try:
             bank.sync_units(c["id"])
@@ -299,6 +307,8 @@ def _turno(lim: dt.datetime, fine_gpu: dt.datetime, max_unita: int, max_trascriz
     log(f"=== inizio turno di notte (fino alle {lim:%H:%M}, unità max {max_unita or 'illimitate'}, "
         f"fase GPU fino alle {fine_gpu:%H:%M})")
     esito = Esito()
+    # Prima della fase 1: le lezioni riprese (media_ok) entrano subito nella coda di trascrizione.
+    _riprendi(lezioni=True, unita=False)
     fase1(fine_gpu, max_trascrizioni, esito)
     fase2()
     fase3(lim, max_unita, esito)

@@ -39,6 +39,9 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
         console.print("[yellow]Elaborazione completa in corso: salto il sync automatico.[/]")
         return {"file": 0, "lezioni": 0, "avvisi": 0, "errori": []}
 
+    from .study.riprese import riprendi_sicuro
+    riprendi_sicuro()  # lezioni in errore e unità vuote scadute tornano in coda; un'eccezione qui non ferma il sync
+
     apply_catalog()
     with session() as db:
         courses = [dict(r) for r in db.execute(
