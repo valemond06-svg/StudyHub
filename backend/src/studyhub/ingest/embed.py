@@ -10,12 +10,13 @@ from __future__ import annotations
 import httpx
 import numpy as np
 
-from ..media.gpu import gpu_lock
+from ..media.gpu import LockTimeout, gpu_lock
 
 OLLAMA = "http://127.0.0.1:11434"
 MODEL = "bge-m3"
 DIM = 1024
 BATCH = 96
+GPU_LOCK_TIMEOUT_S = 30 * 60
 
 
 class EmbeddingError(Exception):
@@ -37,11 +38,14 @@ def _embed(texts: list[str], options: dict, keep_alive) -> np.ndarray:
 
 def embed_documents(texts: list[str], on_progress=None) -> np.ndarray:
     out = []
-    with gpu_lock("ollama bge-m3"):
-        for i in range(0, len(texts), BATCH):
-            out.append(_embed(texts[i:i + BATCH], {}, keep_alive=0))
-            if on_progress:
-                on_progress(min(len(texts), i + BATCH), len(texts))
+    try:
+        with gpu_lock("ollama bge-m3", timeout=GPU_LOCK_TIMEOUT_S):
+            for i in range(0, len(texts), BATCH):
+                out.append(_embed(texts[i:i + BATCH], {}, keep_alive=0))
+                if on_progress:
+                    on_progress(min(len(texts), i + BATCH), len(texts))
+    except LockTimeout as e:
+        raise EmbeddingError(f"GPU occupata da {str(e).split('occupato da ', 1)[-1]}: embeddings rimandati")
     return np.vstack(out) if out else np.zeros((0, DIM), np.float32)
 
 

@@ -12,10 +12,12 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
 from pathlib import Path
 
-from .gpu import gpu_lock
+from .gpu import LockTimeout, gpu_lock
 
 MODEL = "large-v3-turbo"
 COMPUTE_TYPE = {"cuda": "int8_float16", "cpu": "int8"}  # su GPU entra in 4 GB di VRAM
@@ -89,29 +91,89 @@ def _worker(audio: str, out: str, prompt: str | None) -> None:
     tmp.replace(out)
 
 
-def transcribe(audio: Path, out: Path, prompt: str | None = None, on_progress=None) -> dict:
+GPU_LOCK_TIMEOUT_S = 2 * 3600
+IDLE_TIMEOUT_S = 20 * 60          # nessuna riga PROGRESS per tanto: Whisper è bloccato
+DEFAULT_TIMEOUT_S = 4 * 3600      # durata audio ignota
+
+
+def total_timeout(duration_s: float | None) -> float:
+    return max(1800.0, 3 * duration_s) if duration_s and duration_s > 0 else float(DEFAULT_TIMEOUT_S)
+
+
+def transcribe(audio: Path, out: Path, prompt: str | None = None, on_progress=None,
+               duration_s: float | None = None, timeout_s: float | None = None,
+               idle_timeout_s: float | None = None) -> dict:
     cmd = [sys.executable, "-m", "studyhub.media.transcribe", str(audio), str(out)]
     if prompt:
         cmd += ["--prompt", prompt]
+    limit = float(timeout_s) if timeout_s else total_timeout(duration_s)
+    idle = float(idle_timeout_s) if idle_timeout_s else IDLE_TIMEOUT_S
+
     def attempt(dev: str) -> tuple[int, str]:
         env = {**os.environ, "STUDYHUB_WHISPER_DEVICE": dev}
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 encoding="utf-8", errors="replace", env=env, stdin=subprocess.DEVNULL)
-        for line in proc.stdout:
-            if line.startswith("PROGRESS") and on_progress:
-                on_progress(float(line.split()[1]))
-        err = proc.stderr.read()
-        return proc.wait(), err
+        tail: deque[str] = deque(maxlen=200)
 
-    with gpu_lock(f"whisper {audio.name}"):
-        dev = device()
-        code, err = attempt(dev)
-        if code != 0 and dev == "cuda":
-            # Crash nativo di CUDA (es. 0xC0000409 con la VRAM contesa): la lezione si trascrive lo stesso, su CPU.
-            print(f"    Whisper su GPU terminato con codice {code & 0xFFFFFFFF:#x}: riprovo su CPU…", flush=True)
-            code, err = attempt("cpu")
-        if code != 0:
-            raise RuntimeError(f"Whisper fallito (codice {code & 0xFFFFFFFF:#x}): {err[-1500:].strip() or 'nessun messaggio'}")
+        def drain_err() -> None:  # stderr svuotata di continuo: una pipe piena bloccherebbe il figlio
+            try:
+                for line in proc.stderr:
+                    tail.append(line)
+            except (OSError, ValueError):
+                pass
+
+        et = threading.Thread(target=drain_err, daemon=True)
+        et.start()
+        t0 = time.monotonic()
+        last = [t0]
+        reason: list[str] = []
+
+        def watchdog() -> None:
+            while proc.poll() is None:
+                now = time.monotonic()
+                if now - t0 > limit:
+                    reason.append(f"timeout totale di {limit / 60:.0f} minuti")
+                elif now - last[0] > idle:
+                    reason.append(f"nessun avanzamento da {idle / 60:.0f} minuti")
+                if reason:
+                    proc.kill()
+                    return
+                time.sleep(min(1.0, max(0.02, limit / 20, idle / 20)))
+
+        wd = threading.Thread(target=watchdog, daemon=True)
+        wd.start()
+        try:
+            for line in proc.stdout:
+                if line.startswith("PROGRESS"):
+                    last[0] = time.monotonic()
+                    if on_progress:
+                        try:
+                            on_progress(float(line.split()[1]))
+                        except (ValueError, IndexError):
+                            pass
+            code = proc.wait()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            wd.join(timeout=5)
+            et.join(timeout=5)
+        if reason:
+            raise RuntimeError(f"Whisper interrotto: {reason[0]} (processo terminato, nessun ripiego su CPU)")
+        return code, "".join(tail)
+
+    try:
+        with gpu_lock(f"whisper {audio.name}", timeout=GPU_LOCK_TIMEOUT_S):
+            dev = device()
+            code, err = attempt(dev)
+            if code != 0 and dev == "cuda":
+                # Crash nativo di CUDA (es. 0xC0000409 con la VRAM contesa): la lezione si trascrive lo stesso, su CPU.
+                print(f"    Whisper su GPU terminato con codice {code & 0xFFFFFFFF:#x}: riprovo su CPU…", flush=True)
+                code, err = attempt("cpu")
+            if code != 0:
+                raise RuntimeError(f"Whisper fallito (codice {code & 0xFFFFFFFF:#x}): {err[-1500:].strip() or 'nessun messaggio'}")
+    except LockTimeout as e:
+        raise RuntimeError(f"GPU occupata da {str(e).split('occupato da ', 1)[-1]}: attesa oltre {GPU_LOCK_TIMEOUT_S // 60} minuti")
     return json.loads(out.read_text(encoding="utf-8"))
 
 

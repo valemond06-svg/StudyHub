@@ -24,6 +24,7 @@ from rich.console import Console
 from . import notify
 from .ai.claude_runner import last_usage
 from .ai.lecture_notes import existing
+from .ai.llm import effective_workers
 from .config import LOCAL_DIR
 from .db import session
 from .sync.auth import LoginRequired, get_session
@@ -236,7 +237,7 @@ def study_track(media_done: threading.Event) -> None:
                 def one(uid: int) -> str | None:
                     return bank.run_claimed(uid) if bank.claim(uid) else None
 
-                with ThreadPoolExecutor(max_workers=2) as pool:
+                with ThreadPoolExecutor(max_workers=effective_workers()) as pool:
                     limits = [x for x in pool.map(one, runnable) if x]
                 worked = True
                 if limits:

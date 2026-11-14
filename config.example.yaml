@@ -14,6 +14,9 @@ extra_active_courses:
 # AI: auto = Gemini (Antigravity) se installato, altrimenti Claude. Oppure: gemini | claude
 # ai_provider: auto
 
+# LLM locale (fisso, 1 slot): timeout di lettura in secondi, default 1200. STUDYHUB_LOCAL_LLM_TIMEOUT ha la precedenza.
+# local_llm_timeout_s: 1200
+
 # Trascrizione: auto = GPU NVIDIA se c'è, altrimenti CPU (più lenta). Oppure: cuda | cpu
 # whisper_device: auto
 

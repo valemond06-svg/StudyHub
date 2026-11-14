@@ -13,6 +13,7 @@ appunti superano il limite di 32 KB di Windows.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import LOCAL_DIR, settings
+from ..filelock import LockTimeout, file_lock
 from .claude_runner import ClaudeError, RateLimited, run as claude_run
 
 AGY_CWD = LOCAL_DIR / "agy-cwd"
@@ -57,7 +59,9 @@ LOCAL_MODEL = "local"                              # alias del router Windows; i
 HEALTH_TIMEOUT_S = 1.0                             # controllo di salute: breve, i candidati si provano in parallelo
 CACHE_OK_S = 300.0                                 # un candidato sano resta valido 5 minuti (o fino al primo errore)
 CACHE_NONE_S = 15.0                                # "nessuno risponde" si ricontrolla presto
-LOCAL_TIMEOUT_S = 600                              # generazioni lunghe: timeout di lettura
+LOCAL_TIMEOUT_S = 600                              # alias storico: se riassegnato a un valore diverso da 600 vince (vedi local_timeout_s)
+_LOCAL_TIMEOUT_SENTINELLA = 600
+LOCAL_TIMEOUT_DEFAULT_S = 1200                     # generazioni lunghe: timeout di lettura (35B su 1 slot)
 MAX_LOCAL_ATTEMPTS = 3
 
 _cache: dict = {"url": None, "at": -1e9, "ttl": 0.0}
@@ -231,12 +235,97 @@ class _HostDown(Exception):
     """Il server non risponde (rete, 5xx, chiave rifiutata): vale la pena provare un'altra macchina."""
 
 
+class _BadRequest(ClaudeError):
+    """HTTP 400 dal server locale (es. schema non convertibile in grammatica)."""
+
+
+MAX_TOKENS_CAP = 16384
+_schema_rifiutati: set[str] = set()   # hash degli schemi che il server ha rifiutato con 400: si usa json_object
+
+
+def _schema_key(schema: dict) -> str:
+    return hashlib.sha256(json.dumps(schema, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _post_json(base: str, payload: dict, schema: dict, has_images: bool = False) -> dict:
+    """_post_chat con schema JSON vincolato (grammatica) e gestione delle risposte troncate.
+    400 con lo schema: si ripiega UNA volta su json_object e lo si ricorda. finish_reason "length": si riprova
+    una volta con max_tokens doppio (tetto 16384); ancora troncata -> ClaudeError (si passa al provider dopo)."""
+    key = _schema_key(schema)
+    payload = dict(payload)
+    if key in _schema_rifiutati:
+        payload["response_format"] = {"type": "json_object"}
+    else:
+        payload["response_format"] = {"type": "json_schema",
+                                      "json_schema": {"name": "risposta", "schema": schema, "strict": True}}
+    try:
+        res = _post_chat(base, payload, has_images)
+    except _BadRequest:
+        if payload["response_format"]["type"] != "json_schema":
+            raise
+        _schema_rifiutati.add(key)
+        payload["response_format"] = {"type": "json_object"}
+        res = _post_chat(base, payload, has_images)
+    if _finish_reason(res) == "length":
+        prima = int(payload.get("max_tokens") or 5120)
+        payload["max_tokens"] = min(prima * 2, MAX_TOKENS_CAP)
+        if payload["max_tokens"] > prima:  # già al tetto: riprovare darebbe la stessa troncatura
+            res = _post_chat(base, payload, has_images)
+        if _finish_reason(res) == "length":
+            raise ClaudeError(f"Local LLM error: risposta troncata da {base} anche con max_tokens={payload['max_tokens']}")
+    return res
+
+
+def _finish_reason(res: dict) -> str | None:
+    ch = (res.get("choices") or [{}])[0]
+    return ch.get("finish_reason") if isinstance(ch, dict) else None
+
+
+def local_timeout_s() -> float:
+    """Timeout del server locale: env STUDYHUB_LOCAL_LLM_TIMEOUT > costante LOCAL_TIMEOUT_S riassegnata >
+    config.yaml local_llm_timeout_s > 1200."""
+    def _num(v) -> float | None:
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            return None
+        return n if n > 0 else None
+    n = _num(os.environ.get("STUDYHUB_LOCAL_LLM_TIMEOUT"))
+    if n is None and LOCAL_TIMEOUT_S != _LOCAL_TIMEOUT_SENTINELLA:
+        n = _num(LOCAL_TIMEOUT_S)
+    if n is None:
+        n = _num(settings.extra.get("local_llm_timeout_s"))
+    return n if n is not None else float(LOCAL_TIMEOUT_DEFAULT_S)
+
+
+def _server_lock_path(base: str) -> Path:
+    return LOCAL_DIR / f"llm-{hashlib.sha1(_norm(base).encode()).hexdigest()[:10]}.lock"
+
+
+def effective_workers(default: int = 2) -> int:
+    """Il llama-server del fisso ha 1 slot: con provider locale un solo thread di studio alla volta."""
+    try:
+        return 1 if provider_order()[:1] == ["local"] else default
+    except Exception:
+        return default
+
+
 def _post_chat(base: str, payload: dict, has_images: bool = False) -> dict:
+    """Una sola richiesta alla volta per server (anche tra processi): il llama-server ha 1 slot."""
+    timeout = local_timeout_s()
+    try:
+        with file_lock(_server_lock_path(base), f"studyhub pid {os.getpid()}", timeout=3 * timeout, poll_s=0.5):
+            return _post_chat_locked(base, payload, has_images, timeout)
+    except LockTimeout as e:
+        raise ClaudeError(f"Local LLM error: server locale occupato ({e})")
+
+
+def _post_chat_locked(base: str, payload: dict, has_images: bool, timeout: float) -> dict:
     headers = {"Content-Type": "application/json", **_auth_headers(base)}
     req = urllib.request.Request(f"{base}/v1/chat/completions", data=json.dumps(payload).encode("utf-8"),
                                  headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=LOCAL_TIMEOUT_S) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         corpo = ""
@@ -253,11 +342,13 @@ def _post_chat(base: str, payload: dict, has_images: bool = False) -> dict:
             _auth_failed.add(base)
         if e.code >= 500 or e.code in (401, 403, 404):
             raise _HostDown(f"{base}: HTTP {e.code}")
+        if e.code == 400:
+            raise _BadRequest(f"Local LLM error: HTTP 400 da {base}")
         raise ClaudeError(f"Local LLM error: HTTP {e.code} da {base}")
     except TimeoutError:
         # Il server è vivo ma lento (o la generazione è lunga): non si ricomincia da capo su un'altra macchina.
         invalidate_local_llm(base)
-        raise ClaudeError(f"Local LLM error: nessuna risposta da {base} entro {LOCAL_TIMEOUT_S}s")
+        raise ClaudeError(f"Local LLM error: nessuna risposta da {base} entro {timeout:g}s")
     except (urllib.error.URLError, OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
         raise _HostDown(f"{base}: {e}")
 
@@ -358,7 +449,6 @@ def _local_vision(system: str, content: list[dict], schema: dict) -> tuple[dict,
     payload = {
         "model": get_local_llm_model(),
         "messages": [{"role": "user", "content": _openai_blocks([{"type": "text", "text": intro}, *content])}],
-        "response_format": {"type": "json_object"},
         "temperature": 0.2,
         "max_tokens": 5120,
     }
@@ -368,7 +458,7 @@ def _local_vision(system: str, content: list[dict], schema: dict) -> tuple[dict,
             errors.append(f"{base}: senza vista")
             continue
         try:
-            return _post_chat(base, payload, has_images=True), base
+            return _post_json(base, payload, schema, has_images=True), base
         except NoVision as e:
             errors.append(str(e))
         except _HostDown as e:
@@ -395,7 +485,6 @@ def _local(system: str, text: str, schema: dict, quality: str, content: list[dic
         "messages": [
             {"role": "user", "content": prompt}
         ],
-        "response_format": {"type": "json_object"},
         "temperature": 0.2,
         "max_tokens": 5120,
     }
@@ -409,7 +498,7 @@ def _local(system: str, text: str, schema: dict, quality: str, content: list[dic
                 break
             base = FALLBACK_LOCAL_URL  # nessun controllo di salute ha risposto: ultimo tentativo alla cieca
         try:
-            res = _post_chat(base, payload)
+            res = _post_json(base, payload, schema)
             break
         except _HostDown as e:
             errors.append(str(e))
