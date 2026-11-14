@@ -248,6 +248,16 @@ def ai_lesson(
             console.print(f"[yellow]Embeddings rimandati ({e}); gli appunti sono già cercabili per parole chiave.[/]")
 
 
+@app.command("ocr")
+def ocr_cmd(limit: int = typer.Option(None, help="Massimo di PDF da leggere in questo giro")):
+    """Legge con Claude (visione) i PDF scansionati o senza testo e ne crea le unità di studio. Usa la finestra Pro."""
+    from .ingest.ocr import run_pending
+    r = run_pending(limit, on_item=console.print)
+    console.print(f"Letti: {r['letti']} · restano: {r['restano']} · errori: {len(r['errori'])}")
+    for e in r["errori"]:
+        console.print(f"  [red]✗[/] {e}")
+
+
 @app.command("auto-sync")
 def auto_sync(
     max_lectures: int = typer.Option(2, help="Massimo di nuove registrazioni da elaborare per giro"),

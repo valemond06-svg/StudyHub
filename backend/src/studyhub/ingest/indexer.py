@@ -81,6 +81,15 @@ def _insert_chunks(db, doc_id: int, course_id: int, kind: str, chunks) -> int:
     return len(chunks)
 
 
+def replace_chunks(db, doc_id: int, course_id: int, kind: str, chunks) -> int:
+    """Sostituisce i chunk di un documento (e i loro vettori) senza toccare il documento. Gli embedding si rifanno."""
+    vectors.ensure(db)
+    ids = [r[0] for r in db.execute("SELECT id FROM chunks WHERE doc_id=?", (doc_id,))]
+    vectors.delete(db, ids)
+    db.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
+    return _insert_chunks(db, doc_id, course_id, kind, chunks)
+
+
 def _drop_doc(db, doc_id: int) -> None:
     ids = [r[0] for r in db.execute("SELECT id FROM chunks WHERE doc_id=?", (doc_id,))]
     vectors.delete(db, ids)

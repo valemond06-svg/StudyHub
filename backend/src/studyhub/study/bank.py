@@ -124,11 +124,27 @@ def _lecture_pdf_ids(db, course_id: int) -> set[int]:
     return ids
 
 
-def page_texts(path: Path) -> list[str]:
-    """Solo il testo, pagina per pagina (più veloce di extract(), che analizza anche formule e figure)."""
+def _with_ocr(texts: list[str], sha256: str | None) -> tuple[list[str], bool]:
+    """Sostituisce con il testo OCR (se in cache) solo le pagine con poco testo estratto: dove il PDF ha testo
+    vero resta quello (più fedele), dove è una scansione serve l'OCR. Ritorna (testi, usato_ocr)."""
+    from ..ingest import ocr
+    pages = ocr.cached_pages(sha256)
+    if pages is None:
+        return texts, False
+    out, used = list(texts), False
+    for i, t in enumerate(out):
+        if len(t) < ocr.MIN_CHARS_PER_PAGE and i < len(pages) and len(pages[i].strip()) > len(t):
+            out[i], used = pages[i].strip(), True
+    return out, used
+
+
+def page_texts(path: Path, sha256: str | None = None) -> list[str]:
+    """Solo il testo, pagina per pagina (più veloce di extract(), che analizza anche formule e figure).
+    Con `sha256` di un PDF già passato in OCR, le pagine scarse prendono il testo OCR."""
     if path.suffix.lower() == ".pdf":
         with pymupdf.open(path) as doc:
-            return [p.get_text("text").strip() for p in doc]
+            texts = [p.get_text("text").strip() for p in doc]
+        return _with_ocr(texts, sha256)[0]
     return [p.text for p in extract(path).pages]
 
 
@@ -137,11 +153,13 @@ _sig_cache: dict[str, tuple[list[int], frozenset]] = {}
 
 def _signature(doc: dict) -> tuple[list[int], frozenset]:
     """Caratteri per pagina e insieme delle parole: serve a riconoscere versioni diverse delle stesse slide."""
-    if doc["sha256"] not in _sig_cache:
-        texts = page_texts(uni_path(doc["path"]))
+    from ..ingest import ocr
+    key = doc["sha256"] + (":ocr" if ocr.cached_pages(doc["sha256"]) is not None else "")  # l'OCR cambia la firma
+    if key not in _sig_cache:
+        texts = page_texts(uni_path(doc["path"]), doc["sha256"])
         words = frozenset(w for t in texts for w in re.findall(r"\w{4,}", t.lower()))
-        _sig_cache[doc["sha256"]] = ([len(t) for t in texts], words)
-    return _sig_cache[doc["sha256"]]
+        _sig_cache[key] = ([len(t) for t in texts], words)
+    return _sig_cache[key]
 
 
 def _similar(a: frozenset, b: frozenset) -> float:
@@ -248,10 +266,14 @@ def _unit_text(db, unit: dict) -> tuple[str, str, dict]:
             {"lecture_id": unit["ref_id"]}
     doc = dict(db.execute("SELECT * FROM documents WHERE id=?", (unit["ref_id"],)).fetchone())
     ex = extract(uni_path(doc["path"]))
+    texts, used_ocr = ([p.text for p in ex.pages], False)
+    if ex.kind == "pdf":
+        texts, used_ocr = _with_ocr(texts, doc["sha256"])
     a, b = unit["page_from"] or 1, unit["page_to"] or len(ex.pages)
-    body = "\n".join(f"--- pagina {p.number} ---\n{p.text}" for p in ex.pages if a <= p.number <= b and p.text.strip())
+    body = "\n".join(f"--- pagina {p.number} ---\n{t}" for p, t in zip(ex.pages, texts)
+                     if a <= p.number <= b and t.strip())
     kind = "Appello d'esame passato" if EXAM_PATH.search(doc["path"]) else "Documento del corso"
-    return f"=== {kind}: {Path(doc['path']).name} ===\n{body}", f"{doc['sha256']}:{a}-{b}", {"doc_id": doc["id"]}
+    return f"=== {kind}: {Path(doc['path']).name} ===\n{body}", f"{doc['sha256']}:{a}-{b}{':ocr' if used_ocr else ''}", {"doc_id": doc["id"]}
 
 
 def prepare_unit(unit_id: int) -> dict:
