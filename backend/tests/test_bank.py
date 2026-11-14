@@ -70,6 +70,19 @@ def test_multipla_con_indice_fuori_range_o_poche_opzioni_scartata(ambiente, db):
     assert n == 0
 
 
+def test_domanda_malformata_scartata_senza_far_fallire_l_unita(ambiente, db):
+    """Difetto reale (14/11, unità 468): il 35B locale ha omesso "criteri" e il KeyError ha buttato l'intera unità."""
+    inserisci_corso(db)
+    u = _unita(db)
+    db.commit()
+    senza_criteri = _dom(testo="senza criteri?"); del senza_criteri["criteri"]
+    senza_testo = _dom(testo="x"); del senza_testo["testo_md"]
+    multipla_senza_corretta = _dom("multipla", "m?", opzioni=["x", "y"]); del multipla_senza_corretta["corretta"]
+    n = bank._store(u, 1, _dati(senza_criteri, senza_testo, multipla_senza_corretta, "non un dict", _dom(testo="ok?")), {})
+    assert n == 2                                       # tenute: quella senza criteri (rubrica vuota) e quella buona
+    assert {r["prompt_md"]: json.loads(r["rubric"]) for r in _righe(db)} == {"senza criteri?": [], "ok?": []}
+
+
 def test_vero_falso_richiede_0_o_1(ambiente, db):
     inserisci_corso(db)
     u = _unita(db)

@@ -315,11 +315,15 @@ def _store(unit: dict, course_id: int, data: dict, refs: dict) -> int:
                  refs.get("lecture_id"), t.get("inizio_s"), refs.get("doc_id"), t.get("pagina"))).lastrowid
         fallback = next(iter(ids.values()), None)
         for q in data.get("domande", []):
+            # una domanda malformata (es. il 35B locale che dimentica "criteri") si scarta, non fa fallire l'unità
+            if not isinstance(q, dict) or any(not isinstance(q.get(k), str) for k in ("argomento", "tipo", "testo_md", "risposta_md")):
+                continue
+            q.setdefault("criteri", []); q.setdefault("opzioni", []); q.setdefault("difficolta", 2); q.setdefault("corretta", None)
             tid = ids.get(q["argomento"].strip().lower()) or fallback
             if tid is None or q["tipo"] not in KINDS:
                 continue
             if q["tipo"] == "multipla":
-                if not (len(q["opzioni"]) >= 2 and 0 <= q["corretta"] < len(q["opzioni"])):
+                if not (isinstance(q["corretta"], int) and len(q["opzioni"]) >= 2 and 0 <= q["corretta"] < len(q["opzioni"])):
                     continue
                 # Rimescolo le opzioni (i modelli mettono la giusta quasi sempre per prima o per ultima)
                 # e riallineo l'indice. Si lavora per posizione, non con .index(): due opzioni uguali
