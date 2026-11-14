@@ -5,16 +5,33 @@ di Claude Pro è quasi piena, la coda si mette in pausa invece di insistere.
 """
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from datetime import datetime
 
 from ..db import session
-from .claude_runner import ClaudeError, RateLimited, check_budget, last_usage
+from .claude_runner import ClaudeError, RateLimited, check_budget, last_usage, paused_until
+
+log = logging.getLogger(__name__)
+PAUSE_FALLBACK_S = 15 * 60   # limite senza ora di reset nota: si riprova tra 15 minuti
 
 _lock = threading.Lock()
 _wake = threading.Event()
 _worker: threading.Thread | None = None
-state = {"current": None, "paused_reason": None}
+state = {"current": None, "paused_reason": None, "paused_until": None}
+
+
+def _pause(reason: str) -> None:
+    """La coda si ferma fino al reset della finestra Pro (o 15 minuti), poi riparte da sola."""
+    state["paused_reason"] = reason
+    state["paused_until"] = paused_until() or time.time() + PAUSE_FALLBACK_S
+
+
+def _resume_if_due() -> None:
+    until = state.get("paused_until")
+    if state["paused_reason"] is not None and until is not None and time.time() >= until:
+        state.update(paused_reason=None, paused_until=None)
 
 
 def _now() -> str:
@@ -30,7 +47,7 @@ def enqueue(lecture_ids: list[int]) -> list[int]:
                 continue
             ids.append(db.execute("INSERT INTO ai_jobs (kind, target_id, created_at) VALUES ('lecture_notes', ?, ?)",
                                   (lid, _now())).lastrowid)
-    state["paused_reason"] = None
+    state.update(paused_reason=None, paused_until=None)
     _ensure_worker()
     _wake.set()
     return ids
@@ -88,7 +105,7 @@ def _process_job(job: dict) -> None:
         _finish(job["id"], "in_coda", str(e))  # torna in coda: riprenderà quando riattivi
         with session() as db:
             db.execute("UPDATE ai_jobs SET status='in_coda', finished_at=NULL WHERE id=?", (job["id"],))
-        state["paused_reason"] = str(e)
+        _pause(str(e))
     except (ClaudeError, Exception) as e:
         _finish(job["id"], "errore", str(e)[:500])
     finally:
@@ -97,18 +114,23 @@ def _process_job(job: dict) -> None:
 
 def _loop() -> None:
     while True:
-        _wake.wait(timeout=30)
-        _wake.clear()
-        while state["paused_reason"] is None:
-            try:
-                check_budget()
-            except RateLimited as e:
-                state["paused_reason"] = str(e)
-                break
-            job = _next_job()
-            if not job:
-                break
-            _process_job(job)
+        try:
+            _wake.wait(timeout=30)
+            _wake.clear()
+            _resume_if_due()
+            while state["paused_reason"] is None:
+                try:
+                    check_budget()
+                except RateLimited as e:
+                    _pause(str(e))
+                    break
+                job = _next_job()
+                if not job:
+                    break
+                _process_job(job)
+        except Exception:  # DB bloccato o altro imprevisto: il worker non deve morire
+            log.exception("coda AI: errore nel ciclo, riprovo tra 30 s")
+            time.sleep(30)
 
 
 def _ensure_worker() -> None:

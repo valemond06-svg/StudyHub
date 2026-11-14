@@ -253,17 +253,13 @@ def _unit_text(db, unit: dict) -> tuple[str, str, dict]:
     return f"=== {kind}: {Path(doc['path']).name} ===\n{body}", f"{doc['sha256']}:{a}-{b}", {"doc_id": doc["id"]}
 
 
-_claude_lock = threading.Lock()
-
-
 def prepare_unit(unit_id: int) -> dict:
     with session() as db:
         unit = dict(db.execute("SELECT * FROM study_units WHERE id=?", (unit_id,)).fetchone())
         course = dict(db.execute("SELECT * FROM courses WHERE id=?", (unit["course_id"],)).fetchone())
     if unit["kind"] == "lezione" and not existing(unit["ref_id"]):
         from ..ai.lecture_notes import process
-        with _claude_lock:  # appunti con Claude Sonnet, uno alla volta
-            process(unit["ref_id"])
+        process(unit["ref_id"])  # una chiamata a Claude alla volta: lock tra processi in claude_runner.run
     with session() as db:
         text, src_hash, refs = _unit_text(db, unit)
         rules = _exam_rules(db, course["id"])
@@ -379,16 +375,38 @@ def claim(unit_id: int) -> bool:
                              WHERE id=? AND status IN ('nuova','errore')""", (_now(), unit_id)).rowcount == 1
 
 
-def release_stale(minutes: int = 40) -> int:
-    """Unità rimaste "in corso" da un processo chiuso a metà (done_at = ora della presa in carico)."""
+HEARTBEAT_S = 60      # chi lavora un'unità rinnova done_at ogni minuto
+STALE_MINUTES = 5     # senza battito da 5 minuti = processo morto: l'unità torna in coda
+
+
+def release_stale(minutes: int = STALE_MINUTES) -> int:
+    """Unità rimaste "in corso" da un processo chiuso a metà (done_at = ultimo battito di chi la lavora)."""
     with session() as db:
         return db.execute("""UPDATE study_units SET status='nuova' WHERE status='in_corso'
                              AND (done_at IS NULL OR done_at < strftime('%Y-%m-%dT%H:%M:%S', 'now', ?, 'localtime'))""",
                           (f"-{minutes} minutes",)).rowcount
 
 
+def _heartbeat(uid: int, stop: threading.Event) -> None:
+    while not stop.wait(HEARTBEAT_S):
+        try:
+            with session() as db:
+                db.execute("UPDATE study_units SET done_at=? WHERE id=? AND status='in_corso'", (_now(), uid))
+        except Exception:
+            pass  # DB occupato un attimo: il prossimo battito ci riprova
+
+
 def run_claimed(uid: int) -> str | None:
     """Elabora un'unità già presa in carico. Ritorna il messaggio se si è raggiunto un limite d'uso."""
+    stop = threading.Event()
+    threading.Thread(target=_heartbeat, args=(uid, stop), name=f"battito-{uid}", daemon=True).start()
+    try:
+        return _run_claimed(uid)
+    finally:
+        stop.set()
+
+
+def _run_claimed(uid: int) -> str | None:
     try:
         prepare_unit(uid)
     except RateLimited as e:

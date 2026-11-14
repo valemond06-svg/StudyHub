@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -17,12 +18,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import LOCAL_DIR
+from ..filelock import LockTimeout, file_lock
 
 ALLOWED_MODELS = {"sonnet", "haiku"}
 USAGE_FILE = LOCAL_DIR / "claude_usage.json"
 CWD = LOCAL_DIR / "claude-cwd"          # cartella vuota: nessun CLAUDE.md di progetto
 STOP_AT_UTILIZATION = 0.90             # non avviare nuove elaborazioni oltre il 90% della finestra
 TIMEOUT_S = 20 * 60
+LOCK_FILE = LOCAL_DIR / "claude.lock"  # una sola chiamata a Claude alla volta su tutta la macchina (server, fullrun, CLI)
+LOCK_WAIT_S = TIMEOUT_S + 5 * 60       # chi aspetta più di una chiamata intera rinuncia (e riprova dopo)
 
 
 class ClaudeError(Exception):
@@ -64,6 +68,23 @@ def last_usage() -> dict:
         return {}
 
 
+def _save_usage(data: dict) -> None:
+    """Scrittura atomica: un altro processo non legge mai un JSON a metà."""
+    USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = USAGE_FILE.with_name(f"{USAGE_FILE.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(tmp, USAGE_FILE)
+
+
+def paused_until() -> float | None:
+    """Fino a quando la finestra Pro è piena (epoch), o None se si può lavorare."""
+    u = last_usage()
+    util, resets = u.get("utilization"), u.get("resets_at")
+    if util is not None and util >= STOP_AT_UTILIZATION and resets and resets > time.time():
+        return float(resets)
+    return None
+
+
 def check_budget() -> None:
     u = last_usage()
     util, resets = u.get("utilization"), u.get("resets_at")
@@ -80,7 +101,16 @@ def image_block(path: Path, media_type: str = "image/png") -> dict:
 def run(system: str, content: list[dict], schema: dict, model: str = "sonnet") -> ClaudeResult:
     if model not in ALLOWED_MODELS:
         raise ClaudeError(f"Modello non consentito con Claude Pro: {model}")
-    check_budget()
+    try:
+        with file_lock(LOCK_FILE, f"claude {model} pid {os.getpid()}", timeout=LOCK_WAIT_S):
+            # il budget si controlla dentro il lock: chi aspettava vede l'utilizzo aggiornato da chi ha finito
+            check_budget()
+            return _run_locked(system, content, schema, model)
+    except LockTimeout as e:
+        raise RateLimited(f"Claude occupato da un'altra elaborazione ({e}): riprovo più tardi.")
+
+
+def _run_locked(system: str, content: list[dict], schema: dict, model: str) -> ClaudeResult:
     CWD.mkdir(parents=True, exist_ok=True)
     cmd = [_claude_exe(), "-p", "--model", model,
            "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -108,9 +138,13 @@ def run(system: str, content: list[dict], schema: dict, model: str = "sonnet") -
     if rate:
         five = (rate.get("unifiedWindows") or {}).get("five_hour") or {}
         util = five.get("utilization")
-        USAGE_FILE.write_text(json.dumps({"utilization": util, "resets_at": five.get("resetsAt") or rate.get("resetsAt"),
-                                          "status": rate.get("status"), "checked_at": time.time()}), encoding="utf-8")
-        if rate.get("status") not in (None, "allowed", "allowed_warning"):
+        resets = five.get("resetsAt") or rate.get("resetsAt")
+        blocked = rate.get("status") not in (None, "allowed", "allowed_warning")
+        if blocked:  # finestra chiusa: anche gli altri processi devono fermarsi fino al reset
+            util = max(util or 0.0, 1.0)
+            resets = resets or time.time() + 30 * 60
+        _save_usage({"utilization": util, "resets_at": resets, "status": rate.get("status"), "checked_at": time.time()})
+        if blocked:
             raise RateLimited("Limite della finestra Claude Pro raggiunto.")
     if not result:
         raise ClaudeError(f"Nessun risultato da Claude: {proc.stderr[-800:] or proc.stdout[-800:]}")
