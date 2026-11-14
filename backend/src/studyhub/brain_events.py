@@ -142,7 +142,9 @@ def send(type: str, data: dict | None = None, level: str = "info", id: str | Non
             return False
         if level not in LEVELS:
             level = "info"
-        payload = {"type": type, "level": level, "data": data or {}, "id": id}
+        payload = {"type": type, "level": level, "data": data or {}}
+        if id is not None:  # come il client del Brain: niente campi nulli
+            payload["id"] = id
         with _lock:
             _drain(cfg)
             res = _deliver(cfg, payload)
