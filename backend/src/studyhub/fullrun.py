@@ -27,6 +27,7 @@ from .ai.lecture_notes import existing
 from .ai.llm import effective_workers
 from .config import LOCAL_DIR
 from .db import session
+from .filelock import LockTimeout, file_lock
 from .sync.auth import LoginRequired, get_session
 
 console = Console()
@@ -61,13 +62,14 @@ def status() -> dict:
 
 
 def is_running() -> bool:
-    """Il lucchetto è tenuto aperto dal processo finché lavora."""
+    """Il lock di sistema (`file_lock`) è tenuto dal processo finché lavora. Funziona su Windows e su Linux:
+    cancellare il file, come si faceva prima, su Linux riesce anche se un altro processo lo tiene aperto."""
     if not LOCK_FILE.exists():
         return False
     try:
-        os.remove(LOCK_FILE)  # su Windows non si può cancellare un file aperto da un altro processo
-        return False
-    except PermissionError:
+        with file_lock(LOCK_FILE, f"controllo pid {os.getpid()}", timeout=0):
+            return False
+    except LockTimeout:
         return True
     except OSError:
         return False
@@ -275,7 +277,12 @@ def run() -> None:
     if is_running():
         console.print("[yellow]L'elaborazione completa è già in corso.[/]")
         return
-    lock = open(LOCK_FILE, "w")  # tenuto aperto: segnala agli altri processi che sto lavorando
+    try:
+        lock = file_lock(LOCK_FILE, f"elabora-tutto pid {os.getpid()}", timeout=0)
+        lock.__enter__()  # tenuto per tutta l'elaborazione: segnala agli altri processi che sto lavorando
+    except LockTimeout:
+        console.print("[yellow]L'elaborazione completa è già in corso.[/]")
+        return
     _keep_awake(True)
     try:
         state.clear()
@@ -300,6 +307,6 @@ def run() -> None:
         _save(phase="Finito", finished_at=_now())
         notify.toast("StudyHub: elaborazione completa finita", "Tutti i corsi sono pronti nella sezione Studia.")
     finally:
-        lock.close()
+        lock.__exit__(None, None, None)
         LOCK_FILE.unlink(missing_ok=True)
         _keep_awake(False)
