@@ -47,7 +47,7 @@ def test_ordine_delle_fasi(fr, monkeypatch):
     st = fullrun.status()
     assert st["phase"] == "Finito" and st["finished_at"] and st["alive"] is False
     assert fr == ["StudyHub: elaborazione completa finita"]
-    assert not fullrun.LOCK_FILE.exists()
+    assert not fullrun.is_running()  # il file può restare: conta che non sia bloccato
 
 
 def test_secondo_fullrun_non_parte(fr, monkeypatch):
@@ -65,7 +65,7 @@ def test_lock_rilasciato_anche_se_la_fase_studio_esplode(fr, monkeypatch):
     _fasi(monkeypatch, [], study=RuntimeError("bug nello studio"))
     with pytest.raises(RuntimeError, match="bug nello studio"):
         fullrun.run()
-    assert not fullrun.is_running() and not fullrun.LOCK_FILE.exists()
+    assert not fullrun.is_running()
     # e un nuovo giro può partire
     chiamate = []
     _fasi(monkeypatch, chiamate)

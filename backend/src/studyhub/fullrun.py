@@ -307,6 +307,5 @@ def run() -> None:
         _save(phase="Finito", finished_at=_now())
         notify.toast("StudyHub: elaborazione completa finita", "Tutti i corsi sono pronti nella sezione Studia.")
     finally:
-        lock.__exit__(None, None, None)
-        LOCK_FILE.unlink(missing_ok=True)
+        lock.__exit__(None, None, None)  # il file resta: cancellarlo dopo il rilascio aprirebbe una corsa tra due processi
         _keep_awake(False)
