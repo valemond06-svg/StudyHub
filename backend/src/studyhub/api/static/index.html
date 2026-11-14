@@ -1950,7 +1950,7 @@ async function startRun(cid, minutes, focus = null) {
   } catch (e) { alert(e.message); loadStudyCourse(cid); }
 }
 function runNext() {
-  run.i++; run.phase = "ask"; run.sel = null; run.res = null; run.paper = false; run.askedAt = Date.now();
+  run.i++; run.phase = "ask"; run.sel = null; run.res = null; run.paper = false; run.photos = []; run.text = ""; run.askedAt = Date.now();
   if (run.i >= run.entries.length) return finishRun();
   renderRun();
 }
@@ -1982,7 +1982,9 @@ function renderRun() {
         return `<button class="opt ${cls}" data-o="${val(j)}" ${done ? "disabled" : ""}><kbd>${j + 1}</kbd><span>${mdInline(o)}</span></button>`; }).join("")}</div>`;
     } else if (!run.paper) {
       answerUi = `<textarea id="rText" rows="${q.kind === "esercizio" ? 8 : q.kind === "aperta" ? 6 : 3}" ${done ? "disabled" : ""} placeholder="${q.kind === "esercizio" ? "Scrivi passaggi e risultato (le formule anche in testo semplice: x^2, sqrt(2), int_0^1 …)" : "Rispondi con parole tue, come all'esame"}">${esc(run.text || "")}</textarea>
-        ${done ? "" : '<div class="small"><a id="rPaper">Ho svolto su carta / a mente: confronto io con la soluzione</a></div>'}`;
+        ${done ? "" : `<div class="small"><label class="btn">📷 Correggi da foto <input type="file" id="rPhoto" accept="image/*" capture="environment" multiple hidden></label>
+          <span class="q"><span class="imgs" id="rPhotos">${(run.photos || []).map((u) => `<img src="${u}">`).join("")}</span></span></div>
+        <div class="small"><a id="rPaper">Ho svolto su carta / a mente: confronto io con la soluzione</a></div>`}`;
     } else answerUi = '<div class="muted small">Svolgi su carta, poi scegli quanto sei sicuro: vedrai la soluzione e ti valuterai sui criteri.</div>';
     const conf = done ? "" : `<div class="muted small">Quanto sei sicuro? (invia la risposta)</div><div class="conf">
       <button class="btn" data-conf="3">Sicuro</button><button class="btn" data-conf="2">Credo di sì</button><button class="btn" data-conf="1">Tiro a indovinare</button></div>`;
@@ -1992,6 +1994,9 @@ function renderRun() {
     body.querySelectorAll("[data-conf]").forEach((b) => (b.onclick = () => submitRun(+b.dataset.conf)));
     $("rText")?.addEventListener("input", (ev) => (run.text = ev.target.value));
     $("rPaper")?.addEventListener("click", () => { run.paper = true; renderRun(); });
+    $("rPhoto")?.addEventListener("change", async (ev) => { run.photos = run.photos || [];
+      for (const f of ev.target.files) { if (run.photos.length >= 4) break; try { run.photos.push(await shrinkImage(f)); } catch { alert("File non leggibile come immagine."); } }
+      ev.target.value = ""; $("rPhotos").innerHTML = run.photos.map((u) => `<img src="${u}">`).join(""); });
     bindResult();
     bindQMedia(body);
   }
@@ -2001,7 +2006,8 @@ async function submitRun(conf) {
   const e = run.entries[run.i], q = e.question, idx = run.i, seconds = (Date.now() - run.askedAt) / 1000;
   const isChoice = q.kind === "multipla" || q.kind === "vero_falso";
   if (isChoice && run.sel == null) return alert("Scegli prima una risposta.");
-  if (!isChoice && !run.paper && !(run.text || "").trim()) return alert("Scrivi la risposta, oppure scegli «Ho svolto su carta».");
+  const photos = !isChoice && !run.paper ? (run.photos || []) : [];
+  if (!isChoice && !run.paper && !photos.length && !(run.text || "").trim()) return alert("Scrivi la risposta, allega una foto, oppure scegli «Ho svolto su carta».");
   run.conf = conf; run.phase = "result";
   if (isChoice) {
     run.res = { pending: true }; renderRun();
@@ -2011,7 +2017,10 @@ async function submitRun(conf) {
   run.res = { pending: true, ...(await postJ(`/api/study/sessions/${run.id}/reveal/${idx}`)) };
   if (run.paper) { run.res.self = true; return renderRun(); }
   renderRun();
-  try { run.res = await postJ(`/api/study/sessions/${run.id}/answer`, { idx, text: run.text, confidence: conf, seconds }); afterAnswer(); }
+  try {
+    run.res = photos.length ? await postJ(`/api/study/sessions/${run.id}/photo`, { idx, images: photos, text: run.text || null, confidence: conf, seconds })
+      : await postJ(`/api/study/sessions/${run.id}/answer`, { idx, text: run.text, confidence: conf, seconds });
+    afterAnswer(); }
   catch (err) { run.res = { ...run.res, pending: false, self: true, error: err.message }; renderRun(); }
 }
 async function submitSelf() {

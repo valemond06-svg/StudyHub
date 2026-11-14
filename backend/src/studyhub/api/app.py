@@ -754,6 +754,25 @@ def study_session_answer(sid: int, body: Answer):
     return _ai_call(ss.answer, sid, body.idx, body.model_dump())
 
 
+class PhotoAnswer(BaseModel):
+    idx: int
+    images: list[str]                 # data URL ridotti dal browser, come nell'esame
+    text: str | None = None
+    confidence: int | None = None
+    seconds: float | None = None
+
+
+@app.post("/api/study/sessions/{sid}/photo")
+def study_session_photo(sid: int, body: PhotoAnswer):
+    """Correzione da foto di una domanda della sessione: stesso percorso AI (coda/lock) dell'esame, l'esito conta come risposta."""
+    from ..study import session as ss
+    _need("session", sid)
+    try:
+        return _ai_call(ss.answer_photo, sid, body.idx, body.model_dump())
+    except OverflowError as e:
+        raise HTTPException(413, str(e))
+
+
 @app.post("/api/study/sessions/{sid}/reveal/{idx}")
 def study_session_reveal(sid: int, idx: int):
     from ..study import session as ss
