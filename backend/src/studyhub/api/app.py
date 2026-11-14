@@ -17,6 +17,17 @@ STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="StudyHub")
 
 
+@app.on_event("startup")
+def _start_ai_queue() -> None:
+    """Job rimasti in coda (o arretrati attivi): il worker riparte col server, senza aspettare un click."""
+    from ..ai import jobs
+    try:
+        jobs.start_if_needed()
+    except Exception:  # il server deve partire comunque
+        import logging
+        logging.getLogger(__name__).exception("coda AI: avvio non riuscito")
+
+
 def _json(path: Path, default):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 

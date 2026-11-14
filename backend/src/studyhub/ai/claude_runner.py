@@ -53,9 +53,11 @@ def _claude_exe() -> str:
     """claude.cmd passa da cmd.exe, che rovina le virgolette del JSON: usiamo l'exe nativo."""
     shim = shutil.which("claude")
     if not shim:
-        local = Path.home() / ".local" / "bin" / "claude.exe"  # installer nativo (non sempre nel PATH dei processi)
-        if local.exists():
-            return str(local)
+        # installer nativo: ~/.local/bin non è sempre nel PATH dei processi (servizio systemd, attività pianificate)
+        for name in ("claude.exe", "claude"):
+            local = Path.home() / ".local" / "bin" / name
+            if local.exists():
+                return str(local)
         raise ClaudeError("Claude Code non trovato: installalo e fai il login (`claude`).")
     native = Path(shim).parent / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
     return str(native) if native.exists() else shim

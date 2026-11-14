@@ -371,6 +371,11 @@ MIGRATIONS = [
     );
     CREATE INDEX IF NOT EXISTS idx_doc_tags_category ON doc_tags(category);
     """,
+    # Coda AI con priorità: i click (100) prima degli arretrati messi in coda da soli (10-30).
+    """
+    ALTER TABLE ai_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 100;
+    CREATE INDEX IF NOT EXISTS idx_ai_jobs_status ON ai_jobs(status, priority);
+    """,
 ]
 
 

@@ -211,7 +211,7 @@ def test_worker_sopravvive_a_un_errore_del_db(monkeypatch):
     from studyhub.ai import jobs
     giri = []
 
-    def rotto():
+    def rotto(allow_backlog=True):
         giri.append(1)
         if len(giri) == 1:
             raise RuntimeError("database is locked")
