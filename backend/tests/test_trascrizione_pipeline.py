@@ -100,19 +100,21 @@ def test_transcribe_ready_audio_mancante(corso, monkeypatch):
     with pytest.raises(FileNotFoundError, match="audio mancante"):
         pipeline.transcribe_ready(lec, corso)
     assert comandi == [] and not (ldir / "transcript.json").exists()  # Whisper non parte nemmeno
-    assert _riga()["status"] == "media_ok"
+    r = _riga()
+    assert r["status"] == "errore" and "audio mancante" in r["error"] and r["attempts"] == 1
 
 
 def test_transcribe_ready_whisper_fallisce(corso, monkeypatch):
-    """Il sottoprocesso muore: l'errore sale a chi chiama, la lezione resta `media_ok` (la ritenta il turno successivo),
-    nessun transcript a metà."""
+    """Il sottoprocesso muore: l'errore sale a chi chiama, la lezione va in `errore` col backoff di 1 h
+    (non torna in coda ogni notte), nessun transcript a metà."""
     lec, ldir = _lezione()
     _whisper_finto(monkeypatch, "import sys\nsys.stderr.write('CUDA out of memory')\nsys.exit(3)")
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
         pipeline.transcribe_ready(lec, corso)
     assert not (ldir / "transcript.json").exists()
     r = _riga()
-    assert r["status"] == "media_ok" and r["transcript_source"] is None
+    assert r["status"] == "errore" and r["transcript_source"] is None and "CUDA out of memory" in r["error"]
+    assert r["attempts"] == 1 and r["next_retry_at"] is not None
 
 
 def test_transcribe_ready_timeout(corso, monkeypatch):
@@ -121,7 +123,34 @@ def test_transcribe_ready_timeout(corso, monkeypatch):
     monkeypatch.setattr(tr, "IDLE_TIMEOUT_S", 1)
     with pytest.raises(RuntimeError, match="nessun avanzamento"):
         pipeline.transcribe_ready(lec, corso)
-    assert _riga()["status"] == "media_ok" and not (ldir / "transcript.json").exists()
+    r = _riga()
+    assert r["status"] == "errore" and r["attempts"] == 1 and not (ldir / "transcript.json").exists()
+
+
+def test_transcribe_ready_backoff_e_ripresa(corso, monkeypatch):
+    """Ciclo completo: 3 fallimenti con backoff 1/6/24 h e ripresa in `media_ok`; al 4° nessuna ripresa automatica."""
+    lec, ldir = _lezione()
+    _whisper_finto(monkeypatch, "import sys; sys.exit(3)")
+    ore = []
+    for n in range(1, 5):
+        prima = datetime.now()
+        with pytest.raises(RuntimeError):
+            pipeline.transcribe_ready(lec, corso)
+        r = _riga()
+        assert r["status"] == "errore" and r["attempts"] == n
+        if n == 4:
+            assert r["next_retry_at"] is None  # serve un intervento manuale
+            break
+        ore.append(round((datetime.fromisoformat(r["next_retry_at"]) - prima).total_seconds() / 3600))
+        assert riprese.riprendi(unita=False, log=lambda *_: None)["lezioni"] == 0  # backoff non ancora scaduto
+        with session() as d:
+            d.execute("UPDATE lectures SET next_retry_at=? WHERE id=1",
+                      ((datetime.now() - timedelta(minutes=1)).isoformat(timespec="seconds"),))
+        (ldir / "silences.json").write_text("[]"); (ldir / "slides.json").write_text("[]")
+        assert riprese.riprendi(unita=False, log=lambda *_: None)["lezioni"] == 1
+        assert _riga()["status"] == "media_ok"  # audio su disco: la fase 1 la ritenta senza rete
+    assert ore == [1, 6, 24]
+    assert riprese.riprendi(unita=False, log=lambda *_: None)["lezioni"] == 0
 
 
 # --- pipeline: scoperta e stato delle lezioni -----------------------------------------------------------------
