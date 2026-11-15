@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import secrets
 import time
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ import httpx
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
 from ..config import settings
+
+log = logging.getLogger(__name__)
 
 SESSION_FILE = settings.secrets_dir / "session.json"
 TOKEN_FILE = settings.secrets_dir / "token.json"
@@ -75,9 +78,13 @@ def _fetch_mobile_token(ctx: BrowserContext) -> str | None:
     return parts[1] if len(parts) >= 2 else None
 
 
-def browser_login(interactive: bool) -> MoodleSession:
+def browser_login(interactive: bool, dopo_login=None) -> MoodleSession:
     """Apre il profilo persistente. Se l'IdP ricorda ancora la sessione basta headless;
-    altrimenti (interactive=True) mostra la finestra e aspetta che tu faccia il login."""
+    altrimenti (interactive=True) mostra la finestra e aspetta che tu faccia il login.
+
+    `dopo_login(ctx, page, sesskey)`, se dato, gira nello stesso profilo Chromium dopo il login
+    Moodle e prima della chiusura (es. il login Panopto di `studyhub login`); i suoi errori
+    non annullano il login Moodle già riuscito."""
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
             str(settings.browser_profile), headless=not interactive, locale="it-IT",
@@ -98,6 +105,11 @@ def browser_login(interactive: bool) -> MoodleSession:
                 raise LoginRequired("Login non completato.")
             token = _fetch_mobile_token(ctx)
             cookies = {c["name"]: c["value"] for c in ctx.cookies(settings.moodle_url)}
+            if dopo_login is not None:
+                try:
+                    dopo_login(ctx, page, sesskey)
+                except Exception as e:  # noqa: BLE001 - il login Moodle resta valido comunque
+                    log.warning("passo dopo il login non riuscito: %s", e)
         finally:
             ctx.close()
 

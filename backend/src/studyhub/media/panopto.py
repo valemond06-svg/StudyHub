@@ -76,6 +76,44 @@ def _login_with_browser(sess: MoodleSession, viewer_url: str) -> dict[str, str]:
     return cookies
 
 
+def _viewer_url_qualsiasi(ctx, sesskey: str, course_ids: list[int]) -> str | None:
+    """Il primo link a una registrazione Panopto nei corsi indicati (serve solo come porta d'ingresso SSO)."""
+    for cid in course_ids:
+        try:
+            r = ctx.request.post(f"{settings.moodle_url}/blocks/panopto/panopto_content.php",
+                                 form={"sesskey": sesskey, "courseid": str(cid)})
+        except Exception:  # noqa: BLE001
+            continue
+        if r.ok:
+            m = _LINK_RE.search(r.text())
+            if m:
+                return unescape(m.group(1))
+    return None
+
+
+def login_nel_profilo(ctx, page, sesskey: str, course_ids: list[int], attesa_s: int = 120) -> bool:
+    """Login Panopto dentro il profilo Chromium già loggato a Moodle (`studyhub login`).
+
+    Fa lo stesso POST del blocco Moodle verso una registrazione qualsiasi, aspetta il Viewer
+    (la finestra è visibile: se Panopto chiede qualcosa si risponde lì) e salva i cookie come
+    `_relogin`. True se il cookie .ASPXAUTH è stato salvato."""
+    viewer_url = _viewer_url_qualsiasi(ctx, sesskey, course_ids)
+    if not viewer_url:
+        return False
+    page.set_content(f"<form id=f method=post action='{viewer_url}'>"
+                     f"<input type=hidden name=instance value='{INSTANCE}'></form>")
+    page.evaluate("document.getElementById('f').submit()")
+    try:
+        page.wait_for_url(re.compile(r".*/Panopto/Pages/Viewer\.aspx.*"), timeout=attesa_s * 1000)
+    except Exception:  # noqa: BLE001 - si guarda comunque se il cookie c'è
+        pass
+    cookies = {c["name"]: c["value"] for c in ctx.cookies(PANOPTO)}
+    if ".ASPXAUTH" not in cookies:
+        return False
+    COOKIE_FILE.write_text(json.dumps(cookies), encoding="utf-8")
+    return True
+
+
 class Panopto:
     def __init__(self, sess: MoodleSession):
         self.sess = sess

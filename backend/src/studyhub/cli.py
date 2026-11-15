@@ -34,9 +34,22 @@ def _moodle(interactive: bool = False, token_only_ok: bool = False) -> Moodle:
 @app.command()
 def login():
     """Apre Chromium: fai tu il login SSO UniVR. Salva sessione e (se disponibile) token dell'app."""
+    from .media.panopto import login_nel_profilo
+
     console.print("Si apre una finestra di Chromium: accedi con le credenziali d'ateneo (hai 10 minuti).")
-    sess = browser_login(interactive=True)
+    # Corsi da cui prendere una registrazione qualsiasi per il login Panopto: prima quelli in sync e attivi.
+    corsi = sorted(load_catalog(), key=lambda e: (not e.get("sync"), not e.get("attivo")))
+    ids = [int(e["id"]) for e in corsi if e.get("id")][:15]
+    esito = {"panopto": False}
+
+    def panopto(ctx, page, sesskey):
+        console.print("Moodle ok: apro Panopto nello stesso profilo…")
+        esito["panopto"] = login_nel_profilo(ctx, page, sesskey, ids)
+
+    sess = browser_login(interactive=True, dopo_login=panopto)
     console.print("[green]Login riuscito.[/] Token app mobile: " + ("[green]sì[/]" if sess.token else "[yellow]no (userò AJAX)[/]"))
+    console.print("Panopto: " + ("[green]cookie rinnovati[/]" if esito["panopto"]
+                                 else "[yellow]non rinnovato (nessuna registrazione trovata o login non completato)[/]"))
 
 
 @app.command()
