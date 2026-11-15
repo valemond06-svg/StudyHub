@@ -62,3 +62,35 @@ def prepare_images(data_urls: list, limit: int = MAX_IMAGES, max_side: int = MAX
         else:
             skipped += 1
     return ready, skipped
+
+
+MAX_PHOTOS_PER_ANSWER = 4
+MAX_GRADE_PHOTOS = 6   # in totale per correzione (ogni foto pesa sul contesto del modello)
+
+
+def photo_notice(requested: int, prepared: int, read: int) -> dict:
+    """Dice allo studente cosa è successo alle sue foto: mai lasciargli credere che siano state lette."""
+    avviso = None
+    if requested and read == 0:
+        avviso = (f"⚠ Le {requested} foto dello svolgimento NON sono state lette: nessun modello con vista era "
+                  "disponibile (o le foto non erano valide). La correzione si basa solo sul testo scritto, "
+                  "quindi i punti degli svolgimenti a mano non sono stati valutati.")
+    elif requested and read < requested:
+        avviso = (f"⚠ Lette {read} foto su {requested}: le altre sono state scartate (non valide o oltre il limite "
+                  f"di {MAX_GRADE_PHOTOS} per correzione).")
+    return {"allegate": requested, "lette": read, "avviso": avviso}
+
+
+def check_data_urls(urls: object) -> list[str]:
+    """Validazione dell'input HTTP: 1..MAX_PHOTOS_PER_ANSWER data URL immagine, ciascuno entro il limite di dimensione.
+    ValueError (-> 400) per tipo/numero sbagliati, OverflowError (-> 413) per file troppo grande."""
+    if not isinstance(urls, list) or not urls:
+        raise ValueError("Allega almeno una foto.")
+    if len(urls) > MAX_PHOTOS_PER_ANSWER:
+        raise ValueError(f"Al massimo {MAX_PHOTOS_PER_ANSWER} foto per risposta.")
+    for u in urls:
+        if not isinstance(u, str) or not u.startswith("data:image/") or ";base64," not in u[:100]:
+            raise ValueError("Il file non è un'immagine (serve una foto in formato immagine).")
+        if len(u) * 3 // 4 > MAX_DECODED_BYTES:
+            raise OverflowError(f"Foto troppo grande (massimo {MAX_DECODED_BYTES // (1024 * 1024)} MB).")
+    return urls

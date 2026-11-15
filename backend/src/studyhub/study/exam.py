@@ -17,7 +17,7 @@ from pathlib import Path
 import pymupdf
 
 from ..ai.llm import run_json, run_json_content
-from ..ai.vision import prepare_images
+from ..ai.vision import MAX_GRADE_PHOTOS, MAX_PHOTOS_PER_ANSWER, photo_notice, prepare_images
 from ..ai.lecture_notes import _exam_rules
 from ..db import session
 from ..paths import uni_path
@@ -316,21 +316,7 @@ GRADE_SCHEMA = {
 }
 
 
-MAX_PHOTOS_PER_ANSWER = 4
-MAX_GRADE_PHOTOS = 6   # in totale per correzione (ogni foto pesa sul contesto del modello)
-
-
-def _photo_notice(requested: int, prepared: int, read: int) -> dict:
-    """Dice allo studente cosa è successo alle sue foto: mai lasciargli credere che siano state lette."""
-    avviso = None
-    if requested and read == 0:
-        avviso = (f"⚠ Le {requested} foto dello svolgimento NON sono state lette: nessun modello con vista era "
-                  "disponibile (o le foto non erano valide). La correzione si basa solo sul testo scritto, "
-                  "quindi i punti degli svolgimenti a mano non sono stati valutati.")
-    elif requested and read < requested:
-        avviso = (f"⚠ Lette {read} foto su {requested}: le altre sono state scartate (non valide o oltre il limite "
-                  f"di {MAX_GRADE_PHOTOS} per correzione).")
-    return {"allegate": requested, "lette": read, "avviso": avviso}
+_photo_notice = photo_notice  # condivisa con le sessioni di studio (ai/vision.py)
 
 
 def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None) -> dict:

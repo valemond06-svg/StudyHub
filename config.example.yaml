@@ -30,3 +30,8 @@ extra_active_courses:
 
 # Anno accademico: calcolato da solo (cambia a settembre). Forzalo solo se serve.
 # current_academic_year: 2026/27
+
+# Eventi verso il Second Brain (sync, turno di notte, job AI falliti): POST con token, coda locale se il Brain è giù.
+# URL e token stanno nel file env indicato (BRAIN_EVENT_URL, BRAIN_EVENT_TOKEN, opzionale BRAIN_EVENT_FALLBACK_URL).
+# brain_events: true
+# brain_event_env: ~/.config/brain-connectors/studyhub.env

@@ -2,7 +2,7 @@
 
 Durante il turno il 35B locale lavora con 1 slot e la RAM è al limite: niente embedding (Ollama bge-m3)
 né altri lavori pesanti da parte del server. Il turno nativo (`studyhub notte`) tiene `NOTTE_LOCK`
-con `file_lock`; il vecchio `~/brain-riordino/notte-bin/notte.sh` scrive il suo PID in `LEGACY_LOCK`.
+con `file_lock`; `notte.sh` del Brain (lanciato da `brain-notte.timer`) scrive il suo PID in `LEGACY_LOCK`: conta anche quello.
 """
 from __future__ import annotations
 

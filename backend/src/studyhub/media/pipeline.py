@@ -299,11 +299,19 @@ def process_lecture(lec: dict, course: dict, panopto: Panopto, whisper: bool = T
 
 def transcribe_ready(lec: dict, course: dict) -> dict:
     """Whisper su una lezione che ha già l'audio su disco (status media_ok): nessuna rete.
-    Se fallisce, la lezione resta com'è e l'errore sale a chi chiama."""
+    Se fallisce, la lezione va in `errore` con il backoff di P1.3 (1 h, 6 h, 24 h, poi a mano) e l'errore sale a
+    chi chiama: una lezione rotta non occupa più un posto di `--max-trascrizioni` ogni notte. Alla ripresa
+    `riprese._stato_lezione` la rimette in `media_ok` (o in `nuova` se manca l'audio)."""
     ldir = uni_path(lec["folder"])
     audio = ldir / "audio.opus"
-    if not audio.exists():
-        raise FileNotFoundError(f"audio mancante: {audio}")
-    res = transcribe(audio, ldir / "transcript.json", prompt=_glossary(course), duration_s=ff.probe(audio)["duration"])
+    try:
+        if not audio.exists():
+            raise FileNotFoundError(f"audio mancante: {audio}")
+        res = transcribe(audio, ldir / "transcript.json", prompt=_glossary(course),
+                         duration_s=ff.probe(audio)["duration"])
+    except Exception as e:  # SIGTERM/KeyboardInterrupt non sono fallimenti di Whisper: non contano
+        _update(lec["id"], status="errore", error=f"trascrizione: {e}"[:500])
+        riprese.segna_fallita("lectures", lec["id"])
+        raise
     _update(lec["id"], transcript_source="whisper", status="trascritta", error=None)
     return res

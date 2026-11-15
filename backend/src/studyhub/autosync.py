@@ -1,8 +1,9 @@
-"""Sync automatico (pensato per l'Utilità di pianificazione di Windows).
+"""Sync automatico (sul fisso Linux `studyhub-sync.timer`; su Windows l'Utilità di pianificazione, `studyhub schedule`).
 
 Fa SOLO lavoro locale o di download: Moodle, nuove registrazioni Panopto (pipeline atomica e
-Whisper su GPU), indice di ricerca. Non chiama MAI Claude: gli appunti AI restano on-demand.
-Alla fine registra le novità e manda una notifica di Windows.
+Whisper su GPU), indice di ricerca. Non chiama MAI Claude: gli appunti delle lezioni li fa la coda
+degli arretrati (`ai/jobs.py`, solo Sonnet) o un click. Salta se il turno di notte o `elabora-tutto` sono in corso.
+Alla fine registra le novità (notifica di Windows dove c'è un desktop) e manda l'evento `studyhub.sync` al Brain.
 """
 from __future__ import annotations
 
@@ -49,6 +50,7 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
             "ORDER BY priority DESC, fullname")]
     summary = {"file": 0, "lezioni": 0, "avvisi": 0, "errori": []}
     touched: list[dict] = []
+    login = False
 
     # 1. Moodle: basta il token dell'app.
     try:
@@ -56,6 +58,7 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
     except LoginRequired as e:
         notify.add("errore", "Sync Moodle non riuscito", str(e))
         summary["errori"].append(str(e))
+        login = True
         m = None
     if m:
         for c in courses:
@@ -109,6 +112,7 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
         sess = get_session()
     except LoginRequired:
         sess = None
+        login = True
         notify.add("errore", "Panopto: login necessario", "Esegui `studyhub login` per riprendere il download delle registrazioni.")
     if sess:
         from .media.panopto import Panopto
@@ -142,13 +146,6 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
     except EmbeddingError:
         pass  # Ollama spento: si recupera al prossimo giro, la ricerca per parole funziona comunque
 
-    # 4. Copia per il Second Brain (su Drive): un errore qui non deve fermare il sync.
-    try:
-        from .brain_export import export
-        summary["brain"] = export()
-    except Exception as e:
-        summary["errori"].append(f"copia per il Brain: {e}")
-
     for e in summary["errori"]:
         console.print(f"[red]✗[/] {e}")
     if toast and (summary["file"] or summary["lezioni"] or summary["avvisi"]):
@@ -156,4 +153,21 @@ def run(max_new_lectures: int = 2, whisper: bool = True, toast: bool = True, for
                  f"{summary['lezioni']} lezioni pronte" if summary["lezioni"] else "",
                  f"{summary['avvisi']} corsi con nuovi avvisi" if summary["avvisi"] else ""]
         notify.toast("StudyHub: novità dai corsi", " · ".join(x for x in parts if x))
+    _evento_sync(summary, login)
     return summary
+
+
+def _evento_sync(summary: dict, login: bool) -> None:
+    """Evento `studyhub.sync` per il Brain: solo conteggi e messaggi troncati. Non fa mai fallire il sync."""
+    try:
+        from . import brain_events
+        errori = [str(e)[:200] for e in summary["errori"]]
+        data = {"file": summary["file"], "lezioni": summary["lezioni"], "avvisi": summary["avvisi"],
+                "errori": len(errori), "errori_esempi": errori[:3]}
+        level = "warn" if errori else "info"
+        if login:
+            data["login_necessario"] = True
+            level = "error"
+        brain_events.send("studyhub.sync", data, level=level)
+    except Exception:
+        pass

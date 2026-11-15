@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 from fsrs import Card, Rating
 
 from ..ai.claude_runner import ClaudeError
-from ..ai.llm import run_json
+from ..ai.llm import run_json, run_json_content
+from ..ai.vision import MAX_PHOTOS_PER_ANSWER, check_data_urls, photo_notice, prepare_images
 from ..db import session
 from .flashcards import _iso, scheduler
 from .mastery import KIND_WEIGHT, item_states, overview, topic_mastery
@@ -200,7 +201,10 @@ def _grade_ai(it: dict, answer: str) -> tuple[float, str, list]:
             + ("Criteri:\n" + "\n".join(f"{i + 1}. {c}" for i, c in enumerate(rubric)) + "\n\n" if rubric else "")
             + f"Risposta dello studente:\n{answer}")
     res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
-    d = res.data
+    return _parse_grade(res.data)
+
+
+def _parse_grade(d) -> tuple[float, str, list]:
     if not isinstance(d, dict):
         raise ClaudeError("Il modello ha restituito una correzione non valida.")
     try:
@@ -214,6 +218,33 @@ def _grade_ai(it: dict, answer: str) -> tuple[float, str, list]:
     crit = d.get("criteri_ok")
     crit = [bool(c) for c in crit] if isinstance(crit, list) else []
     return max(0.0, min(1.0, score)), feedback, crit
+
+
+PHOTO_GRADE_SYSTEM = GRADE_SYSTEM + """
+La risposta può essere (anche solo) una FOTO dello svolgimento a mano: leggila con attenzione; se una foto non ti è
+visibile NON inventarne il contenuto e dillo nel feedback."""
+
+
+def _grade_photo(it: dict, text: str, images: list[str], course: str | None) -> tuple[float, str, list]:
+    """Correzione di uno svolgimento fotografato: stesso schema e stesso percorso LLM (run_json_content) dell'esame."""
+    rubric = json.loads(it["rubric"] or "[]")
+    pronte, _ = prepare_images(images[:MAX_PHOTOS_PER_ANSWER])
+    if not pronte:
+        raise ValueError("Nessuna foto valida: riprova con un'immagine più nitida.")
+    crit = ("Criteri:\n" + "\n".join(f"{i + 1}. {c}" for i, c in enumerate(rubric)) + "\n\n") if rubric else ""
+    head = ((f"Corso: {course}\n" if course else "")
+            + f"Domanda ({it['kind']}):\n{it['prompt_md']}\n\nSoluzione di riferimento:\n{it['answer_md']}\n\n{crit}"
+            + f"Risposta dello studente (testo): {text or '(nessun testo)'}\nFoto dello svolgimento allegate: {len(pronte)}.")
+    res = run_json_content(PHOTO_GRADE_SYSTEM, [{"type": "text", "text": head}, *pronte,
+                                                {"type": "text", "text": "\nCorreggi secondo lo schema."}],
+                           GRADE_SCHEMA, quality="veloce")
+    read = getattr(res, "images_sent", 0)
+    if not read:  # nessun modello con vista: giudicare solo dal testo sarebbe ingiusto, e non va spacciato per lettura
+        raise ClaudeError("Le foto non sono state lette: nessun modello con vista è disponibile ora. Riprova più tardi "
+                          "o scrivi la risposta.")
+    score, feedback, crit = _parse_grade(res.data)
+    notice = photo_notice(len(images[:MAX_PHOTOS_PER_ANSWER]), len(pronte), read)["avviso"]
+    return score, (f"**{notice}**\n\n{feedback}" if notice else feedback), crit
 
 
 def _source(db, it: dict) -> dict:
@@ -254,6 +285,13 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
         choice = payload.get("choice")
         score = 1.0 if choice is not None and int(choice) == it["correct"] else 0.0
         given = str(choice)
+    elif payload.get("images"):  # foto dello svolgimento: stesso esito, stessa padronanza di una risposta scritta
+        text = (payload.get("text") or "").strip()
+        with session() as db:
+            c = db.execute("SELECT fullname FROM courses WHERE id=?", (s["course_id"],)).fetchone()
+        score, feedback, crit_ok = _grade_photo(it, text, payload["images"], c[0] if c else None)
+        given = (text + "\n" if text else "") + f"[foto: {min(len(payload['images']), MAX_PHOTOS_PER_ANSWER)}]"
+        graded_by = "ai"
     elif (payload.get("text") or "").strip():
         given = payload["text"].strip()
         score, feedback, crit_ok = _grade_ai(it, given)
@@ -289,6 +327,20 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
     return {"score": score, "correct": it["correct"], "answer_md": it["answer_md"], "rubric": rubric,
             "criteria_ok": crit_ok, "feedback_md": feedback, "graded_by": graded_by, "xp": gained, "retry": retry,
             "next_due": _iso(card.due), "source": src}
+
+
+def answer_photo(sid: int, idx: int, payload: dict) -> dict:
+    """Come answer(), ma lo svolgimento arriva come foto (payload["images"]: data URL). Solo domande a risposta scritta."""
+    check_data_urls(payload.get("images"))
+    with session() as db:
+        s, q = _load(db, sid)
+        entry = _entry(q, idx)
+        if entry["t"] != "domanda":
+            raise ValueError("Non è una domanda.")
+        kind = db.execute("SELECT kind FROM study_items WHERE id=?", (entry["item"],)).fetchone()[0]
+    if kind in ("multipla", "vero_falso"):
+        raise ValueError("Le domande a scelta si risolvono scegliendo l'opzione, non con una foto.")
+    return answer(sid, idx, payload)
 
 
 def finish(sid: int) -> dict:
