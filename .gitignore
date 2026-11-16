@@ -25,3 +25,11 @@ scratch/
 # Copie di config (possono contenere chiavi)
 config.yaml.*
 !config.example.yaml
+
+# StudyHub Frontend (Vite + React)
+studyhub-frontend/node_modules/
+studyhub-frontend/dist/
+studyhub-frontend/*.local
+studyhub-frontend/.env
+studyhub-frontend/.env.*
+studyhub-frontend/!.env.example

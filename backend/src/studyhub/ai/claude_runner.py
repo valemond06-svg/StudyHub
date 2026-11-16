@@ -116,7 +116,7 @@ def _run_locked(system: str, content: list[dict], schema: dict, model: str) -> C
     CWD.mkdir(parents=True, exist_ok=True)
     cmd = [_claude_exe(), "-p", "--model", model,
            "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-           "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands",
+           "--tools", "", "--strict-mcp-config", "--setting-sources", "project", "--disable-slash-commands",
            "--no-session-persistence", "--system-prompt", system,
            "--json-schema", json.dumps(schema, ensure_ascii=False)]
     msg = json.dumps({"type": "user", "message": {"role": "user", "content": content}}, ensure_ascii=False)
