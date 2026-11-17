@@ -375,6 +375,13 @@ MIGRATIONS = [
     """
     ALTER TABLE ai_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 100;
     CREATE INDEX IF NOT EXISTS idx_ai_jobs_status ON ai_jobs(status, priority);
+
+    -- P1.1 CRITICAL FIX: race condition duplicazione jobs. Unique constraint parziale
+    -- LIMITATO allo status che possono crearsi in concorrenza (server + fullrun + CLI).
+    -- Jobs "fatto"/"errore"/"annullato" possono esistere più volte (es. retry).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_jobs_unique
+    ON ai_jobs(kind, target_id)
+    WHERE status IN ('in_coda', 'in_corso');
     """,
     """
     -- P1.3: ripresa automatica di lezioni in errore e unità vuote/in errore (backoff in study/riprese.py)

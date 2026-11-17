@@ -112,7 +112,10 @@ def submit(quiz_id: int, answers: list) -> dict:
         a = answers[i] if i < len(answers) else None
         r = {"indice": i, "risposta": a, "soluzione_md": q["soluzione_md"], "corretta": q.get("corretta")}
         if q["tipo"] in ("multipla", "vero_falso"):
-            r["punteggio"] = 1.0 if a is not None and int(a) == q["corretta"] else 0.0
+            # `a` arriva da JSON non tipizzato: una lista, un float o una stringa "1.0" romperebbe int().
+            # Solo un intero (o un None) è una scelta valida; il resto vale come risposta non data.
+            scelta = a if isinstance(a, int) and not isinstance(a, bool) else None
+            r["punteggio"] = 1.0 if scelta is not None and scelta == q["corretta"] else 0.0
         elif not (a or "").strip():
             r["punteggio"], r["feedback_md"] = 0.0, "Risposta non data."
         else:

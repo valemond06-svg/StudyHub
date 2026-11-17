@@ -2,21 +2,24 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
 interface StudySession {
-  id: string
+  id: string                    // frontend UUID
+  backendId?: number            // backend session ID
   courseId: number
-  duration: number // minutes: 25, 45, 90
+  duration: number              // minutes: 25, 45, 90
   startedAt: Date
   completedAt?: Date
   xpEarned: number
   questionsAnswered: number
   correctAnswers: number
+  entries?: any[]               // session entries from backend
 }
 
 interface SessionState {
   currentSession: StudySession | null
-  startSession: (courseId: number, duration: number) => void
+  startSession: (courseId: number, duration: number, backendId?: number, entries?: any[]) => void
   endSession: (results: { xpEarned: number; questionsAnswered: number; correctAnswers: number }) => void
   cancelSession: () => void
+  updateSessionProgress: (progress: Partial<StudySession>) => void
   todaySessions: StudySession[]
   addToHistory: (session: StudySession) => void
 }
@@ -27,7 +30,7 @@ export const useSessionStore = create<SessionState>()(
       currentSession: null,
       todaySessions: [],
 
-      startSession: (courseId, duration) => {
+      startSession: (courseId, duration, backendId, entries) => {
         const session: StudySession = {
           id: crypto.randomUUID(),
           courseId,
@@ -36,6 +39,8 @@ export const useSessionStore = create<SessionState>()(
           xpEarned: 0,
           questionsAnswered: 0,
           correctAnswers: 0,
+          backendId,
+          entries,
         }
         set({ currentSession: session })
       },
@@ -57,6 +62,13 @@ export const useSessionStore = create<SessionState>()(
       },
 
       cancelSession: () => set({ currentSession: null }),
+
+      updateSessionProgress: (progress) =>
+        set((state) => ({
+          currentSession: state.currentSession
+            ? { ...state.currentSession, ...progress }
+            : null,
+        })),
 
       addToHistory: (session) =>
         set((s) => ({ todaySessions: [session, ...s.todaySessions].slice(0, 50) })),

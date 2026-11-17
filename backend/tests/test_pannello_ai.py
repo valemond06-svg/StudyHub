@@ -27,7 +27,12 @@ def locale(ambiente, monkeypatch):
 
 
 @pytest.fixture
-def client(locale, monkeypatch):
+def client(ambiente, monkeypatch):
+    """Use the authenticated client fixture from conftest."""
+    from conftest import AuthenticatedTestClient
+    from fastapi.testclient import TestClient
+    from studyhub.api.app import app
+
     def vietato(*a, **k):
         raise AssertionError("il pannello non deve chiamare LLM o Claude")
 
@@ -37,8 +42,12 @@ def client(locale, monkeypatch):
                 monkeypatch.setattr(mod, n, vietato)
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", vietato)
-    from studyhub.api.app import app
-    return TestClient(app, raise_server_exceptions=False)
+
+    test_client = TestClient(app, raise_server_exceptions=False)
+    response = test_client.get("/")
+    csrf_token = response.cookies.get("csrf_token")
+
+    return AuthenticatedTestClient(test_client, "test-api-token-12345", csrf_token)
 
 
 def _job(db, kind, tid, status, msg=None, fin=None):

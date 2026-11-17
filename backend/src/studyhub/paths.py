@@ -40,7 +40,15 @@ def folder_name(title: str) -> str:
 
 
 def uni_path(rel: str | Path) -> Path:
-    return settings.uni_root / rel
+    """Resolve a path relative to uni_root with path traversal protection.
+
+    Ensures the resolved path is within uni_root to prevent directory traversal attacks.
+    """
+    uni_root = settings.uni_root.resolve()
+    target = (uni_root / rel).resolve()
+    if not target.is_relative_to(uni_root):
+        raise ValueError(f"Path traversal attempt blocked: {rel} resolves outside uni_root")
+    return target
 
 
 def rel_to_uni(p: Path) -> str:

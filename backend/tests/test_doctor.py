@@ -109,10 +109,17 @@ def test_checks_con_database_rotto_non_cade_e_non_e_pronto(ambiente, monkeypatch
 
 
 def test_endpoint_api_setup_espone_i_nuovi_controlli(ambiente, monkeypatch):
+    from conftest import AuthenticatedTestClient
     from fastapi.testclient import TestClient
     from studyhub.api.app import app
     _neutralizza_il_resto(monkeypatch)
-    r = TestClient(app).get("/api/setup")
+
+    test_client = TestClient(app, raise_server_exceptions=False)
+    response = test_client.get("/")
+    csrf_token = response.cookies.get("csrf_token")
+    auth_client = AuthenticatedTestClient(test_client, "test-api-token-12345", csrf_token)
+
+    r = auth_client.get("/api/setup")
     assert r.status_code == 200
     corpo = r.json()
     assert {"database", "modello_locale", "ffmpeg"} <= {c["id"] for c in corpo["checks"]}

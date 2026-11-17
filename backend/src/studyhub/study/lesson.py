@@ -22,6 +22,8 @@ from ..db import session
 from .archetype import get_course_archetype
 from .bank import _unit_text
 
+import random
+
 MAX_SOURCE_CHARS = 45_000
 
 BASE_SYSTEM = """Sei il miglior docente di Robotica, Ingegneria e Sistemi Intelligenti e tutor universitario (UniVR).
@@ -254,17 +256,22 @@ def generate(topic_id: int) -> dict:
         lab.setdefault("code_language", arch.code_language)
         lab.setdefault("artifact_name", f"{arch.artifact_name.split('.')[0]}_{topic_id}{arch.file_extension}")
 
-    import random
+    def _shuffle_options_with_index(opts: list[str], correct_idx: int) -> tuple[list[str], int]:
+        """Shuffle options and return new options list with corrected index.
+        Uses position shuffling (not .index()) to correctly handle duplicate options."""
+        positions = list(range(len(opts)))
+        random.shuffle(positions)
+        new_opts = [opts[i] for i in positions]
+        new_correct = positions.index(correct_idx)
+        return new_opts, new_correct
+
     for p in _passi(data):
         v = p.get("verifica")
         if isinstance(v, dict) and "opzioni" in v and "corretta" in v and isinstance(v["opzioni"], list):
             _opts = list(v["opzioni"])
             _c = v["corretta"]
             if len(_opts) >= 2 and isinstance(_c, int) and 0 <= _c < len(_opts):
-                _val = _opts[_c]
-                random.shuffle(_opts)
-                v["opzioni"] = _opts
-                v["corretta"] = _opts.index(_val)
+                v["opzioni"], v["corretta"] = _shuffle_options_with_index(_opts, _c)
 
     # Randomize sniper_sbarramento options if present
     sn = data.get("sniper_sbarramento")
@@ -272,10 +279,7 @@ def generate(topic_id: int) -> dict:
         _opts = list(sn["opzioni"])
         _c = sn["corretta"]
         if len(_opts) >= 2 and isinstance(_c, int) and 0 <= _c < len(_opts):
-            _val = _opts[_c]
-            random.shuffle(_opts)
-            sn["opzioni"] = _opts
-            sn["corretta"] = _opts.index(_val)
+            sn["opzioni"], sn["corretta"] = _shuffle_options_with_index(_opts, _c)
 
     # Backward compatibility polyfills
     if "hook_robotica_md" in data and not data.get("perche_md"):

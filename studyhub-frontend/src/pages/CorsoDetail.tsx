@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ArrowLeft, Play, BookOpen, FlaskConical, HelpCircle, Target, Zap, Settings, Download, Upload, Trash2, Edit, Plus } from "lucide-react"
+import { ArrowLeft, Play, BookOpen, FlaskConical, HelpCircle, Target, Zap, Settings, Download, Upload, Trash2, Edit, Plus, ListMusic, Image as ImageIcon, Brain } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -9,8 +10,9 @@ import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Input } from "@/components/ui/input"
+import { VideoPlayer } from "@/components/player/VideoPlayer"
 import { api } from "@/lib/api"
-import type { Course, Lecture, Exam, ExamProfile, Simulation } from "@/types"
+import type { Course, Lecture, Exam, ExamProfile, Simulation, PlanData } from "@/types"
 import { cn } from "@/lib/utils"
 import { formatDistanceToNow, parseISO } from "date-fns"
 import { it } from "date-fns/locale"
@@ -19,6 +21,8 @@ export function CorsoDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const courseId = Number(id)
+
+  const [playerLecture, setPlayerLecture] = useState<Lecture | null>(null)
 
   const { data: course } = useQuery<Course>({
     queryKey: ["course", courseId],
@@ -32,29 +36,27 @@ export function CorsoDetail() {
     enabled: !!courseId,
   })
 
-  const { data: examProfile } = useQuery<ExamProfile>({
+  const { data: courseExam } = useQuery<{ profile: ExamProfile | null; profile_md: string | null; sims: Simulation[] }>({
     queryKey: ["examProfile", courseId],
     queryFn: () => api.getCourseExam(courseId),
     enabled: !!courseId,
   })
+  const examProfile = courseExam?.profile ?? null
+  const simulations = courseExam?.sims ?? []
 
-  const { data: simulations = [] } = useQuery<Simulation[]>({
-    queryKey: ["simulations", courseId],
-    queryFn: () => api.getCourseExam(courseId).then((res: any) => res.simulations || []),
+  // Exams: get from plan or use the course_exam endpoint which might have it
+  const { data: plan } = useQuery<PlanData>({
+    queryKey: ["plan"],
+    queryFn: api.getPlan,
     enabled: !!courseId,
   })
-
-  const { data: exams = [] } = useQuery<Exam[]>({
-    queryKey: ["exams", courseId],
-    queryFn: () => api.getExams().then((res: Exam[]) => res.filter(e => e.course_id === courseId)),
-    enabled: !!courseId,
-  })
+  const exams = (plan?.exams ?? []).filter((e: Exam) => e.course_id === courseId)
 
   if (!course) return <div className="flex items-center justify-center h-64">Caricamento...</div>
 
   const upcomingExams = exams
-    .filter((e) => e.date && new Date(e.date) > new Date())
-    .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime())
+    .filter((e: Exam) => e.date && new Date(e.date) > new Date())
+    .sort((a: Exam, b: Exam) => new Date(a.date!).getTime() - new Date(b.date!).getTime())
 
   const lecturesByStatus = {
     nuova: lectures.filter(l => l.status === "nuova"),
@@ -318,7 +320,18 @@ export function CorsoDetail() {
                       {group.title}
                     </h4>
                     {group.items.map((lec) => (
-                      <Card key={lec.id} className="hover:shadow-md transition-shadow cursor-pointer">
+                      <Card
+                        key={lec.id}
+                        className={cn(
+                          "transition-shadow cursor-pointer",
+                          lec.has_audio
+                            ? "hover:shadow-md group"
+                            : "hover:shadow-none cursor-default"
+                        )}
+                        onClick={() => {
+                          if (lec.has_audio) setPlayerLecture(lec)
+                        }}
+                      >
                         <CardContent className="p-4">
                           <div className="flex items-start justify-between gap-4">
                             <div className="flex-1 min-w-0">
@@ -334,6 +347,12 @@ export function CorsoDetail() {
                                 >
                                   {lec.status}
                                 </Badge>
+                                {lec.has_audio && (
+                                  <Badge variant="outline" className="text-xs gap-1">
+                                    <ListMusic className="h-2.5 w-2.5" />
+                                    Audio
+                                  </Badge>
+                                )}
                                 {lec.has_notes && (
                                   <Badge variant="outline" className="text-xs gap-1">
                                     <BookOpen className="h-2.5 w-2.5" />
@@ -342,7 +361,7 @@ export function CorsoDetail() {
                                 )}
                                 {lec.has_slides && (
                                   <Badge variant="outline" className="text-xs gap-1">
-                                    <Play className="h-2.5 w-2.5" />
+                                    <ImageIcon className="h-2.5 w-2.5" />
                                     Slide
                                   </Badge>
                                 )}
@@ -352,9 +371,20 @@ export function CorsoDetail() {
                                 {formatDistanceToNow(parseISO(lec.date), { addSuffix: true, locale: it })} · {Math.round(lec.duration / 60)} min
                               </p>
                             </div>
-                            <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity">
-                              <ArrowLeft className="h-5 w-5" />
-                            </Button>
+                            {lec.has_audio && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setPlayerLecture(lec)
+                                }}
+                                aria-label={`Riproduci ${lec.title}`}
+                              >
+                                <Play className="h-5 w-5" />
+                              </Button>
+                            )}
                           </div>
                         </CardContent>
                       </Card>
@@ -632,9 +662,16 @@ export function CorsoDetail() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* VideoPlayer Modal */}
+      {playerLecture && (
+        <VideoPlayer
+          lectureId={playerLecture.id}
+          lectureTitle={playerLecture.title}
+          onClose={() => setPlayerLecture(null)}
+        />
+      )}
     </div>
   )
 }
 
-// Missing import
-import { Brain } from "lucide-react"

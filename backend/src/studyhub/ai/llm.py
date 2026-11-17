@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config import LOCAL_DIR, settings
+from ..config import LOCAL_DIR, settings, get_local_llm_key
 from ..filelock import LockTimeout, file_lock
 from .claude_runner import ClaudeError, RateLimited, run as claude_run
 
@@ -35,8 +35,6 @@ AGY_CWD = LOCAL_DIR / "agy-cwd"
 AGY_TIMEOUT_S = 8 * 60
 GEMINI_MODELS = {"veloce": "gemini-3.8-flash-low", "accurato": "gemini-3.8-flash-high"}
 CLAUDE_MODELS = {"veloce": "haiku", "accurato": "sonnet"}
-FREELLM_TIMEOUT_S = 180
-FREELLM_MODEL = "auto"   # catena curata dal Brain: Qwen3.8, Nemotron...
 
 # --- Scoperta dell'LLM locale -------------------------------------------------------------------
 # Due macchine possono servire il modello:
@@ -74,31 +72,6 @@ _vision: dict[str, tuple[float, bool | None]] = {}   # server -> (quando, suppor
 
 def _now() -> float:
     return time.monotonic()
-
-
-def _key_file() -> Path:
-    """Sul fisso la chiave sta qui (la usano anche gli altri servizi brain-llm)."""
-    return Path.home() / ".config" / "brain-llm" / "api-key"
-
-
-def get_local_llm_key() -> str:
-    """Chiave del server LLM locale, mai scritta nel codice. In ordine: STUDYHUB_LOCAL_LLM_KEY (e il vecchio
-    STUDYHUB_LLM_KEY), config.yaml (local_llm_key), LOCAL_LLM_API_KEY, file ~/.config/brain-llm/api-key.
-    Stringa vuota se non c'è: i server senza chiave (laptop) funzionano lo stesso. Il valore non va mai stampato."""
-    for name in ("STUDYHUB_LOCAL_LLM_KEY", "STUDYHUB_LLM_KEY"):
-        v = (os.environ.get(name) or "").strip()
-        if v:
-            return v
-    v = str(settings.extra.get("local_llm_key") or "").strip()
-    if v:
-        return v
-    v = (os.environ.get("LOCAL_LLM_API_KEY") or "").strip()
-    if v:
-        return v
-    try:
-        return _key_file().read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
 
 
 def get_local_llm_model() -> str:
@@ -198,119 +171,15 @@ class LLMResult:
     images_sent: int = 0   # foto davvero consegnate a un modello con vista (0 = nessuna letta)
 
 # --- FreeLLMAPI (VPS / Brain) ----------------------------------------------------------------
-# Provider gratuito OpenAI-compatible: catena curata di modelli pubblici (Qwen3.8, Nemotron...).
-# Configurato tramite le variabili del Brain (secrets/.env o ambiente utente):
-#   FREELLMAPI_URLS  - URL del server (piu istanze separate da virgola)
-#   FREELLMAPI_API_KEY - chiave di accesso
-# Non supporta le immagini: le richieste vision passano sempre a Claude.
-_freellm_health: dict = {"ok": None, "at": -1e9, "ttl": 0.0}
-_freellm_lock = threading.Lock()
+# FRAGILE: provider gratuito OpenAI-compatible.
+# ATTENZIONE: FreeLLMAPI NON VIENE USATO per StudyHub (security/hygiene:
+# non inviare contenuto studente a provider gratuiti).
+# IMPORTANTE: se mai si riattiva FreeLLMAPI, applicare il filtro privacy del Brain prima di chiamare.
+# Fare riferimento a C:\Brain\corerain\privacy.py per gli array e funzioni attuali.
 
-
-def _freellm_key() -> str:
-    """Chiave FreeLLMAPI: da variabile ambiente o dal .env del Brain."""
-    return _freellm_env().get("key", "")
-
-
-def _freellm_env() -> dict:
-    """Legge FREELLMAPI_URLS e FREELLMAPI_API_KEY dall'ambiente o dal .env del Brain."""
-    env_key = (os.environ.get("FREELLMAPI_API_KEY") or "").strip()
-    env_urls = (os.environ.get("FREELLMAPI_URLS") or os.environ.get("FREELLMAPI_URL") or "").strip()
-    if env_key and env_urls:
-        return {"key": env_key, "urls": env_urls}
-    # Fallback: leggi il .env del Brain
-    for env_path in (r"C:\Brain\secrets\.env",):
-        env_file = Path(env_path)
-        if env_file.exists():
-            try:
-                data: dict = {}
-                for line in env_file.read_text(encoding="utf-8").splitlines():
-                    if line.startswith("FREELLMAPI_API_KEY=") and not data.get("key"):
-                        data["key"] = line.split("=", 1)[1].strip()
-                    elif line.startswith("FREELLMAPI_URLS=") and not data.get("urls"):
-                        data["urls"] = line.split("=", 1)[1].strip()
-                if data:
-                    return data
-            except OSError:
-                pass
-    return {"key": env_key, "urls": env_urls or "http://127.0.0.1:31415"}
-
-
-def _freellm_base() -> str:
-    """URL base del server FreeLLMAPI (primo nell'elenco)."""
-    raw = _freellm_env().get("urls", "http://127.0.0.1:31415")
-    return raw.split(",")[0].strip().rstrip("/")
-
-
-def _freellm_up() -> bool:
-    """Health check con cache 60s. Verifica /api/ping."""
-    now = time.monotonic()
-    with _freellm_lock:
-        ok, at, ttl = _freellm_health["ok"], _freellm_health["at"], _freellm_health["ttl"]
-    if ok is not None and now - at < ttl:
-        return ok
-    key = _freellm_key()
-    if not key:
-        with _freellm_lock:
-            _freellm_health.update(ok=False, at=now, ttl=30.0)
-        return False
-    base = _freellm_base()
-    try:
-        req = urllib.request.Request(base + "/api/ping",
-                                     headers={"Authorization": f"Bearer {key}"})
-        with urllib.request.urlopen(req, timeout=3) as r:
-            result = r.status == 200
-    except Exception:
-        result = False
-    cache_ttl = 60.0 if result else 15.0
-    with _freellm_lock:
-        _freellm_health.update(ok=result, at=now, ttl=cache_ttl)
-    return result
-
-
-def _freellm(system: str, text: str, schema: dict, quality: str) -> "LLMResult":
-    """Chiamata a FreeLLMAPI (OpenAI-compatible). Lancia ClaudeError se non risponde."""
-    if not _freellm_up():
-        raise ClaudeError("FreeLLMAPI non raggiungibile.")
-    base = _freellm_base()
-    key = _freellm_key()
-    prompt = (
-        f"{system}\n\nNON inserire tag <think> o ragionamenti preliminari. "
-        f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme a questo schema:\n"
-        f"{json.dumps(schema, ensure_ascii=False)}\n\nTesto di partenza:\n{text}"
-    )
-    body = {
-        "model": FREELLM_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 5120,
-        "temperature": 0.3,
-        "response_format": {"type": "json_object"},
-    }
-    payload_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        base + "/v1/chat/completions",
-        data=payload_bytes,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-    )
-    t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=FREELLM_TIMEOUT_S) as r:
-            resp = json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        with _freellm_lock:
-            _freellm_health.update(ok=False, at=-1e9, ttl=0.0)
-        raise ClaudeError(f"FreeLLMAPI HTTP {e.code}: {e.reason}")
-    except Exception as e:
-        with _freellm_lock:
-            _freellm_health.update(ok=False, at=-1e9, ttl=0.0)
-        raise ClaudeError(f"FreeLLMAPI errore di rete: {e}")
-    raw = (resp.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-    if not raw.strip():
-        raise ClaudeError("FreeLLMAPI: risposta vuota")
-    data_out = _extract_json(raw)
-    model_name = resp.get("model", f"freellm:{FREELLM_MODEL}")
-    return LLMResult(data_out, "freellm", model_name, round(time.time() - t0, 1))
-
+# Costanti obsolescenti ma mantenute per compatibilità futura (non usate da StudyHub)
+FREELLM_TIMEOUT_S = 180
+FREELLM_MODEL = "auto"   # catena curata dal Brain: Qwen3.8, Nemotron...
 
 
 def _check_local() -> bool:
@@ -326,7 +195,10 @@ def _agy_exe() -> str | None:
 
 
 def provider_order() -> list[str]:
-    """config.yaml → ai_provider: auto | local | gemini | claude. auto = local (se cluster attivo), poi Gemini se c'è, poi Claude."""
+    """config.yaml → ai_provider: auto | local | gemini | claude. auto = local (se cluster attivo), poi Gemini se c'è, poi Claude.
+
+    IMPORTANT: FreeLLMAPI è disabilitato per StudyHub (security/hygiene: non inviare contenuto studente a provider gratuiti).
+    Usa solo LLM local (Qwen 35B) e Claude Pro."""
     pref = (settings.extra.get("ai_provider") or "auto").lower()
     if pref == "local":
         return ["local"]
@@ -340,8 +212,8 @@ def provider_order() -> list[str]:
         chain.append("local")
     if _agy_exe():
         chain.append("gemini")
-    if _freellm_up():
-        chain.append("freellm")
+    # FREELLMAPI DISABILITATO per StudyHub (security: privacy filter del Brain non usato)
+    # Se necessario riattivare, aggiungere sopra: if _freellm_up(): chain.append("freellm")
     chain.append("claude")
     return chain
 
@@ -693,8 +565,7 @@ def run_json(system: str, text: str, schema: dict, quality: str = "accurato") ->
                 return _local(system, text, schema, quality)
             if prov == "gemini":
                 return _gemini(system, text, schema, quality)
-            if prov == "freellm":
-                return _freellm(system, text, schema, quality)
+            # freellm rimosso: StudyHub non usa FreeLLMAPI (security/hygiene)
             res = claude_run(system, [{"type": "text", "text": text}], schema, model=CLAUDE_MODELS[quality])
             return LLMResult(res.data, "claude", res.model, res.duration_s)
         except (ClaudeError, RateLimited, OSError) as e:

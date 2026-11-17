@@ -4,17 +4,117 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Lock
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, Security
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.security import APIKeyHeader, APIKeyCookie
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
 
+from ..config import settings
 from ..db import session
 from ..paths import uni_path
+from .csrf import CSRFMiddleware, csrf_protect, generate_csrf_token, set_csrf_cookie
+
+# Rate limiting per IP: {ip: {"count": int, "time": float}}
+_setup_rate_limit = {}
+_setup_lock = Lock()
+# 1 request per minute rate limit on /api/setup/* (drift_handling=False per prefissare abusi a esordio)
+_SETUP_RATE_LIMIT_SECONDS = 60
+
+# API Token authentication
+api_key_header = APIKeyHeader(name="Authorization", auto_error=False, scheme_name="Bearer")
+api_key_cookie = APIKeyCookie(name="api_token", auto_error=False)
+
+
+async def get_current_token(
+    authorization: str | None = Security(api_key_header),
+    api_token_cookie: str | None = Security(api_key_cookie),
+) -> str:
+    """Validate API token from Authorization header or cookie.
+
+    Raises:
+        HTTPException: 401 if token is missing or invalid.
+    """
+    expected_token = settings.api_token
+
+    # Check Authorization header: "Bearer <token>"
+    if authorization:
+        if authorization.startswith("Bearer "):
+            token = authorization[7:]  # Remove "Bearer " prefix
+            if secrets.compare_digest(token, expected_token):
+                return token
+
+    # Check cookie
+    if api_token_cookie:
+        if secrets.compare_digest(api_token_cookie, expected_token):
+            return api_token_cookie
+
+    # For browser UI, also set the cookie on first response if Authorization header is provided
+    # This is handled by the caller
+
+    raise HTTPException(
+        status_code=401,
+        detail="Authentication required. Provide Authorization: Bearer <token> header or api_token cookie."
+    )
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Rate limiting on /api/setup/* endpoints."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        # Rate limiting on /api/setup/*
+        if "/api/setup/" in request.url.path and request.method in ("GET", "POST"):
+            remote_ip = request.headers.get("x-forwarded-for", request.client.host) if request.client else "unknown"
+
+            with _setup_lock:
+                now = datetime.now().timestamp()
+                if remote_ip not in _setup_rate_limit:
+                    _setup_rate_limit[remote_ip] = {"count": 1, "time": now}
+                else:
+                    entry = _setup_rate_limit[remote_ip]
+                    entry["count"] += 1
+                    # Sliding window: remove requests older than rate limit window
+                    while entry["time"] < now - _SETUP_RATE_LIMIT_SECONDS:
+                        entry["count"] -= 1
+                        entry["time"] += _SETUP_RATE_LIMIT_SECONDS
+                    # If still over limit, reject
+                    if entry["count"] > 1:  # More than 1 request in the window
+                        raise HTTPException(429, "Rate limit exceeded. Try again later.")
+
+        response = await call_next(request)
+        return response
+
 
 STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="StudyHub")
+
+# CORS Middleware (SEC-006) - explicit configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:8765",
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-CSRF-Token", "X-Requested-With"],
+    expose_headers=["X-CSRF-Token"],
+)
+
+# CSRF Middleware - sets csrf_token cookie on all responses
+app.add_middleware(CSRFMiddleware)
+
+# Rate limiting middleware (kept for /api/setup/*)
+app.add_middleware(RateLimitMiddleware)
+
+import secrets
 
 
 @app.on_event("startup")
@@ -41,7 +141,7 @@ def _lecture(lecture_id: int) -> dict:
 
 
 @app.get("/api/courses")
-def courses():
+def courses(token: str = Depends(get_current_token)):
     with session() as db:
         rows = db.execute(
             """SELECT c.id, c.fullname, c.year_of_study, c.passed, c.active, c.priority, c.folder,
@@ -53,7 +153,7 @@ def courses():
 
 
 @app.get("/api/courses/{course_id}")
-def course_detail(course_id: int):
+def course_detail(course_id: int, token: str = Depends(get_current_token)):
     with session() as db:
         row = db.execute(
             """SELECT c.id, c.fullname, c.year_of_study, c.passed, c.active, c.priority, c.folder,
@@ -67,7 +167,7 @@ def course_detail(course_id: int):
 
 
 @app.get("/api/courses/{course_id}/lectures")
-def lectures(course_id: int):
+def lectures(course_id: int, token: str = Depends(get_current_token)):
     with session() as db:
         rows = [dict(r) for r in db.execute("SELECT * FROM lectures WHERE course_id=? ORDER BY date, number", (course_id,)).fetchall()]
     for r in rows:
@@ -81,7 +181,7 @@ def lectures(course_id: int):
 
 
 @app.get("/api/courses/{course_id}/notes-index")
-def notes_index(course_id: int):
+def notes_index(course_id: int, token: str = Depends(get_current_token)):
     """Id delle lezioni del corso che hanno già gli appunti AI (per lo stato nell'elenco)."""
     with session() as db:
         return [r[0] for r in db.execute(
@@ -89,7 +189,7 @@ def notes_index(course_id: int):
 
 
 @app.get("/api/lectures/{lecture_id}")
-def lecture(lecture_id: int):
+def lecture(lecture_id: int, token: str = Depends(get_current_token)):
     lec = _lecture(lecture_id)
     d = uni_path(lec["folder"])
     meta = _json(d / "lezione.json", {})
@@ -153,7 +253,7 @@ def lecture(lecture_id: int):
 
 
 @app.get("/video/{lecture_id}/{kind}")
-def lecture_video(lecture_id: int, kind: str):
+def lecture_video(lecture_id: int, kind: str, token: str = Depends(get_current_token)):
     """Video archiviato su Drive: solo percorsi registrati in lezione.json e dentro media_root."""
     from ..media import storage
     meta = _json(uni_path(_lecture(lecture_id)["folder"]) / "lezione.json", {})
@@ -165,7 +265,7 @@ def lecture_video(lecture_id: int, kind: str):
 
 
 @app.get("/api/storage")
-def storage_status():
+def storage_status(token: str = Depends(get_current_token)):
     import shutil
 
     from ..media import storage
@@ -175,7 +275,7 @@ def storage_status():
 
 
 @app.get("/media/{lecture_id}/{rel:path}")
-def media(lecture_id: int, rel: str):
+def media(lecture_id: int, rel: str, token: str = Depends(get_current_token)):
     base = uni_path(_lecture(lecture_id)["folder"]).resolve()
     target = (base / rel).resolve()
     if not target.is_relative_to(base) or not target.is_file():
@@ -184,7 +284,7 @@ def media(lecture_id: int, rel: str):
 
 
 @app.get("/api/search")
-def api_search(q: str, course_id: int | None = None, year: int | None = None, limit: int = 20):
+def api_search(q: str, course_id: int | None = None, year: int | None = None, limit: int = 20, token: str = Depends(get_current_token)):
     from ..search import search
     ids = [course_id] if course_id is not None else None
     if ids is None and year is not None:
@@ -202,7 +302,7 @@ def _document(doc_id: int) -> dict:
 
 
 @app.get("/api/docs/{doc_id}")
-def doc_info(doc_id: int):
+def doc_info(doc_id: int, token: str = Depends(get_current_token)):
     d = _document(doc_id)
     with session() as db:
         d["pages"] = [dict(r) for r in db.execute("SELECT page, chars, is_scan, is_visual FROM pages WHERE doc_id=?", (doc_id,))]
@@ -210,7 +310,7 @@ def doc_info(doc_id: int):
 
 
 @app.get("/api/docs/{doc_id}/file")
-def doc_file(doc_id: int):
+def doc_file(doc_id: int, token: str = Depends(get_current_token)):
     path = uni_path(_document(doc_id)["path"])
     if not path.is_file():
         raise HTTPException(404)
@@ -218,7 +318,7 @@ def doc_file(doc_id: int):
 
 
 @app.get("/api/docs/{doc_id}/page/{page}.png")
-def doc_page(doc_id: int, page: int, dpi: int = 110):
+def doc_page(doc_id: int, page: int, dpi: int = 110, token: str = Depends(get_current_token)):
     from ..ingest.extract import render_page
     d = _document(doc_id)
     if d["kind"] != "pdf" or not 1 <= page <= (d["n_pages"] or 0):
@@ -227,7 +327,7 @@ def doc_page(doc_id: int, page: int, dpi: int = 110):
 
 
 @app.get("/api/lectures/{lecture_id}/notes")
-def lecture_notes(lecture_id: int):
+def lecture_notes(lecture_id: int, token: str = Depends(get_current_token)):
     from ..ai.lecture_notes import existing
     out = existing(lecture_id)
     if not out or not uni_path(out["md_path"]).exists():
@@ -239,7 +339,7 @@ def lecture_notes(lecture_id: int):
 
 
 @app.post("/api/lectures/{lecture_id}/notes")
-def request_notes(lecture_id: int):
+def request_notes(lecture_id: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     """Avviato SOLO da un click: mette in coda la lezione per l'elaborazione AI."""
     from ..ai import jobs
     _lecture(lecture_id)
@@ -247,7 +347,7 @@ def request_notes(lecture_id: int):
 
 
 @app.post("/api/ai/queue")
-def queue_course(course_id: int, limit: int = 3):
+def queue_course(course_id: int, limit: int = 3, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     """Coda manuale: le prime N lezioni del corso non ancora elaborate."""
     from ..ai import jobs
     from ..ai.lecture_notes import existing
@@ -259,20 +359,58 @@ def queue_course(course_id: int, limit: int = 3):
 
 
 @app.get("/api/ai/status")
-def ai_status():
+def ai_status(token: str = Depends(get_current_token)):
+    """RESTituisce lo stato della coda AI e i job attivi."""
     from ..ai import jobs
     return jobs.status()
 
 
+@app.get("/api/ai/providers")
+def ai_providers(token: str = Depends(get_current_token)) -> dict:
+    """Restituisce lo stato di ogni provider AI (local, gemini, freellm, claude)."""
+    from ..ai.llm import (
+        local_llm_healthy,
+        get_local_llm_url,
+        local_llm_candidates,
+        invalidate_local_llm,
+    )
+    from ..ai.claude_runner import check_budget, last_usage
+
+    def provider_status(name: str) -> dict:
+        if name == "local":
+            healthy = local_llm_healthy()
+            url = get_local_llm_url()
+            return {"available": bool(healthy and url), "healthy": bool(healthy), "url": url}
+        elif name == "gemini":
+            return {"available": True, "healthy": True, "url": None}  # gemini via external gateway
+        elif name == "freellm":
+            return {"available": True, "healthy": True, "url": None}  # freellm via gateway
+        elif name == "claude":
+            status = check_budget()
+            usage = last_usage()
+            util = usage.get("utilization")
+            resets = usage.get("resets_at")
+            return {"available": bool(status), "healthy": bool(status), "url": None,
+                    "utilization": util, "resets_at": resets}
+        return {"available": False, "healthy": False, "url": None}
+
+    return {
+        "local": provider_status("local"),
+        "gemini": provider_status("gemini"),
+        "freellm": provider_status("freellm"),
+        "claude": provider_status("claude"),
+    }
+
+
 @app.get("/api/ai/pannello")
-def ai_pannello():
+def ai_pannello(token: str = Depends(get_current_token)):
     """Coda AI, arretrati, finestra Pro e turno di notte: solo SQL e file locali, niente LLM né Claude."""
     from ..ai import pannello
     return pannello.dati()
 
 
 @app.post("/api/ai/cancel")
-def ai_cancel():
+def ai_cancel(_csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..ai import jobs
     return {"cancelled": jobs.cancel_queued()}
 
@@ -311,13 +449,13 @@ def _need(kind: str, ident: int) -> None:
 
 
 @app.get("/api/flashcards/due")
-def cards_due(course_id: int | None = None, limit: int = 50):
+def cards_due(course_id: int | None = None, limit: int = 50, token: str = Depends(get_current_token)):
     from ..study import flashcards
     return {"cards": flashcards.due_cards(course_id, limit), "stats": flashcards.stats(course_id)}
 
 
 @app.post("/api/flashcards/import")
-def cards_import(course_id: int | None = None):
+def cards_import(course_id: int | None = None, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import flashcards
     return {"added": flashcards.import_from_notes(course_id)}
 
@@ -327,7 +465,7 @@ class Review(BaseModel):
 
 
 @app.post("/api/flashcards/{card_id}/review")
-def card_review(card_id: int, body: Review):
+def card_review(card_id: int, body: Review, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import flashcards
     if body.rating not in (1, 2, 3, 4):
         raise HTTPException(400, "rating 1-4")
@@ -338,7 +476,7 @@ def card_review(card_id: int, body: Review):
 
 
 @app.get("/api/flashcards/anki.tsv")
-def cards_anki(course_id: int | None = None):
+def cards_anki(course_id: int | None = None, token: str = Depends(get_current_token)):
     from ..study import flashcards
     return PlainTextResponse(flashcards.anki_tsv(course_id), media_type="text/tab-separated-values",
                              headers={"Content-Disposition": 'attachment; filename="studyhub_flashcard.txt"'})
@@ -354,19 +492,19 @@ class Ask(BaseModel):
 
 
 @app.get("/api/tutor/threads")
-def tutor_threads():
+def tutor_threads(token: str = Depends(get_current_token)):
     from ..study import tutor
     return tutor.threads()
 
 
 @app.post("/api/tutor/threads")
-def tutor_new(body: NewThread):
+def tutor_new(body: NewThread, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import tutor
     return tutor.thread(tutor.new_thread(body.course_id, body.mode))
 
 
 @app.get("/api/tutor/threads/{thread_id}")
-def tutor_get(thread_id: int):
+def tutor_get(thread_id: int, token: str = Depends(get_current_token)):
     from ..study import tutor
     try:
         return tutor.thread(thread_id)
@@ -375,7 +513,7 @@ def tutor_get(thread_id: int):
 
 
 @app.post("/api/tutor/threads/{thread_id}/ask")
-def tutor_ask(thread_id: int, body: Ask):
+def tutor_ask(thread_id: int, body: Ask, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import tutor
     if not body.question.strip():
         raise HTTPException(400, "Domanda vuota")
@@ -384,19 +522,19 @@ def tutor_ask(thread_id: int, body: Ask):
 
 
 @app.get("/api/lectures/{lecture_id}/quizzes")
-def lecture_quizzes(lecture_id: int):
+def lecture_quizzes(lecture_id: int, token: str = Depends(get_current_token)):
     from ..study import quiz
     return quiz.list_for_lecture(lecture_id)
 
 
 @app.post("/api/lectures/{lecture_id}/quiz")
-def lecture_quiz_new(lecture_id: int, n: int = 10):
+def lecture_quiz_new(lecture_id: int, n: int = 10, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import quiz
     return _ai_call(quiz.generate, lecture_id, max(4, min(n, 20)))
 
 
 @app.get("/api/quizzes/{quiz_id}")
-def quiz_get(quiz_id: int):
+def quiz_get(quiz_id: int, token: str = Depends(get_current_token)):
     from ..study import quiz
     try:
         return quiz.get(quiz_id)
@@ -409,9 +547,13 @@ class Submit(BaseModel):
 
 
 @app.post("/api/quizzes/{quiz_id}/submit")
-def quiz_submit(quiz_id: int, body: Submit):
+def quiz_submit(quiz_id: int, body: Submit, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import quiz
     _need("quiz", quiz_id)
+    # answers è una lista non tipizzata: gli elementi malformati (stringhe, liste, float) vengono gestiti
+    # dentro quiz.submit come risposte non date; qui ci assicuriamo solo che la struttura di base sia valida.
+    if not isinstance(body.answers, list):
+        raise HTTPException(400, "answers deve essere una lista di risposte")
     return _ai_call(quiz.submit, quiz_id, body.answers)
 
 
@@ -425,13 +567,13 @@ class NewExam(BaseModel):
 
 
 @app.get("/api/plan")
-def plan():
+def plan(token: str = Depends(get_current_token)):
     from ..study import planner
     return planner.today_plan()
 
 
 @app.post("/api/exams")
-def exam_add(body: NewExam):
+def exam_add(body: NewExam, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import exam
     _need("course", body.course_id)
     try:
@@ -441,14 +583,14 @@ def exam_add(body: NewExam):
 
 
 @app.delete("/api/exams/{exam_id}")
-def exam_delete(exam_id: int):
+def exam_delete(exam_id: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import exam
     exam.delete_exam(exam_id)
     return {"ok": True}
 
 
 @app.get("/api/courses/{course_id}/exam")
-def course_exam(course_id: int):
+def course_exam(course_id: int, token: str = Depends(get_current_token)):
     from ..study import exam
     _need("course", course_id)
     prof = exam.get_profile(course_id)
@@ -466,20 +608,20 @@ class ProfileRequest(BaseModel):
 
 
 @app.post("/api/courses/{course_id}/exam/profile")
-def course_exam_profile(course_id: int, body: ProfileRequest | None = None, force: bool = False):
+def course_exam_profile(course_id: int, body: ProfileRequest | None = None, force: bool = False, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import exam
     f = (body.force if body else False) or force
     return _ai_call(exam.build_profile, course_id, f)
 
 
 @app.post("/api/courses/{course_id}/exam/sims")
-def course_exam_sim(course_id: int):
+def course_exam_sim(course_id: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import exam
     return _ai_call(exam.generate_sim, course_id)
 
 
 @app.get("/api/sims/{sim_id}")
-def sim_get(sim_id: int):
+def sim_get(sim_id: int, token: str = Depends(get_current_token)):
     from ..study import exam
     try:
         return exam.get_sim(sim_id)
@@ -493,16 +635,18 @@ class SimSubmit(BaseModel):
 
 
 @app.post("/api/sims/{sim_id}/submit")
-def sim_submit(sim_id: int, body: SimSubmit):
+def sim_submit(sim_id: int, body: SimSubmit, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import exam
     _need("sim", sim_id)
+    if not isinstance(body.answers, list):
+        raise HTTPException(400, "answers deve essere una lista di risposte")
     return _ai_call(exam.grade_sim, sim_id, body.answers, body.elapsed_min)
 
 
 # --- StudyTok Feed (Shorts / Micro-Concetti verticali) --------------------------------
 
 @app.get("/api/feed")
-def get_feed(course_id: int | None = None, limit: int = 30):
+def get_feed(course_id: int | None = None, limit: int = 30, token: str = Depends(get_current_token)):
     """Restituisce le micro-card per StudyTok (Shorts format):
     argomenti prioritari con hook robotico, widget interattivo, audio clip o slide."""
     with session() as db:
@@ -573,7 +717,7 @@ def get_feed(course_id: int | None = None, limit: int = 30):
 # --- Studia: corso → argomenti, sessioni guidate, prontezza ---------------------------
 
 @app.get("/api/study")
-def study_courses():
+def study_courses(token: str = Depends(get_current_token)):
     """I corsi attivi con la prontezza stimata, per la scelta del corso da studiare."""
     from ..study import bank, mastery
     from ..study.archetype import get_course_archetype
@@ -603,7 +747,7 @@ def study_courses():
 
 
 @app.get("/api/fullrun")
-def fullrun_status():
+def fullrun_status(token: str = Depends(get_current_token)):
     from .. import fullrun
     return fullrun.status()
 
@@ -614,7 +758,7 @@ _login_proc: subprocess.Popen | None = None
 
 
 @app.get("/api/setup")
-def setup_status():
+def setup_status(token: str = Depends(get_current_token)):
     from .. import doctor, fullrun
     checks = doctor.checks()
     return {"checks": checks, "ready": all(c["ok"] for c in checks if c["required"]),
@@ -623,7 +767,7 @@ def setup_status():
 
 
 @app.post("/api/setup/login")
-def setup_login():
+def setup_login(_csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     """Apre la finestra di Chromium per il login SSO: le credenziali le scrivi tu, lì."""
     global _login_proc
     if _login_proc is None or _login_proc.poll() is not None:
@@ -633,7 +777,7 @@ def setup_login():
 
 
 @app.post("/api/setup/courses")
-def setup_courses():
+def setup_courses(_csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..sync.auth import LoginRequired, get_session
     from ..sync.catalog import refresh_catalog
     from ..sync.moodle import Moodle
@@ -649,7 +793,7 @@ def setup_courses():
 
 
 @app.post("/api/setup/fullrun")
-def setup_fullrun():
+def setup_fullrun(_csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     """Avvia (o riprende) l'elaborazione completa in un processo a sé: continua anche chiudendo l'app."""
     from .. import fullrun
     from ..config import APP_DIR
@@ -685,7 +829,7 @@ def _order_in_background(course_id: int) -> None:
 
 
 @app.get("/api/study/{course_id}")
-def study_overview(course_id: int):
+def study_overview(course_id: int, token: str = Depends(get_current_token)):
     from ..study import bank, mastery
     _need("course", course_id)
     _order_in_background(course_id)
@@ -697,7 +841,7 @@ class PrepareRequest(BaseModel):
 
 
 @app.post("/api/study/{course_id}/prepare")
-def study_prepare(course_id: int, body: PrepareRequest | None = None, limit: int | None = None):
+def study_prepare(course_id: int, body: PrepareRequest | None = None, limit: int | None = None, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     """Avviato SOLO da un clic: analizza il materiale non ancora trasformato in domande."""
     from ..study import bank
     _need("course", course_id)
@@ -706,7 +850,7 @@ def study_prepare(course_id: int, body: PrepareRequest | None = None, limit: int
 
 
 @app.get("/api/study/{course_id}/scan")
-def study_scan(course_id: int):
+def study_scan(course_id: int, token: str = Depends(get_current_token)):
     """Quante unità nuove ci sono (senza AI): serve a proporre l'aggiornamento dopo un sync."""
     from ..study import bank
     _need("course", course_id)
@@ -715,7 +859,7 @@ def study_scan(course_id: int):
 
 
 @app.post("/api/study/{course_id}/prepare/stop")
-def study_prepare_stop(course_id: int):
+def study_prepare_stop(course_id: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import bank
     bank.stop_prepare(course_id)
     return bank.prepare_status(course_id)
@@ -727,7 +871,7 @@ class NewSession(BaseModel):
 
 
 @app.post("/api/study/{course_id}/sessions")
-def study_session_start(course_id: int, body: NewSession):
+def study_session_start(course_id: int, body: NewSession, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import session as ss
     try:
         return ss.start(course_id, body.minutes, body.focus_topic)
@@ -736,7 +880,7 @@ def study_session_start(course_id: int, body: NewSession):
 
 
 @app.get("/api/study/sessions/{sid}")
-def study_session_get(sid: int):
+def study_session_get(sid: int, token: str = Depends(get_current_token)):
     from ..study import session as ss
     try:
         return ss.get(sid)
@@ -755,7 +899,7 @@ class Answer(BaseModel):
 
 
 @app.post("/api/study/sessions/{sid}/answer")
-def study_session_answer(sid: int, body: Answer):
+def study_session_answer(sid: int, body: Answer, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import session as ss
     _need("session", sid)
     return _ai_call(ss.answer, sid, body.idx, body.model_dump())
@@ -770,10 +914,13 @@ class PhotoAnswer(BaseModel):
 
 
 @app.post("/api/study/sessions/{sid}/photo")
-def study_session_photo(sid: int, body: PhotoAnswer):
+def study_session_photo(sid: int, body: PhotoAnswer, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     """Correzione da foto di una domanda della sessione: stesso percorso AI (coda/lock) dell'esame, l'esito conta come risposta."""
     from ..study import session as ss
     _need("session", sid)
+    # Foto malformate devono essere intercettate subito: se images non è una lista di stringhe → 400 pulito.
+    if not isinstance(body.images, list) or not all(isinstance(u, str) for u in body.images):
+        raise HTTPException(400, "images deve essere una lista di data URL immagine")
     try:
         return _ai_call(ss.answer_photo, sid, body.idx, body.model_dump())
     except OverflowError as e:
@@ -781,7 +928,7 @@ def study_session_photo(sid: int, body: PhotoAnswer):
 
 
 @app.post("/api/study/sessions/{sid}/reveal/{idx}")
-def study_session_reveal(sid: int, idx: int):
+def study_session_reveal(sid: int, idx: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import session as ss
     _need("session", sid)
     try:
@@ -791,7 +938,7 @@ def study_session_reveal(sid: int, idx: int):
 
 
 @app.post("/api/study/sessions/{sid}/finish")
-def study_session_finish(sid: int):
+def study_session_finish(sid: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import session as ss
     _need("session", sid)
     return ss.finish(sid)
@@ -803,7 +950,7 @@ class Chapter(BaseModel):
 
 
 @app.post("/api/study/{course_id}/chapters")
-def study_chapter(course_id: int, body: Chapter):
+def study_chapter(course_id: int, body: Chapter, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     """Escludi (o rimetti) un capitolo che non devi studiare, es. la parte di Analisi 1 già superata."""
     with session() as db:
         n = db.execute("""UPDATE study_topics SET hidden=? WHERE course_id=? AND chapter=? AND hidden IN (0, 2)""",
@@ -812,14 +959,14 @@ def study_chapter(course_id: int, body: Chapter):
 
 
 @app.get("/api/study/{course_id}/chapters/excluded")
-def study_chapters_excluded(course_id: int):
+def study_chapters_excluded(course_id: int, token: str = Depends(get_current_token)):
     with session() as db:
         return [r[0] for r in db.execute("""SELECT chapter FROM study_topics WHERE course_id=? AND hidden=2
                                             GROUP BY chapter ORDER BY MIN(position)""", (course_id,))]
 
 
 @app.get("/api/lectures/{lecture_id}/topics")
-def lecture_topics(lecture_id: int):
+def lecture_topics(lecture_id: int, token: str = Depends(get_current_token)):
     """Gli argomenti di Studia nati da questa lezione registrata (per passare dal video alla lezione interattiva)."""
     with session() as db:
         return [dict(r) for r in db.execute(
@@ -857,20 +1004,20 @@ class Ask(BaseModel):
 
 
 @app.post("/api/study/topics/{topic_id}/ask")
-def study_ask(topic_id: int, body: Ask):
+def study_ask(topic_id: int, body: Ask, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import lesson
     _need("topic", topic_id)
     return {"answer_md": _ai_call(lesson.ask, topic_id, body.question, body.context, body.mode)}
 
 
 @app.post("/api/study/{course_id}/lessons/prefetch")
-def study_prefetch(course_id: int, n: int = 4):
+def study_prefetch(course_id: int, n: int = 4, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import lesson
     return {"topics": lesson.prefetch(course_id, max(1, min(n, 40)))}
 
 
 @app.get("/api/study/topics/{topic_id}")
-def study_topic(topic_id: int):
+def study_topic(topic_id: int, token: str = Depends(get_current_token)):
     with session() as db:
         t = db.execute("SELECT * FROM study_topics WHERE id=?", (topic_id,)).fetchone()
         if not t:
@@ -882,7 +1029,7 @@ def study_topic(topic_id: int):
 
 
 @app.get("/api/courses/{course_id}/archetype")
-def get_course_archetype_api(course_id: int):
+def get_course_archetype_api(course_id: int, token: str = Depends(get_current_token)):
     """Restituisce il profilo didattico adattivo, il formato esame e le strategie per il corso."""
     from dataclasses import asdict
     from ..study.archetype import get_course_archetype
@@ -893,7 +1040,7 @@ def get_course_archetype_api(course_id: int):
 
 
 @app.get("/api/courses/{course_id}/moodle-strategy")
-def get_course_moodle_strategy_api(course_id: int):
+def get_course_moodle_strategy_api(course_id: int, token: str = Depends(get_current_token)):
     """Restituisce la strategia adattiva di download e classificazione dei materiali Moodle per il corso."""
     from dataclasses import asdict
     from ..study.moodle_strategy import evaluate_course_moodle_strategy
@@ -949,7 +1096,7 @@ def _generate_script_m(topic_name: str, widget: dict | None, lab: dict | None) -
 
 
 @app.get("/api/study/topics/{topic_id}/artifact")
-def study_topic_artifact(topic_id: int):
+def study_topic_artifact(topic_id: int, token: str = Depends(get_current_token)):
     """Scarica il file di laboratorio pratico (es. .m per MATLAB, .c per C/POSIX, .py per Python, .cir per SPICE, .tex per Matematica)."""
     from ..study import lesson
     from ..study.archetype import get_course_archetype
@@ -1005,7 +1152,7 @@ def study_topic_artifact(topic_id: int):
 
 
 @app.get("/api/study/topics/{topic_id}/script.m")
-def study_topic_script_m(topic_id: int):
+def study_topic_script_m(topic_id: int, token: str = Depends(get_current_token)):
     """Scarica lo script MATLAB dell'argomento (.m), pronto per l'esecuzione in MATLAB/Octave."""
     from ..study import lesson
     try:
@@ -1026,32 +1173,32 @@ def _download(path: Path, media_type: str) -> FileResponse:
 
 
 @app.get("/api/lectures/{lecture_id}/notes.pdf")
-def lecture_notes_pdf(lecture_id: int):
+def lecture_notes_pdf(lecture_id: int, token: str = Depends(get_current_token)):
     from .. import export
     return _download(_ai_call(export.lecture_pdf, lecture_id), "application/pdf")
 
 
 @app.get("/api/courses/{course_id}/dispensa.pdf")
-def course_dispensa(course_id: int):
+def course_dispensa(course_id: int, token: str = Depends(get_current_token)):
     from .. import export
     _need("course", course_id)
     return _download(_ai_call(export.course_pdf, course_id), "application/pdf")
 
 
 @app.get("/api/flashcards/anki.apkg")
-def cards_apkg(course_id: int | None = None):
+def cards_apkg(course_id: int | None = None, token: str = Depends(get_current_token)):
     from .. import export
     return _download(_ai_call(export.anki_apkg, course_id), "application/octet-stream")
 
 
 @app.get("/api/notifications")
-def notifications():
+def notifications(token: str = Depends(get_current_token)):
     from .. import notify
     return notify.unread()
 
 
 @app.post("/api/notifications/read")
-def notifications_read():
+def notifications_read(_csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from .. import notify
     notify.mark_read()
     return {"ok": True}
@@ -1077,7 +1224,7 @@ _clients: dict[str, dict] = {}
 
 
 @app.get("/api/version")
-def ui_version(request: Request, v: str | None = None):
+def ui_version(request: Request, v: str | None = None, token: str = Depends(get_current_token)):
     """La pagina lo confronta con la sua: se l'app è cambiata si ricarica da sola.
     Annota anche quale versione sta girando in ogni finestra (diagnostica: /api/version/clients)."""
     if v:
@@ -1087,7 +1234,7 @@ def ui_version(request: Request, v: str | None = None):
 
 
 @app.get("/api/version/clients")
-def ui_clients():
+def ui_clients(token: str = Depends(get_current_token)):
     return {"server": _ui_version(), "clients": _clients}
 
 

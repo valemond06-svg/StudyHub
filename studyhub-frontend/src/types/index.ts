@@ -1,15 +1,20 @@
 export interface Course {
   id: number
   fullname: string
-  shortname: string
   year_of_study: number
-  semester: number
   passed: boolean
+  active: number
   priority: number
-  folder: string
-  moodle_id: number
+  folder: string | null
+  /** numero di lezioni del corso (da /api/courses) */
+  lectures: number
+  /** numero di lezioni pronte (media_ok/trascritta) (da /api/courses) */
+  ready: number
+  // Campi frontend-only (non esposti dal backend, usati dalle pagine UI)
+  shortname?: string
+  semester?: number
   readiness?: number
-  next_exam_date?: string
+  next_exam_date?: string | null
 }
 
 export interface Lecture {
@@ -25,6 +30,19 @@ export interface Lecture {
   has_transcript: boolean
   has_notes: boolean
   folder: string
+  // Additional fields from lecture detail endpoint
+  panopto_id?: string | null
+  viewer_url?: string | null
+  panopto_embed_url?: string | null
+  media_url?: string | null
+  has_local_audio?: boolean
+  has_local_slides?: boolean
+  video_modes?: string[]
+  default_mode?: string
+  videos?: string[]
+  slides?: any[]
+  transcript?: { segments: any[] }
+  silences?: any[]
 }
 
 export interface Flashcard {
@@ -54,7 +72,11 @@ export interface Exam {
   course_id: number
   course: string
   date: string
-  type: string
+  kind: string
+  done: boolean
+  days_left: number | null
+  note?: string | null
+  created_at?: string
 }
 
 export interface ExamProfile {
@@ -181,35 +203,140 @@ export interface AIPanelData {
   last_night: NightTurn | null
 }
 
-export interface FeedItem {
-  id: string
-  type: "file" | "lecture" | "avviso"
+// --- Piano di oggi (/api/plan) ---------------------------------------------------
+
+export interface PlanFlashcards {
+  totale: number
+  da_ripassare: number
+  ripassate_oggi: number
+}
+
+export interface PlanTask {
+  kind: string
+  priority: number
   title: string
+  detail: string
+  ai?: boolean
+  course_id?: number
+  lecture_id?: number
+}
+
+export interface PlanCourse {
+  course_id: number
   course: string
-  course_id: number
-  date: string
-  icon: React.ReactNode
-}
-
-export interface FeedData {
-  due_flashcards: number
-  new_items: FeedItem[]
-}
-
-export interface PlanActivity {
-  type: string
-  label: string
-  icon: React.ReactNode
-}
-
-export interface RecommendedSession {
-  course_id: number
-  duration: number
-  reason: string
-  activities: PlanActivity[]
+  exam: Exam | null
+  days_left: number | null
+  lectures: number
+  with_notes: number
+  profile: boolean
+  sims: number
+  best_grade: number | null
+  urgency: number
 }
 
 export interface PlanData {
-  recommended_session?: RecommendedSession
-  next_topic?: Record<number, { name: string }>
+  today: string
+  exams: Exam[]
+  tasks: PlanTask[]
+  courses: PlanCourse[]
+  flashcards: PlanFlashcards
+}
+
+// --- Novità / notifiche (/api/notifications) ---------------------------------------
+
+export interface NotificationItem {
+  id: number
+  kind: string
+  course_id: number | null
+  title: string
+  body: string
+  ref: string | null
+  read: number
+  course: string | null
+  created_at: string
+}
+
+// --- Flashcard in scadenza (/api/flashcards/due) -----------------------------------
+
+export interface DueFlashcardsResponse {
+  cards: Flashcard[]
+  stats: { totale: number; da_ripassare: number; ripassate_oggi: number }
+}
+
+// --- AI Status (/api/ai/status) ----------------------------------------------------
+
+export interface AIJobStatus {
+  jobs: any[]
+  paused_reason: string | null
+  usage: any
+  backlog: any
+}
+
+export interface AIProvidersStatus {
+  local: { available: boolean; healthy: boolean; url: string | null }
+  gemini: { available: boolean; healthy: boolean; url: string | null }
+  freellm: { available: boolean; healthy: boolean; url: string | null }
+  claude: { available: boolean; healthy: boolean; url: string | null; utilization?: number; resets_at?: number }
+}
+
+// --- StudyTok Feed (/api/feed) -----------------------------------------------------
+
+export interface FeedShort {
+  id: string
+  topic_id: number
+  course_id: number
+  course_name: string
+  title: string
+  hook_md: string
+  widget: any | null
+  slide: { doc_id: number; page: number } | null
+  audio: { lecture_id: number; start_s: number; lecture_title: string } | null
+  exam_trick: string | null
+  archetipo_nome: string | null
+  has_pcp: boolean
+  has_sniper: boolean
+}
+
+export interface FeedResponse {
+  shorts: FeedShort[]
+}
+
+// --- Study Course Stats (/api/study/{id}) ------------------------------------------
+
+export interface StudyCourseStats {
+  streak: number
+  xp_total: number
+  xp_today: number
+  ready_exam: boolean
+}
+
+// --- AI Status (/api/ai/status) ----------------------------------------------------
+
+export interface AIStatusResponse {
+  local: boolean
+  gemini: boolean
+  freellm: boolean
+  claude: boolean
+}
+
+// --- Storage (/api/storage) --------------------------------------------------------
+
+export interface StorageStatus {
+  media_root: string | null
+  free_gb: number
+  // Frontend-computed/derived fields (not from backend)
+  db_size_mb?: number
+  media_size_gb?: number
+  cache_size_mb?: number
+  total_gb?: number
+  disk_total_gb?: number
+}
+
+// --- Fullrun (/api/fullrun) --------------------------------------------------------
+
+export interface FullrunStatus {
+  running: boolean
+  progress?: number
+  phase?: string
+  message?: string
 }

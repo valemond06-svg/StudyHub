@@ -16,21 +16,6 @@ GET = [
 ]
 
 
-@pytest.fixture
-def client(ambiente, monkeypatch):
-    import numpy as np
-    # Niente Ollama vero: la ricerca semantica riceve un vettore finto (cosi' si prova anche l'archivio vettoriale)
-    monkeypatch.setattr("studyhub.search.embed_query", lambda q: np.ones(1024, np.float32) / 32)
-    from studyhub.api.app import app
-    return TestClient(app, raise_server_exceptions=False)
-
-
-@pytest.mark.parametrize("url", GET)
-def test_get_senza_dati_non_da_500(client, url):
-    r = client.get(url)
-    assert r.status_code < 500, f"{url} -> {r.status_code}: {r.text[:200]}"
-
-
 POST = [
     ("/api/tutor/threads/999/ask", {"question": "x"}),
     ("/api/quizzes/999/submit", {"answers": []}),
@@ -42,6 +27,12 @@ POST = [
     ("/api/study/sessions/999/finish", None),
     ("/api/study/topics/999/ask", {"question": "x"}),
 ]
+
+
+@pytest.mark.parametrize("url", GET)
+def test_get_senza_dati_non_da_500(client, url):
+    r = client.get(url)
+    assert r.status_code < 500, f"{url} -> {r.status_code}: {r.text[:200]}"
 
 
 @pytest.mark.parametrize("url,body", POST)

@@ -286,11 +286,16 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
         score = 1.0 if choice is not None and int(choice) == it["correct"] else 0.0
         given = str(choice)
     elif payload.get("images"):  # foto dello svolgimento: stesso esito, stessa padronanza di una risposta scritta
+        images = payload["images"]
+        # `images` deve essere una lista di stringhe (data URL). Una stringa singola, un dict o un None
+        # farebbero fallire prepare_image su singoli caratteri o elementi → 400 pulito invece di un crash.
+        if not isinstance(images, list) or not all(isinstance(u, str) for u in images):
+            raise ValueError("Le foto devono arrivare come lista di immagini (data URL).")
         text = (payload.get("text") or "").strip()
         with session() as db:
             c = db.execute("SELECT fullname FROM courses WHERE id=?", (s["course_id"],)).fetchone()
-        score, feedback, crit_ok = _grade_photo(it, text, payload["images"], c[0] if c else None)
-        given = (text + "\n" if text else "") + f"[foto: {min(len(payload['images']), MAX_PHOTOS_PER_ANSWER)}]"
+        score, feedback, crit_ok = _grade_photo(it, text, images, c[0] if c else None)
+        given = (text + "\n" if text else "") + f"[foto: {min(len(images), MAX_PHOTOS_PER_ANSWER)}]"
         graded_by = "ai"
     elif (payload.get("text") or "").strip():
         given = payload["text"].strip()

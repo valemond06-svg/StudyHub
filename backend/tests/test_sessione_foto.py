@@ -22,8 +22,15 @@ def _png(w=300, h=200):
 
 @pytest.fixture
 def client(ambiente):
+    from conftest import AuthenticatedTestClient
     from studyhub.api.app import app
-    return TestClient(app, raise_server_exceptions=False)
+    from fastapi.testclient import TestClient
+
+    test_client = TestClient(app, raise_server_exceptions=False)
+    response = test_client.get("/")
+    csrf_token = response.cookies.get("csrf_token")
+
+    return AuthenticatedTestClient(test_client, "test-api-token-12345", csrf_token)
 
 
 @pytest.fixture

@@ -13,12 +13,14 @@ from html import unescape
 import httpx
 from playwright.sync_api import sync_playwright
 
-from ..config import settings
+from ..config import settings, _keyring_get, _keyring_set
 from ..sync.auth import MoodleSession
 
 PANOPTO = "https://univr.cloud.panopto.eu"
 INSTANCE = "MoodleDidattica"
 COOKIE_FILE = settings.secrets_dir / "panopto.json"
+KEYRING_SERVICE = "studyhub"
+KEYRING_PANOPTO_COOKIES = "panopto_cookies"
 _LINK_RE = re.compile(r"<a href='(https://[^']*Viewer\.aspx\?id=([0-9a-f-]{36})[^']*)'[^>]*>([^<]+)</a>")
 
 
@@ -110,14 +112,29 @@ def login_nel_profilo(ctx, page, sesskey: str, course_ids: list[int], attesa_s: 
     cookies = {c["name"]: c["value"] for c in ctx.cookies(PANOPTO)}
     if ".ASPXAUTH" not in cookies:
         return False
-    COOKIE_FILE.write_text(json.dumps(cookies), encoding="utf-8")
+    # Salva in keyring (primary) e file (fallback/compatibilità)
+    cookies_json = json.dumps(cookies)
+    if not _keyring_set(KEYRING_SERVICE, KEYRING_PANOPTO_COOKIES, cookies_json):
+        COOKIE_FILE.write_text(cookies_json, encoding="utf-8")
     return True
 
 
 class Panopto:
     def __init__(self, sess: MoodleSession):
         self.sess = sess
-        cookies = json.loads(COOKIE_FILE.read_text(encoding="utf-8")) if COOKIE_FILE.exists() else {}
+        # Carica cookie da keyring prima, poi file
+        cookies_data = _keyring_get(KEYRING_SERVICE, KEYRING_PANOPTO_COOKIES)
+        cookies = {}
+        if cookies_data:
+            try:
+                cookies = json.loads(cookies_data)
+            except Exception:
+                pass
+        if not cookies and COOKIE_FILE.exists():
+            try:
+                cookies = json.loads(COOKIE_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
         self.http = httpx.Client(base_url=PANOPTO, cookies=cookies, follow_redirects=True,
                                  timeout=httpx.Timeout(30, read=120))
 
@@ -126,7 +143,9 @@ class Panopto:
 
     def _relogin(self, viewer_url: str) -> None:
         cookies = _login_with_browser(self.sess, viewer_url)
-        COOKIE_FILE.write_text(json.dumps(cookies), encoding="utf-8")
+        cookies_json = json.dumps(cookies)
+        if not _keyring_set(KEYRING_SERVICE, KEYRING_PANOPTO_COOKIES, cookies_json):
+            COOKIE_FILE.write_text(cookies_json, encoding="utf-8")
         self.http.cookies.clear()
         for k, v in cookies.items():
             self.http.cookies.set(k, v, domain="univr.cloud.panopto.eu")

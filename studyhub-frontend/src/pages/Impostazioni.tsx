@@ -23,6 +23,7 @@ export function Impostazioni() {
   const [freellmUrl, setFreellmUrl] = useState("")
 
   const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: api.getStorage })
+  const { data: aiProviders } = useQuery({ queryKey: ["aiProviders"], queryFn: api.getAIProviders })
   const { data: aiStatus } = useQuery({ queryKey: ["aiStatus"], queryFn: api.getAIStatus })
 
   return (
@@ -76,10 +77,10 @@ export function Impostazioni() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 {[
-                  { id: "local", name: "LLM Locale (35B)", icon: Cpu, status: aiStatus?.local?.available ? "online" : "offline", desc: "Qwen 35B su PC fisso, 1 slot, timeout 20min" },
-                  { id: "gemini", name: "Gemini (Antigravity)", icon: TestTube, status: aiStatus?.gemini?.available ? "online" : "offline", desc: "Google AI Pro via agy, sandbox isolato" },
-                  { id: "freellm", name: "FreeLLMAPI (Brain)", icon: Server, status: aiStatus?.freellm?.available ? "online" : "offline", desc: "Catena curata: Qwen 3.8, Nemotron, Flash..." },
-                  { id: "claude", name: "Claude Pro (Sonnet/Haiku)", icon: Brain, status: aiStatus?.claude?.available ? "online" : "offline", desc: "Abbonamento Pro, finestra 5h, solo on-demand" },
+                  { id: "local", name: "LLM Locale (35B)", icon: Cpu, status: aiProviders?.local?.available ? "online" : "offline", desc: "Qwen 35B su PC fisso, 1 slot, timeout 20min" },
+                  { id: "gemini", name: "Gemini (Antigravity)", icon: TestTube, status: aiProviders?.gemini?.available ? "online" : "offline", desc: "Google AI Pro via agy, sandbox isolato" },
+                  { id: "freellm", name: "FreeLLMAPI (Brain)", icon: Server, status: aiProviders?.freellm?.available ? "online" : "offline", desc: "Catena curata: Qwen 3.8, Nemotron, Flash..." },
+                  { id: "claude", name: "Claude Pro (Sonnet/Haiku)", icon: Brain, status: aiProviders?.claude?.available ? "online" : "offline", desc: "Abbonamento Pro, finestra 5h, solo on-demand" },
                 ].map((p) => (
                   <div key={p.id} className="flex items-center justify-between p-4 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/50">
                     <div className="flex items-center gap-3">
@@ -207,18 +208,18 @@ export function Impostazioni() {
                 <div className="flex-1">
                   <Label>Utilizzo finestra corrente</Label>
                   <div className="flex items-center gap-2 mt-1">
-                    <Progress value={aiStatus?.claude?.utilization ? Math.round(aiStatus.claude.utilization * 100) : 0} className="flex-1 h-3" />
+                    <Progress value={aiProviders?.claude?.utilization ? Math.round(aiProviders.claude.utilization * 100) : 0} className="flex-1 h-3" />
                     <span className="text-sm font-mono text-neutral-500 w-16 text-right">
-                      {aiStatus?.claude?.utilization ? Math.round(aiStatus.claude.utilization * 100) : 0}%
+                      {aiProviders?.claude?.utilization ? Math.round(aiProviders.claude.utilization * 100) : 0}%
                     </span>
                   </div>
                 </div>
-                <Badge variant={aiStatus?.claude?.utilization && aiStatus.claude.utilization > 0.7 ? "warning" : "success"}>
-                  {aiStatus?.claude?.utilization && aiStatus.claude.utilization > 0.7 ? "⚠ Vicino al limite" : "OK"}
+                <Badge variant={aiProviders?.claude?.utilization && aiProviders.claude.utilization > 0.7 ? "warning" : "success"}>
+                  {aiProviders?.claude?.utilization && aiProviders.claude.utilization > 0.7 ? "⚠ Vicino al limite" : "OK"}
                 </Badge>
               </div>
               <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                Reset alle {aiStatus?.claude?.resets_at ? new Date(aiStatus.claude.resets_at * 1000).toLocaleTimeString('it-IT') : "—"}
+                Reset alle {aiProviders?.claude?.resets_at ? new Date(aiProviders.claude.resets_at * 1000).toLocaleTimeString('it-IT') : "—"}
               </p>
             </CardContent>
           </Card>

@@ -9,6 +9,12 @@
   sotto le lezioni e sotto la stessa soglia; dopo l'OCR nascono le unità di studio del corso.
 - Se la finestra di Claude Pro è quasi piena, la coda si mette in pausa fino al reset e poi riparte.
 - Durante il turno di notte niente embedding dopo gli appunti (il 35B ha bisogno di tutta la RAM).
+
+- P1.1 CRITICAL FIX: race condition duplicazione jobs. Ho aggiunto unique constraint parziale
+  su (kind, target_id) WHERE status IN ('in_coda','in_corso'). La funzione _insert gestisce
+  IntegrityError: se il job esiste già in quei status, non lo duplica ma applica priorità
+  massima al job esistente (restituisce None). Questo previene elaborazioni doppie e costi
+  duplicati.
 """
 from __future__ import annotations
 
@@ -77,14 +83,30 @@ def _now() -> str:
 
 
 def _insert(db, lecture_id: int, priority: int, kind: str = "lecture_notes") -> int | None:
-    """Nuovo job, o priorità alzata se il target è già in coda (un click scavalca gli arretrati)."""
+    """Nuovo job, o priorità alzata se il target è già in coda (un click scavalga gli arretrati).
+
+    P1.1 CRITICAL FIX: race condition. La unique constraint parziale impedisce duplicazioni quando
+    due chiamate simultanee (server + fullrun + CLI) passano entrambe la SELECT e tentano di INSERT:
+    la seconda riceve IntegrityError e non duplica il job.
+    """
     row = db.execute("SELECT id FROM ai_jobs WHERE kind=? AND target_id=? AND status IN ('in_coda','in_corso')",
                      (kind, lecture_id)).fetchone()
     if row:
         db.execute("UPDATE ai_jobs SET priority=MAX(priority, ?) WHERE id=?", (priority, row["id"]))
         return None
-    return db.execute("INSERT INTO ai_jobs (kind, target_id, created_at, priority) VALUES (?, ?, ?, ?)",
-                      (kind, lecture_id, _now(), priority)).lastrowid
+    try:
+        return db.execute("INSERT INTO ai_jobs (kind, target_id, created_at, priority) VALUES (?, ?, ?, ?)",
+                          (kind, lecture_id, _now(), priority)).lastrowid
+    except Exception as e:
+        # P1.1: IntegrityError indica race condition (due chiamate simultanee). Gestiamo col
+        # fallback: selezioniamo di nuovo per sicurezza e aggiorniamo priorità al massimo.
+        log.warning("ai_jobs race condition (duplicazione %s): %s", (kind, lecture_id), str(e)[:100])
+        row = db.execute("SELECT id FROM ai_jobs WHERE kind=? AND target_id=? AND status IN ('in_coda','in_corso')",
+                         (kind, lecture_id)).fetchone()
+        if row:
+            db.execute("UPDATE ai_jobs SET priority=MAX(priority, ?) WHERE id=?", (priority, row["id"]))
+            return None
+        raise  # ri-raised se il fallback fallisce (probabilmente un altro status)
 
 
 def enqueue(lecture_ids: list[int], priority: int = MANUAL_PRIORITY) -> list[int]:

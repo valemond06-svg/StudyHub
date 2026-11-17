@@ -332,10 +332,16 @@ def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None
         head = (f"\n--- Domanda {i} · {q['parte']} · {q['tipo']} · {q['punti']:g} punti ---\n{q['testo_md']}\n"
                 f"Soluzione: {q['soluzione_md']}\nCriteri: {q['criteri_md']}\n")
         if q["tipo"] == "multipla":
-            scelta = a.get("scelta")
-            ok = scelta is not None and int(scelta) == q["corretta"]
+            scelta = a.get("scelta") if isinstance(a, dict) else None
+            # Solo un intero dentro il numero di opzioni è una scelta valida: una stringa "1.0", un float o un
+            # indice fuori range romperebbero int()/l'indicizzazione → qui vanno come risposta non data, mai 500.
+            if not isinstance(scelta, int) or isinstance(scelta, bool):
+                scelta = None
+            elif scelta < 0 or scelta >= len(q["opzioni"]):
+                scelta = None
+            ok = scelta is not None and scelta == q["corretta"]
             head += (f"Opzioni: {q['opzioni']}\nRisposta dello studente: "
-                     f"{'nessuna' if scelta is None else q['opzioni'][int(scelta)]} → {'CORRETTA' if ok else 'ERRATA'}"
+                     f"{'nessuna' if scelta is None else q['opzioni'][scelta]} → {'CORRETTA' if ok else 'ERRATA'}"
                      " (già verificata: assegna tutti i punti se corretta, 0 altrimenti)")
             content.append({"type": "text", "text": head})
             continue

@@ -17,13 +17,19 @@ from urllib.parse import unquote
 import httpx
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
-from ..config import settings
+from ..config import settings, _keyring_get, _keyring_set
 
 log = logging.getLogger(__name__)
 
 SESSION_FILE = settings.secrets_dir / "session.json"
 TOKEN_FILE = settings.secrets_dir / "token.json"
 LOGIN_TIMEOUT_S = 600
+
+# Keyring service e username per i segreti
+KEYRING_SERVICE = "studyhub"
+KEYRING_MOODLE_SESSION = "moodle_session"
+KEYRING_PANOPTO_COOKIES = "panopto_cookies"
+KEYRING_MOODLE_TOKEN = "moodle_token"
 
 
 class LoginRequired(Exception):
@@ -114,13 +120,25 @@ def browser_login(interactive: bool, dopo_login=None) -> MoodleSession:
             ctx.close()
 
     sess = MoodleSession(cookies=cookies, sesskey=sesskey, token=token or _load_token())
-    SESSION_FILE.write_text(json.dumps({"cookies": cookies, "sesskey": sesskey}), encoding="utf-8")
+    # Salva in keyring (primary) e file (fallback/compatibilità)
+    session_data = json.dumps({"cookies": cookies, "sesskey": sesskey})
+    if not _keyring_set(KEYRING_SERVICE, KEYRING_MOODLE_SESSION, session_data):
+        SESSION_FILE.write_text(session_data, encoding="utf-8")
     if token:
-        TOKEN_FILE.write_text(json.dumps({"token": token, "saved": time.time()}), encoding="utf-8")
+        token_data = json.dumps({"token": token, "saved": time.time()})
+        if not _keyring_set(KEYRING_SERVICE, KEYRING_MOODLE_TOKEN, token_data):
+            TOKEN_FILE.write_text(token_data, encoding="utf-8")
     return sess
 
 
 def _load_token() -> str | None:
+    # Prova keyring prima, poi file
+    token_data = _keyring_get(KEYRING_SERVICE, KEYRING_MOODLE_TOKEN)
+    if token_data:
+        try:
+            return json.loads(token_data).get("token")
+        except Exception:
+            pass
     if TOKEN_FILE.exists():
         return json.loads(TOKEN_FILE.read_text(encoding="utf-8")).get("token")
     return None
@@ -143,11 +161,29 @@ def _token_valid(token: str | None) -> bool:
         return False
 
 
+def _load_session() -> dict | None:
+    """Carica la sessione Moodle da keyring o file."""
+    # Prova keyring prima
+    session_data = _keyring_get(KEYRING_SERVICE, KEYRING_MOODLE_SESSION)
+    if session_data:
+        try:
+            return json.loads(session_data)
+        except Exception:
+            pass
+    # Fallback a file
+    if SESSION_FILE.exists():
+        try:
+            return json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return None
+
+
 def get_session(interactive: bool = False, token_only_ok: bool = False) -> MoodleSession:
     """Sessione valida: prima i cookie salvati, poi SSO silenzioso, infine (se permesso) login a mano.
     Con token_only_ok basta il token dell'app (dura mesi): sufficiente per il sync dei corsi,
     non per Panopto e le API AJAX, che vogliono i cookie della sessione web."""
-    data = json.loads(SESSION_FILE.read_text(encoding="utf-8")) if SESSION_FILE.exists() else None
+    data = _load_session()
     if data:
         sess = MoodleSession(data["cookies"], data["sesskey"], _load_token())
         if _session_valid(sess):

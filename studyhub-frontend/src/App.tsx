@@ -1,11 +1,13 @@
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { QueryClientProvider } from "@tanstack/react-query"
 import { BrowserRouter, Routes, Route } from "react-router-dom"
 import { Toaster } from "@/components/ui/toaster"
 import { MainLayout } from "@/components/layout/MainLayout"
+import { CommandPalette } from "@/components/command-palette"
 import { Home } from "@/pages/Home"
 import { Loader2 } from "lucide-react"
 import { queryClient } from "@/lib/api"
+import { setCsrfToken, getCsrfToken } from "@/lib/api"
 
 const Corsi = lazy(() => import("@/pages/Corsi").then((m) => ({ default: m.Corsi })))
 const CorsoDetail = lazy(() => import("@/pages/CorsoDetail").then((m) => ({ default: m.CorsoDetail })))
@@ -21,7 +23,38 @@ function Loading() {
   )
 }
 
+function useCsrfToken() {
+  const [token, setToken] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Fetch CSRF token from the backend
+    const fetchCsrfToken = async () => {
+      try {
+        // GET /api/version to trigger cookie setting
+        const res = await fetch("/api/version", { credentials: "include" })
+        const data = await res.json()
+        // The CSRF cookie should now be set
+        const cookieToken = document.cookie
+          .split(";")
+          .find(c => c.trim().startsWith("csrf_token="))
+        if (cookieToken) {
+          setToken(cookieToken.split("=")[1])
+        }
+      } catch (e) {
+        console.error("Failed to fetch CSRF token:", e)
+      }
+    }
+
+    fetchCsrfToken()
+  }, [])
+
+  return token
+}
+
 function App() {
+  const csrfToken = useCsrfToken()
+  setCsrfToken(csrfToken)
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
@@ -46,6 +79,7 @@ function App() {
           </Route>
         </Routes>
         <Toaster />
+        <CommandPalette />
       </BrowserRouter>
     </QueryClientProvider>
   )
