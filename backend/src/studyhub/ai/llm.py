@@ -30,6 +30,7 @@ from pathlib import Path
 from ..config import LOCAL_DIR, settings, get_local_llm_key
 from ..filelock import LockTimeout, file_lock
 from .claude_runner import ClaudeError, RateLimited, run as claude_run
+from .privacy import check_external_allowed, log_provider_selection, scope as privacy_scope, PrivacyMode
 
 AGY_CWD = LOCAL_DIR / "agy-cwd"
 AGY_TIMEOUT_S = 8 * 60
@@ -519,7 +520,13 @@ def _local(system: str, text: str, schema: dict, quality: str, content: list[dic
     return LLMResult(data, "local", model_name, round(time.time() - t0, 1))
 
 
-def _gemini(system: str, text: str, schema: dict, quality: str) -> LLMResult:
+def _gemini(system: str, text: str, schema: dict, quality: str, kind: str | None = None, private: bool = False) -> LLMResult:
+    # Privacy check before calling external provider
+    decision = check_external_allowed("gemini", text, kind=kind, private=private)
+    log_provider_selection("gemini", decision, text)
+    if not decision.allowed:
+        raise ClaudeError(f"Privacy filter blocked Gemini: {decision.reason}")
+
     exe = _agy_exe()
     if not exe:
         raise ClaudeError("Antigravity (agy) non trovato.")
@@ -556,16 +563,26 @@ def _gemini(system: str, text: str, schema: dict, quality: str) -> LLMResult:
     return LLMResult(data, "gemini", model, round(time.time() - t0, 1))
 
 
-def run_json(system: str, text: str, schema: dict, quality: str = "accurato") -> LLMResult:
-    """Chiamata con output JSON (schema). quality: veloce (correzioni) | accurato (generazione)."""
+def run_json(system: str, text: str, schema: dict, quality: str = "accurato", kind: str | None = None, private: bool = False) -> LLMResult:
+    """Chiamata con output JSON (schema). quality: veloce (correzioni) | accurato (generazione).
+
+    Args:
+        kind: Tipo di job per privacy (es. "exam_answers", "transcript", "personal_notes")
+        private: Forza modalità privata (solo provider locali)
+    """
     errors = []
     for prov in provider_order():
         try:
             if prov == "local":
                 return _local(system, text, schema, quality)
             if prov == "gemini":
-                return _gemini(system, text, schema, quality)
+                return _gemini(system, text, schema, quality, kind=kind, private=private)
             # freellm rimosso: StudyHub non usa FreeLLMAPI (security/hygiene)
+            # Privacy check per Claude (provider esterno)
+            decision = check_external_allowed("claude", text, kind=kind, private=private)
+            log_provider_selection("claude", decision, text)
+            if not decision.allowed:
+                raise ClaudeError(f"Privacy filter blocked Claude: {decision.reason}")
             res = claude_run(system, [{"type": "text", "text": text}], schema, model=CLAUDE_MODELS[quality])
             return LLMResult(res.data, "claude", res.model, res.duration_s)
         except (ClaudeError, RateLimited, OSError) as e:
@@ -573,7 +590,7 @@ def run_json(system: str, text: str, schema: dict, quality: str = "accurato") ->
     raise ClaudeError(" · ".join(errors))
 
 
-def run_json_content(system: str, content: list[dict], schema: dict, quality: str = "accurato") -> LLMResult:
+def run_json_content(system: str, content: list[dict], schema: dict, quality: str = "accurato", kind: str | None = None, private: bool = False) -> LLMResult:
     """Come run_json ma con contenuto misto: blocchi {"type": "text", "text"} e {"type": "image", "media_type", "data"}.
 
     Le foto vanno solo a un modello con vista: server locale che le legge (rilevato da /props o /v1/models, altrimenti
@@ -582,18 +599,23 @@ def run_json_content(system: str, content: list[dict], schema: dict, quality: st
     images = [b for b in content if b.get("type") == "image"]
     text = "\n\n".join(b["text"] for b in content if b.get("type") == "text")
     if not images:
-        return run_json(system, text, schema, quality)
+        return run_json(system, text, schema, quality, kind=kind, private=private)
     for prov in provider_order():
         try:
             if prov == "local":
                 return _local(system, text, schema, quality, content=content)
             if prov == "claude":
+                # Privacy check per contenuto con immagini
+                decision = check_external_allowed("claude", text, kind=kind, private=private)
+                log_provider_selection("claude", decision, text)
+                if not decision.allowed:
+                    raise ClaudeError(f"Privacy filter blocked Claude (with images): {decision.reason}")
                 blocks = [{"type": "image", "source": {"type": "base64", "media_type": b["media_type"], "data": b["data"]}}
                           if b.get("type") == "image" else b for b in content]
                 res = claude_run(system, blocks, schema, model=CLAUDE_MODELS[quality])
                 return LLMResult(res.data, "claude", res.model, res.duration_s, images_sent=len(images))
         except (ClaudeError, RateLimited, OSError):
             continue  # NoVision, host caduto, quota: si prova il successivo
-    res = run_json(system, text, schema, quality)
+    res = run_json(system, text, schema, quality, kind=kind, private=private)
     res.images_sent = 0
     return res

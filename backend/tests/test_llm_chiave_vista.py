@@ -37,14 +37,35 @@ def test_chiave_vuota_se_non_configurata(ambiente):
 
 def test_ordine_di_lettura_della_chiave(ambiente, monkeypatch):
     from studyhub.config import settings
-    f = ambiente / "api-key"
+    import os
+    import sys
+    from pathlib import Path
+
+    # Use monkeypatch to redirect APPDATA to test temp directory
+    test_config_dir = ambiente / "brain-llm"
+    test_config_dir.mkdir()
+    monkeypatch.setenv("APPDATA", str(ambiente))
+
+    f = test_config_dir / "api-key"
     f.write_text("  dal-file \n", encoding="utf-8")
-    monkeypatch.setattr(llm, "_key_file", lambda: f)
+    # Need to clear env to test file
+    for var in ("STUDYHUB_LOCAL_LLM_KEY", "LOCAL_LLM_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    settings.extra.pop("local_llm_key", None)
     assert llm.get_local_llm_key() == "dal-file"
+
+    # Test 2: env var LOCAL_LLM_API_KEY (should override file)
     monkeypatch.setenv("LOCAL_LLM_API_KEY", "env-generica")
     assert llm.get_local_llm_key() == "env-generica"
+
+    # Test 3: config.yaml (deprecated) - env takes priority over config, but file takes priority over config
+    monkeypatch.delenv("LOCAL_LLM_API_KEY", raising=False)
     settings.extra["local_llm_key"] = "config"
+    # Need to remove the file too since it takes priority over config
+    f.unlink()
     assert llm.get_local_llm_key() == "config"
+
+    # Test 4: STUDYHUB_LOCAL_LLM_KEY (highest priority)
     monkeypatch.setenv("STUDYHUB_LOCAL_LLM_KEY", "env-studyhub")
     assert llm.get_local_llm_key() == "env-studyhub"
 

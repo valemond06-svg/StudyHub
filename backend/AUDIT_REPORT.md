@@ -1,6 +1,6 @@
 # StudyHub Backend Architecture Audit Report
 
-**Date:** 2026-11-17  
+**Date:** 2026-11-17 (Sprint 1.5 updates: 2026-11-17)  
 **Scope:** `C:\Users\valem\Desktop\02_Università\_StudyHub\backend\src\studyhub\` (read-only analysis)  
 **Baseline:** `ISSUES_REGISTER.md` (Backend section)  
 **Agent:** AGENT 1 — Backend & Data Architecture Auditor
@@ -13,6 +13,10 @@ The StudyHub backend is a sophisticated local-first system with SQLite + FTS5 + 
 
 **Total Issues Found:** 31 (12 from register confirmed + 19 new)  
 **Critical:** 4 | **High:** 8 | **Medium:** 12 | **Low:** 7
+
+### Sprint 1.5 Status (2026-11-17)
+✅ **RISOLTI IN SPRINT 1.5**: BE-001, BE-NEW-001, BE-NEW-003, BE-NEW-005, BE-NEW-006, BE-NEW-011, BE-NEW-017, BE-NEW-020
+⏳ **DA FARE SPRINT 2+**: Restanti issue
 
 ---
 
@@ -342,52 +346,54 @@ The StudyHub backend is a sophisticated local-first system with SQLite + FTS5 + 
 
 ---
 
-## Summary by Severity
+## Summary by Severity (Post Sprint 1.5)
 
 | Severity | Count | IDs |
 |----------|-------|-----|
-| **Critical** | 4 | BE-NEW-005 (CSRF), BE-NEW-011 (Job race), BE-NEW-017 (Browser profile), BE-NEW-020 (Panopto cookie) |
-| **High** | 8 | BE-NEW-001 (CORS), BE-NEW-003 (Path traversal), BE-NEW-014 (LLM health cache), BE-NEW-015 (Worker contention), BE-NEW-021 (GPU lock timeout), BE-NEW-025 (Semantic search silent fail), BE-NEW-026 (KN fallback OOM), BE-NEW-030 (Claude budget busy-loop) |
-| **Medium** | 12 | BE-001, BE-NEW-004, BE-NEW-006, BE-NEW-007, BE-NEW-010, BE-NEW-012, BE-NEW-013, BE-NEW-018, BE-NEW-019, BE-NEW-023, BE-NEW-028, BE-NEW-029, BE-NEW-031, BE-NEW-032, BE-NEW-034 |
+| **Critical** | 4 | ~~BE-NEW-005 (CSRF)~~ ✅, ~~BE-NEW-011 (Job race)~~ ✅, ~~BE-NEW-017 (Browser profile)~~ ✅, ~~BE-NEW-020 (Panopto cookie)~~ ✅ |
+| **High** | 8 | ~~BE-NEW-001 (CORS)~~ ✅, ~~BE-NEW-003 (Path traversal)~~ ✅, BE-NEW-014 (LLM health cache), BE-NEW-015 (Worker contention), BE-NEW-021 (GPU lock timeout), BE-NEW-025 (Semantic search silent fail), BE-NEW-026 (KN fallback OOM), BE-NEW-030 (Claude budget busy-loop) |
+| **Medium** | 12 | ~~BE-001~~ ✅, BE-NEW-004, ~~BE-NEW-006~~ ✅, BE-NEW-007, BE-NEW-010, BE-NEW-012, BE-NEW-013, BE-NEW-018, BE-NEW-019, BE-NEW-023, BE-NEW-028, BE-NEW-029, BE-NEW-031, BE-NEW-032, BE-NEW-034 |
 | **Low** | 7 | BE-002, BE-NEW-008, BE-NEW-009, BE-NEW-022, BE-NEW-024, BE-NEW-027, BE-NEW-033, BE-NEW-035, BE-NEW-036 |
+
+**Legenda**: ✅ = RISOLTO in Sprint 1.5 | ~~tachato~~ = riscontrato ma fixato
 
 ---
 
-## Recommended Fix Priority Order
+## Recommended Fix Priority Order (Aggiornato Sprint 1.5)
 
-1. **Week 1 (Security & Data Integrity):**
-   - BE-NEW-005: Implement CSRF protection (double-submit cookie)
-   - BE-NEW-001: Add CORS middleware with strict origins
-   - BE-NEW-003: Fix path traversal in `/media/` endpoint
-   - BE-NEW-017: Ephemeral browser context for login
-   - BE-NEW-020: Encrypt Panopto cookies with DPAPI
-   - BE-NEW-011: Fix job queue race with `INSERT OR IGNORE` + transaction
-   - BE-001: Remove duplicate migration
+### ✅ SETTIMANA 1 COMPLETATA (Sprint 1.5 - Security & Data Integrity):
+- ✅ BE-NEW-005: CSRF protection (double-submit cookie) — `csrf.py` nuovo
+- ✅ BE-NEW-001: CORS middleware con origini esplicite
+- ✅ BE-NEW-003: Path traversal fix in `/media/` — `is_relative_to()`
+- ✅ BE-NEW-017: Browser context login — keyring/fallback per session
+- ✅ BE-NEW-020: Panopto cookie — keyring/fallback encryption
+- ✅ BE-NEW-011: Job queue race — indice unico parziale v14
+- ✅ BE-001: Duplicate migration rimossa — 14 migrazioni = user_version
 
-2. **Week 2 (Reliability & Scalability):**
-   - BE-NEW-026: Implement sqlite-vec HNSW or add memory-safe fallback
-   - BE-NEW-014: Improve LLM health check caching logic
-   - BE-NEW-021: Align GPU lock timeout with transcription timeout
-   - BE-NEW-030: Add exponential backoff for Claude budget wait
-   - BE-NEW-015: Cross-process llama-server slot coordination
-   - BE-NEW-031: PID validation for fullrun lock
+### 🟠 SETTIMANA 2 (Sprint 2 - Reliability & Scalability):
+- BE-NEW-026: Implement sqlite-vec HNSW o fallback memory-safe
+- BE-NEW-014: Improve LLM health check caching logic
+- BE-NEW-021: Align GPU lock timeout con transcription timeout
+- BE-NEW-030: Exponential backoff per Claude budget wait
+- BE-NEW-015: Cross-process llama-server slot coordination
+- BE-NEW-031: PID validation per fullrun lock
 
-3. **Week 3 (Observability & Maintainability):**
-   - BE-NEW-002: Migrate to lifespan handlers
-   - BE-NEW-004: Add Pydantic strict validation
-   - BE-NEW-006: OS keyring for secrets
-   - BE-NEW-025: Explicit semantic search degradation signaling
-   - BE-NEW-032: Config validation with Pydantic
-   - BE-NEW-034: Deterministic question shuffle
+### 🟡 SETTIMANA 3 (Sprint 3 - Observability & Maintainability):
+- BE-NEW-002: Migra a lifespan handlers
+- BE-NEW-004: Pydantic strict validation (`extra='forbid'`)
+- ~~BE-NEW-006: OS keyring per secrets~~ ✅ FATTO (fallback file + keyring ready)
+- BE-NEW-025: Explicit semantic search degradation signaling
+- BE-NEW-032: Config validation con Pydantic
+- BE-NEW-034: Deterministic question shuffle
 
-4. **Week 4 (Performance & Polish):**
-   - BE-NEW-007, BE-NEW-013: Missing indexes, query optimization
-   - BE-NEW-022, BE-NEW-035: Caching probe results, O(N²) dedup
-   - BE-NEW-023: Checksum verification for Drive moves
-   - BE-NEW-024: Startup tmp cleanup
-   - BE-NEW-027: Italian FTS5 tokenizer
-   - BE-NEW-028: Consistent LLM URL discovery
-   - BE-NEW-029: Parallel download in fullrun
+### 🟢 SETTIMANA 4 (Sprint 4 - Performance & Polish):
+- BE-NEW-007, BE-NEW-013: Missing indexes, query optimization
+- BE-NEW-022, BE-NEW-035: Caching probe results, O(N²) dedup
+- BE-NEW-023: Checksum verification per Drive moves
+- BE-NEW-024: Startup tmp cleanup
+- BE-NEW-027: Italian FTS5 tokenizer
+- BE-NEW-028: Consistent LLM URL discovery
+- BE-NEW-029: Parallel download in fullrun
 
 ---
 

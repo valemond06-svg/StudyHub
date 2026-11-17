@@ -27,8 +27,8 @@ def locale(ambiente, monkeypatch):
 
 
 @pytest.fixture
-def client(ambiente, monkeypatch):
-    """Use the authenticated client fixture from conftest."""
+def client(ambiente, locale, monkeypatch):
+    """Use the authenticated client fixture from conftest with isolated LOCAL_DIR."""
     from conftest import AuthenticatedTestClient
     from fastapi.testclient import TestClient
     from studyhub.api.app import app

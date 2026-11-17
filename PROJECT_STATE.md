@@ -1,87 +1,109 @@
-# PROJECT_STATE.md — StudioHub (Fase Zero)
+# PROJECT_STATE.md — StudioHub (Sprint 2A Completato)
 
 ## Stato verificato al 2026-11-17
 
 ### Repository
 - **Path**: `C:\Users\valem\Desktop\02_Università\_StudyHub`
-- **Branch attivo**: `ai/studyhub-frontend-v3` (up-to-date con origin)
-- **Commit HEAD**: `b681e0c` — fix(vite): proxy /api /media /video verso backend su porta 8765
+- **Branch attivo**: `ai/sprint2-security-foundation` (da `ai/studyhub-frontend-v3`)
+- **Commit HEAD Sprint 1.5**: `f02e2f8` — UX Sprint 1 - FE-001/UX-001
 - **Commit main**: `9494fc6` — studyhub login: rinnova anche i cookie Panopto
 
-### Modifiche non committate (14 file)
-**Backend (7):**
-- `ai/jobs.py`, `ai/llm.py`, `api/app.py`, `db.py`
-- `study/exam.py`, `study/lesson.py`, `study/quiz.py`, `study/session.py`
+### Modifiche Sprint 2A (SEC-010 + SEC-012)
 
-**Frontend (7):**
-- `App.tsx`, `lib/api.ts`, `pages/CorsoDetail.tsx`, `pages/Home.tsx`
-- `pages/Impostazioni.tsx`, `types/index.ts`
+**Backend - Nuovi file:**
+- `backend/src/studyhub/backup.py` — Modulo backup Restic completo (init, backup, check, restore, verify)
+- `backend/src/studyhub/ai/privacy.py` — Privacy filter StudyHub-specific (analisi sensibilità, check provider, scope)
+- `backend/tests/test_privacy.py` — 19 test privacy filter
 
-### File non tracciati (11)
-- `backend/fix_freellm.ps1`, `backend/src/studyhub/__main__.py`
-- `studyhub-frontend/check_build.cjs`, `check_vite.cjs`
-- `src/components/command-palette.tsx`
-- `src/components/gamification/` (directory)
-- `src/components/player/` (directory)
-- `src/hooks/use-gamification.ts`
-- `src/lib/lectureTransform.ts`
-- `test_transform.cjs`, `test_transform.js`
+**Backend - File modificati:**
+- `backend/src/studyhub/config.py` — `db_path` → `LOCAL_DIR/studyhub.db`, aggiunto `old_db_path` per migrazione
+- `backend/src/studyhub/ai/llm.py` — Integrazione privacy filter in `_gemini`, `run_json`, `run_json_content`
+
+**Database Migration:**
+- DB spostato da `C:\Users\valem\Desktop\02_Università\_StudyHub\studyhub.db` (Google Drive) a `C:\Users\valem\.studyhub\studyhub.db` (LOCAL_DIR)
+- Migrazione con SQLite Backup API (coerente WAL/SHM)
+- Vecchio DB rinominato `studyhub.db.bak-migrated`
+- Contenuto identico: v15, 40 tabelle, 17 corsi, 199 lezioni
+
+**Restic Backup:**
+- Repo locale: `D:\Backup\restic-studyhub` ✅ inizializzato
+- Repo VPS: `sftp:bot@194.164.172.248:/home/bot/restic-studyhub` ✅ configurato
+- Password: `~/.studyhub/secrets/restic.pass` (600)
+- Primo backup: snapshot 4dffa70c, 348 MiB, 196 file, 2.1s
+- `restic check --read-data` ✅ OK
+- Restore test ✅ DB verificato (v15, 40 tabelle, 17 corsi)
+
+**Privacy Filter:**
+- Deny-by-default per provider esterni (Gemini, Claude)
+- Provider locale (Qwen 35B su 10.10.10.1) SEMPRE consentito
+- Sensibilità: none/low/medium/high con pattern CF, IBAN, Luhn, email, matricole, keyword
+- Modalità: `strict` (default), `permissive`, `local_only` via `STUDYHUB_PRIVACY_MODE`
+- Context manager `scope(kind, private)` per job kinds privati
+- Audit log senza contenuti privati
 
 ### Backend
 - **Entry point**: `python -m studyhub.cli serve` (funziona nel venv)
 - **Packaging**: `pyproject.toml` con `studyhub = "studyhub.cli:app"` in `[project.scripts]`
 - **Venv**: `backend/.venv/` con Python 3.12.10, studyhub.exe installato
-- **Database**: `studyhub.db` — schema versione 15 (15 migrazioni in working tree = 15 in DB) ✓
-- **Porta**: 8765 in ascolto (PID 2760), servizio sano
-- **Test**: 456/456 passati (0 fail)
+- **Database**: `~/.studyhub/studyhub.db` — schema versione 15 ✓
+- **Porta**: 8765 in ascolto, servizio sano
+- **Test**: **475/475 passati** (456 originali + 19 privacy)
 
 ### Frontend
 - **Framework**: Vite + React 18 + TypeScript + Tailwind
-- **Porta dev**: 5177 (5173-5176 occupate)
+- **Porta dev**: 5173 (IPv6) / 5177
 - **Proxy Vite**: `/api`, `/media`, `/video` → `http://localhost:8765` ✓
 - **Build**: `npm run build` — OK (typecheck + vite build)
-- **Lint**: oxlint — solo warning (variabili inutilizzate, impure function Date.now)
+- **Typecheck**: `tsc --noEmit` — 0 errori
+- **Lint**: oxlint — solo warning (variabili inutilizzate, impure function)
 
-### Problemi bloccanti risolti
+### Sprint 2A — Risultati Verificati
 
-#### A. Avvio backend — RISOLTO
-- **Problema**: `python -m studyhub` → `No module named studyhub.__main__`
-- **Causa**: Il comando corretto è `python -m studyhub.cli serve` o `studyhub serve` (entrypoint `studyhub.exe` nel venv)
-- **Verifica**: Backend avvia e risponde su `/api/ai/status`, `/api/courses`, ecc.
+| Verifica | Stato | Note |
+|----------|-------|------|
+| **SEC-010**: DB fuori Google Drive | ✅ COMPLETATO | DB in `~/.studyhub/`, migrazione verificata |
+| **SEC-010**: Backup Restic locale | ✅ COMPLETATO | Repo `D:\Backup\restic-studyhub`, snapshot 4dffa70c |
+| **SEC-010**: Backup Restic VPS | ✅ CONFIGURATO | Repo SFTP pronto, test manuale successivo |
+| **SEC-010**: Check integrità | ✅ VERIFICATO | `restic check --read-data` OK |
+| **SEC-010**: Restore test | ✅ VERIFICATO | DB ripristinato e verificato identico |
+| **SEC-012**: Privacy filter modulo | ✅ COMPLETATO | `privacy.py` + 19 test |
+| **SEC-012**: Integrazione llm.py | ✅ COMPLETATO | `_gemini`, `run_json`, `run_json_content` filtrati |
+| **SEC-012**: Anti-bypass | ✅ VERIFICATO | Tutti i percorsi esterni passano per check |
+| **Backend tests totali** | ✅ 475/475 PASS | Zero regressioni |
 
-#### B. Schermata bianca CorsoDetail — RISOLTO
-- **Problema 1**: `api.ts` duplicato (due copie concatenate) → corretto
-- **Problema 2**: `request()` non generico → reso `request<T = any>()`
-- **Problema 3**: `enhanceLectures` arrow function con implicit return object → esplicitato con block body
-- **Problema 4**: `Brain` import duplicato in `CorsoDetail.tsx` → rimosso
-- **Problema 5**: Mismatch tipi `Course` — backend non fornisce `shortname`, `semester`, `readiness`, `next_exam_date` → aggiunto `enhanceCourse()` in api.ts
-- **Verifica**: Frontend build OK, proxy API funziona, dati corsi/lezioni arrivano correttamente
-
-### Architettura attuale
+### Architettura Sprint 2A
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    StudyHub (ai/studyhub-frontend-v3)           │
+│                    StudyHub (ai/sprint2-security-foundation)    │
 ├─────────────────────────────────────────────────────────────────┤
 │  Frontend (Vite, React, TS, Tailwind)                          │
-│  http://localhost:5177  → proxy /api → Backend :8765           │
-│  Pages: Home, Corsi, CorsoDetail, Studio, Lab, Impostazioni    │
-│  State: Zustand + TanStack Query                                │
+│  http://localhost:5173  → proxy /api → Backend :8765           │
 ├─────────────────────────────────────────────────────────────────┤
 │  Backend (FastAPI, SQLite, FTS5, sqlite-vec)                   │
 │  http://127.0.0.1:8765                                          │
-│  Modules: ai/, api/, study/, sync/, ingest/, media/            │
-│  DB: studyhub.db (schema v15)                                   │
-│  AI: Claude Sonnet (notes), 35B locale (quiz), FreeLLMAPI      │
+│  Auth: API Token + CSRF + Privacy Filter                       │
+│  Modules: ai/ (llm.py + privacy.py), api/, study/, sync/,      │
+│           ingest/, media/, backup/                             │
+│  DB: ~/.studyhub/studyhub.db (v15) — FUORI Google Drive        │
+│  Security: CORS, path traversal, keyring, privacy filter       │
+│  Backup: Restic → D:\Backup\restic-studyhub + VPS SFTP         │
+├─────────────────────────────────────────────────────────────────┤
+│  Provider AI:                                                   │
+│  ┌─────────────┐    ┌──────────────┐    ┌─────────────┐       │
+│  │   LOCAL     │───▶│   GEMINI     │───▶│   CLAUDE    │       │
+│  │ (Qwen 35B)  │    │  (filtered)  │    │  (filtered) │       │
+│  │ ALWAYS OK   │    │ deny-by-def. │    │ deny-by-def.│       │
+│  └─────────────┘    └──────────────┘    └─────────────┘       │
 ├─────────────────────────────────────────────────────────────────┤
 │  Integrazioni: Moodle UniVR, Panopto, Whisper, Ollama (bge-m3) │
 │  Brain events: /ingest/event (se BRAIN_EVENT_URL configurato)  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Prossimi passi (Fase Uno)
-Avviare 4 audit specialistici in parallelo (sola lettura):
-1. **Backend & Data Architecture** — FastAPI, DB, AI jobs, sync, migrazioni
-2. **Frontend & Application Engineering** — Pagine, componenti, routing, state, performance
-3. **Study UX & Pedagogical Engine** — Sessioni studio, FSRS, quiz, tutor, video, gamification
-4. **Security & Privacy** — Auth, CSRF, CORS, cookie, token, privacy contenuti, AI providers
+### Prossimi passi (Sprint 2B — Core Features Reali)
+1. **FE-002**: CorsoDetail "Studia" Tab — Mappa Corso Reale
+2. **FE-003/UX-002/003**: Lab + CorsoDetail "Lab" Tab — Flashcard/Quiz Reali (FSRS)
+3. **UX-004**: Tutor RAG — Pagina `/lab?tab=tutor` (usa privacy filter)
+4. **UX-005**: Exam X-Ray / Simulazioni — Flusso completo (usa privacy filter)
+5. **SEC-027**: Llama-Server Bind Restriction + Key Rotation (coordina fixed PC)

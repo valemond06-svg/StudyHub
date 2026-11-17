@@ -59,18 +59,26 @@ def _keyring_set(service: str, username: str, value: str) -> bool:
         return False
 
 
-def get_local_llm_key() -> str | None:
+def get_local_llm_key() -> str:
     """Ottiene la chiave LLM locale con priorità:
     1. Variabile d'ambiente STUDYHUB_LOCAL_LLM_KEY
-    2. File ~/.config/brain-llm/api-key (Linux) o %APPDATA%\\brain-llm\\api-key (Windows)
-    3. config.yaml (deprecated, log warning)
+    2. Variabile d'ambiente LOCAL_LLM_API_KEY (legacy)
+    3. File ~/.config/brain-llm/api-key (Linux) o %APPDATA%\\brain-llm\\api-key (Windows)
+    4. config.yaml (deprecated, log warning)
+    5. settings.extra["local_llm_key"] (in-memory override for tests)
+    Returns empty string if not configured.
     """
-    # 1. Variabile d'ambiente
+    # 1. Variabile d'ambiente principale
     key = os.environ.get("STUDYHUB_LOCAL_LLM_KEY")
     if key:
         return key
 
-    # 2. File di configurazione locale
+    # 2. Variabile d'ambiente legacy
+    key = os.environ.get("LOCAL_LLM_API_KEY")
+    if key:
+        return key
+
+    # 3. File di configurazione locale
     if sys.platform == "win32":
         config_file = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "brain-llm" / "api-key"
     else:
@@ -82,7 +90,7 @@ def get_local_llm_key() -> str | None:
         except Exception as e:
             log.warning("Errore lettura %s: %s", config_file, e)
 
-    # 3. config.yaml (deprecated)
+    # 4. config.yaml (deprecated)
     if CONFIG_FILE.exists():
         try:
             data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
@@ -93,7 +101,12 @@ def get_local_llm_key() -> str | None:
         except Exception:
             pass
 
-    return None
+    # 5. In-memory override (mainly for tests)
+    key = settings.extra.get("local_llm_key")
+    if key:
+        return key
+
+    return ""
 
 
 def get_or_create_api_token() -> str:
@@ -152,13 +165,20 @@ class Settings:
 
     @property
     def db_path(self) -> Path:
-        return APP_DIR / "studyhub.db"
+        # Database in LOCAL_DIR (~/.studyhub) — NON in Google Drive (APP_DIR)
+        return LOCAL_DIR / "studyhub.db"
 
     @property
     def secrets_dir(self) -> Path:
         d = LOCAL_DIR / "secrets"
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    @property
+    def old_db_path(self) -> Path:
+        """Percorso vecchio del database (in APP_DIR, sincronizzato con Google Drive).
+        Usato per la migrazione una tantum."""
+        return APP_DIR / "studyhub.db"
 
     @property
     def browser_profile(self) -> Path:

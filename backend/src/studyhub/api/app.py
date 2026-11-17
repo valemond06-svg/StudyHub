@@ -41,7 +41,9 @@ async def get_current_token(
     Raises:
         HTTPException: 401 if token is missing or invalid.
     """
-    expected_token = settings.api_token
+    # Get token dynamically to pick up env changes (important for tests)
+    from ..config import get_or_create_api_token
+    expected_token = get_or_create_api_token()
 
     # Check Authorization header: "Bearer <token>"
     if authorization:
