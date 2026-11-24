@@ -73,6 +73,25 @@ def test_lock_rilasciato_anche_se_la_fase_studio_esplode(fr, monkeypatch):
     assert "studio" in chiamate
 
 
+def test_lock_rilasciato_se_la_preparazione_si_interrompe(fr, monkeypatch):
+    awake = []
+
+    def keep_awake(on):
+        awake.append(on)
+        if on:
+            assert fullrun.is_running()
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(fullrun, "_keep_awake", keep_awake)
+    with pytest.raises(KeyboardInterrupt):
+        fullrun.run()
+
+    assert awake == [True, False]
+    assert not fullrun.is_running()
+    with file_lock(fullrun.LOCK_FILE, "nuovo fullrun", timeout=0):
+        assert fullrun.is_running()
+
+
 def test_errore_della_fase_moodle_e_registrato_e_lo_studio_prosegue(fr, monkeypatch):
     chiamate = []
     _fasi(monkeypatch, chiamate, moodle=RuntimeError("Moodle giù"))

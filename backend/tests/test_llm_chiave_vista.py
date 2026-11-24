@@ -1,16 +1,30 @@
 """Chiave fuori dal codice e foto verso i modelli con vista (rete simulata)."""
+import base64
 import io
 import json
+import sys
 import urllib.error
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from studyhub.ai import llm
 from studyhub.ai.claude_runner import ClaudeError
-from test_llm_locale import CAVO, LAPTOP, RISPOSTA_OK, TAILSCALE, _Risposta, rete  # noqa: F401
+from test_llm_locale import CAVO, LAPTOP, RISPOSTA_OK, TAILSCALE, _Risposta
+from test_llm_locale import rete as rete_fixture
 
-IMG = {"type": "image", "media_type": "image/jpeg", "data": "QUJD"}
+rete = rete_fixture
+
+
+def _immagine(size=(16, 16), exif=None):
+    stream = io.BytesIO()
+    with Image.new("RGB", size, "blue") as image:
+        image.save(stream, "PNG", exif=exif)
+    return {"type": "image", "media_type": "image/png", "data": base64.b64encode(stream.getvalue()).decode("ascii")}
+
+
+IMG = _immagine()
 CONTENUTO = [{"type": "text", "text": "Domanda 1"}, IMG, {"type": "text", "text": "Fine"}]
 SCHEMA = {"type": "object"}
 
@@ -37,9 +51,6 @@ def test_chiave_vuota_se_non_configurata(ambiente):
 
 def test_ordine_di_lettura_della_chiave(ambiente, monkeypatch):
     from studyhub.config import settings
-    import os
-    import sys
-    from pathlib import Path
 
     # Use monkeypatch to redirect APPDATA to test temp directory
     test_config_dir = ambiente / "brain-llm"
@@ -131,7 +142,10 @@ def test_foto_al_server_con_vista_in_formato_openai(rete):
     assert r.images_sent == 1 and r.provider == "local"
     parti = rete.chat(LAPTOP)[0][3]["messages"][0]["content"]
     assert [p["type"] for p in parti] == ["text", "text", "image_url", "text"]
-    assert parti[2]["image_url"]["url"] == "data:image/jpeg;base64,QUJD" and "sistema" in parti[0]["text"]
+    header, _, data = parti[2]["image_url"]["url"].partition(",")
+    assert header == "data:image/jpeg;base64" and "sistema" in parti[0]["text"]
+    with Image.open(io.BytesIO(base64.b64decode(data))) as image:
+        assert image.format == "JPEG" and image.size == (16, 16)
 
 
 def test_server_senza_vista_saltato_per_quello_con_vista(rete):
@@ -177,7 +191,11 @@ def test_senza_vista_locale_claude_riceve_le_immagini(rete, monkeypatch):
     monkeypatch.setattr(llm, "_agy_exe", lambda: None)
     r = llm.run_json_content("s", CONTENUTO, SCHEMA, quality="veloce")
     assert r.provider == "claude" and r.images_sent == 1 and visto["model"] == "haiku"
-    assert visto["content"][1] == {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "QUJD"}}
+    block = visto["content"][1]
+    assert block["type"] == "image" and block["source"]["type"] == "base64"
+    assert block["source"]["media_type"] == "image/jpeg"
+    with Image.open(io.BytesIO(base64.b64decode(block["source"]["data"]))) as image:
+        assert image.format == "JPEG" and image.size == (16, 16)
 
 
 def test_gemini_non_riceve_le_foto(rete, monkeypatch):
@@ -197,10 +215,59 @@ def test_nessun_provider_con_vista_solo_testo_e_zero_foto(rete, monkeypatch):
     r = llm.run_json_content("s", CONTENUTO, SCHEMA)
     assert r.images_sent == 0 and r.provider == "local"
     contenuto = rete.chat(CAVO)[-1][3]["messages"][0]["content"]
-    assert isinstance(contenuto, str) and "Domanda 1" in contenuto and "QUJD" not in contenuto
+    assert isinstance(contenuto, str) and "Domanda 1" in contenuto and IMG["data"] not in contenuto
 
 
 def test_senza_foto_equivale_a_run_json(rete):
     rete.su(LAPTOP)
     r = llm.run_json_content("s", [{"type": "text", "text": "ciao"}], SCHEMA)
     assert r.images_sent == 0 and isinstance(rete.chat()[0][3]["messages"][0]["content"], str)
+
+
+@pytest.mark.parametrize("entrypoint", [llm._local_vision, llm.run_json_content])
+@pytest.mark.parametrize(("case", "message"), [
+    ("base64", "base64"),
+    ("file", "Immagine non valida"),
+    ("dimensione", "2048 pixel"),
+    ("peso", "5 MB"),
+    ("mime", "Tipo MIME"),
+    ("pillow", "Pillow"),
+])
+def test_immagine_non_valida_rifiutata_prima_dei_provider(monkeypatch, entrypoint, case, message):
+    block = IMG.copy()
+    if case == "base64":
+        block["data"] = "!!!"
+    elif case == "file":
+        block["data"] = "QUJD"
+    elif case == "dimensione":
+        block = _immagine((2049, 1))
+    elif case == "peso":
+        block["data"] = base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode("ascii")
+    elif case == "mime":
+        block["media_type"] = "image/jpeg"
+    elif case == "pillow":
+        monkeypatch.setitem(sys.modules, "studyhub.ai.vision", None)
+
+    def provider():
+        pytest.fail("Provider contattato con un'immagine non valida")
+
+    monkeypatch.setattr(llm, "provider_order", provider)
+    monkeypatch.setattr(llm, "local_llm_healthy", provider)
+    with pytest.raises(ValueError, match=message):
+        entrypoint("s", [block], SCHEMA)
+
+
+def test_local_vision_ridimensiona_e_rimuove_exif(rete):
+    rete.su(LAPTOP)
+    rete.json_get[(LAPTOP, "/props")] = {"modalities": {"vision": True}}
+    exif = Image.Exif()
+    exif[274] = 6
+    exif[315] = "Autore test"
+    photo = _immagine((2048, 1024), exif)
+
+    llm._local_vision("s", [photo], SCHEMA)
+
+    image_url = rete.chat(LAPTOP)[0][3]["messages"][0]["content"][1]["image_url"]["url"]
+    with Image.open(io.BytesIO(base64.b64decode(image_url.split(",", 1)[1]))) as image:
+        assert image.size == (784, 1568)  # orientamento EXIF applicato prima del ridimensionamento
+        assert not image.getexif() and "exif" not in image.info

@@ -16,6 +16,50 @@ MAX_SIDE = 1600
 MAX_IMAGES = 6                    # in totale per chiamata
 MAX_DECODED_BYTES = 20 * 1024 * 1024
 JPEG_QUALITY = 85
+LLM_MAX_BYTES = 5 * 1024 * 1024
+LLM_MAX_SIDE = 2048
+LLM_RESIZE_SIDE = 1568
+
+
+def _encode_image(im: Image.Image, max_side: int) -> dict:
+    im = ImageOps.exif_transpose(im)  # le foto del telefono arrivano ruotate
+    if im.mode in ("RGBA", "LA", "P"):
+        im = im.convert("RGBA")
+        fondo = Image.new("RGB", im.size, "white")
+        fondo.paste(im, mask=im.getchannel("A"))
+        im = fondo
+    else:
+        im = im.convert("RGB")
+    im.thumbnail((max_side, max_side), Image.LANCZOS)
+    im.info.clear()
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=JPEG_QUALITY, optimize=True)
+    return {"type": "image", "media_type": "image/jpeg", "data": base64.b64encode(out.getvalue()).decode("ascii")}
+
+
+def validate_image_block(block: dict) -> dict:
+    """Valida e ricodifica un blocco immagine prima dell'invio a un modello."""
+    data = block.get("data")
+    if not isinstance(data, str) or not data:
+        raise ValueError("Immagine senza dati base64.")
+    if len(data) > 4 * ((LLM_MAX_BYTES + 2) // 3):
+        raise ValueError("Immagine oltre il limite di 5 MB.")
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except ValueError:
+        raise ValueError("Dati base64 dell'immagine non validi.") from None
+    if len(raw) > LLM_MAX_BYTES:
+        raise ValueError("Immagine oltre il limite di 5 MB.")
+
+    try:
+        with Image.open(io.BytesIO(raw), formats=("JPEG", "PNG", "WEBP", "GIF")) as im:
+            if max(im.size) > LLM_MAX_SIDE:
+                raise ValueError(f"Lato dell'immagine oltre {LLM_MAX_SIDE} pixel.")
+            if Image.MIME.get(im.format) != block.get("media_type"):
+                raise ValueError("Tipo MIME dell'immagine non corrispondente.")
+            return _encode_image(im, LLM_RESIZE_SIDE)
+    except (OSError, SyntaxError, Image.DecompressionBombError):
+        raise ValueError("Immagine non valida.") from None
 
 
 def prepare_image(data_url: str, max_side: int = MAX_SIDE) -> dict | None:
@@ -33,20 +77,9 @@ def prepare_image(data_url: str, max_side: int = MAX_SIDE) -> dict | None:
         return None
     try:
         with Image.open(io.BytesIO(raw)) as im:
-            im = ImageOps.exif_transpose(im)          # le foto del telefono arrivano ruotate
-            if im.mode in ("RGBA", "LA", "P"):
-                im = im.convert("RGBA")
-                fondo = Image.new("RGB", im.size, "white")  # il trasparente diventerebbe nero: illeggibile
-                fondo.paste(im, mask=im.getchannel("A"))
-                im = fondo
-            else:
-                im = im.convert("RGB")
-            im.thumbnail((max_side, max_side), Image.LANCZOS)  # solo riduzione, mai ingrandimento
-            out = io.BytesIO()
-            im.save(out, "JPEG", quality=JPEG_QUALITY, optimize=True)
+            return _encode_image(im, max_side)
     except Exception:  # file troncato, formato non supportato, decompression bomb
         return None
-    return {"type": "image", "media_type": "image/jpeg", "data": base64.b64encode(out.getvalue()).decode("ascii")}
 
 
 def prepare_images(data_urls: list, limit: int = MAX_IMAGES, max_side: int = MAX_SIDE) -> tuple[list[dict], int]:

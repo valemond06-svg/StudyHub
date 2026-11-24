@@ -315,22 +315,45 @@ def test_get_quiz_nasconde_le_soluzioni(ambiente, db, monkeypatch):
         quizmod.get(999)
 
 
+def test_quiz_mescola_in_modo_riproducibile_e_corregge_nello_stesso_ordine(db):
+    domande = [
+        {"tipo": "multipla", "testo_md": str(i), "opzioni": ["a", "b"],
+         "corretta": i % 2, "soluzione_md": str(i % 2)}
+        for i in range(12)
+    ]
+    qid = db.execute("INSERT INTO quizzes (course_id, questions) VALUES (1, ?)",
+                     (json.dumps(domande),)).lastrowid
+    db.commit()
+
+    visualizzate = quizmod.get(qid)["questions"]
+    ordine = [q["testo_md"] for q in visualizzate]
+    assert ordine != [q["testo_md"] for q in domande]
+    assert quizmod.get(qid)["questions"] == visualizzate
+    assert [q["testo_md"] for q in quizmod.get(qid, with_solutions=True)["questions"]] == ordine
+    assert quizmod.submit(qid, [int(testo) % 2 for testo in ordine])["score"] == len(domande)
+
+
 def test_submit_corregge_crocette_in_locale_e_aperte_con_ai(ambiente, db, monkeypatch):
     inserisci_corso(db)
     _appunti(db, ambiente)
     monkeypatch.setattr(quizmod, "run_json", lambda *a, **k: SimpleNamespace(data=QUIZ, provider="l", model="m", duration_s=0))
     qid = quizmod.generate(1)["id"]
+    tipi = [q["tipo"] for q in quizmod.get(qid)["questions"]]
+    indice_aperta = tipi.index("aperta")
     visto = {}
 
     def correttore(system, text, schema, quality="accurato"):
         visto["testo"] = text
-        return SimpleNamespace(data={"valutazioni": [{"indice": 2, "punteggio": 0.5, "feedback_md": "manca"}]},
+        return SimpleNamespace(data={"valutazioni": [{"indice": indice_aperta, "punteggio": 0.5, "feedback_md": "manca"}]},
                                provider="l", model="m", duration_s=0)
     monkeypatch.setattr(quizmod, "run_json", correttore)
-    r = quizmod.submit(qid, [0, 0, "risposta aperta"])   # multipla giusta, vero/falso sbagliato
-    assert [x["punteggio"] for x in r["results"]] == [1.0, 0.0, 0.5]
+    risposte = {"multipla": 0, "vero_falso": 0, "aperta": "risposta aperta"}
+    r = quizmod.submit(qid, [risposte[tipo] for tipo in tipi])
+    assert dict(zip(tipi, (x["punteggio"] for x in r["results"]))) == {
+        "multipla": 1.0, "vero_falso": 0.0, "aperta": 0.5,
+    }
     assert r["score"] == 1.5 and r["max_score"] == 3
-    assert "Domanda 2" in visto["testo"] and "modello" in visto["testo"]
+    assert f"Domanda {indice_aperta}" in visto["testo"] and "modello" in visto["testo"]
 
 
 def test_submit_senza_risposte_aperte_non_chiama_ai_e_salta_le_vuote(ambiente, db, monkeypatch):
@@ -342,9 +365,13 @@ def test_submit_senza_risposte_aperte_non_chiama_ai_e_salta_le_vuote(ambiente, d
     def vietato(*a, **k):
         raise AssertionError("nessuna chiamata AI attesa")
     monkeypatch.setattr(quizmod, "run_json", vietato)
-    r = quizmod.submit(qid, [None, 1, "   "])           # saltata, giusta, aperta vuota
-    assert [x["punteggio"] for x in r["results"]] == [0.0, 1.0, 0.0]
-    assert r["results"][2]["feedback_md"] == "Risposta non data."
+    tipi = [q["tipo"] for q in quizmod.get(qid)["questions"]]
+    risposte = {"multipla": None, "vero_falso": 1, "aperta": "   "}
+    r = quizmod.submit(qid, [risposte[tipo] for tipo in tipi])
+    assert dict(zip(tipi, (x["punteggio"] for x in r["results"]))) == {
+        "multipla": 0.0, "vero_falso": 1.0, "aperta": 0.0,
+    }
+    assert r["results"][tipi.index("aperta")]["feedback_md"] == "Risposta non data."
     assert quizmod.submit(qid, [])["score"] == 0.0         # liste di risposte più corte del quiz
 
 
@@ -353,12 +380,16 @@ def test_submit_punteggio_ai_fuori_scala_e_valutazione_mancante(ambiente, db, mo
     _appunti(db, ambiente)
     monkeypatch.setattr(quizmod, "run_json", lambda *a, **k: SimpleNamespace(data=QUIZ, provider="l", model="m", duration_s=0))
     qid = quizmod.generate(1)["id"]
+    tipi = [q["tipo"] for q in quizmod.get(qid)["questions"]]
+    indice_aperta = tipi.index("aperta")
+    risposte = ["x" if tipo == "aperta" else None for tipo in tipi]
     monkeypatch.setattr(quizmod, "run_json", lambda *a, **k: SimpleNamespace(
-        data={"valutazioni": [{"indice": 2, "punteggio": 9, "feedback_md": "f"}]}, provider="l", model="m", duration_s=0))
-    assert quizmod.submit(qid, [None, None, "x"])["results"][2]["punteggio"] == 1.0
+        data={"valutazioni": [{"indice": indice_aperta, "punteggio": 9, "feedback_md": "f"}]},
+        provider="l", model="m", duration_s=0))
+    assert quizmod.submit(qid, risposte)["results"][indice_aperta]["punteggio"] == 1.0
     # il modello locale dimentica la valutazione: la domanda vale 0, non fa crollare l'invio
     monkeypatch.setattr(quizmod, "run_json", lambda *a, **k: SimpleNamespace(data={"valutazioni": []}, provider="l", model="m", duration_s=0))
-    assert quizmod.submit(qid, [None, None, "x"])["results"][2]["punteggio"] == 0.0
+    assert quizmod.submit(qid, risposte)["results"][indice_aperta]["punteggio"] == 0.0
 
 
 def test_list_for_lecture_riporta_il_miglior_punteggio(ambiente, db, monkeypatch):
@@ -367,7 +398,8 @@ def test_list_for_lecture_riporta_il_miglior_punteggio(ambiente, db, monkeypatch
     monkeypatch.setattr(quizmod, "run_json", lambda *a, **k: SimpleNamespace(data=QUIZ, provider="l", model="m", duration_s=0))
     qid = quizmod.generate(1)["id"]
     assert quizmod.list_for_lecture(1)[0]["best"] is None
-    quizmod.submit(qid, [0, 1, None])   # 2/3
+    risposte = {"multipla": 0, "vero_falso": 1, "aperta": None}
+    quizmod.submit(qid, [risposte[q["tipo"]] for q in quizmod.get(qid)["questions"]])   # 2/3
     quizmod.submit(qid, [None, None, None])  # 0/3
     assert quizmod.list_for_lecture(1)[0]["best"] == pytest.approx(2 / 3)
 

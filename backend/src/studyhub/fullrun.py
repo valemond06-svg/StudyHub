@@ -142,9 +142,9 @@ def media_track() -> None:
         todo = []
         for c in courses:  # un corso irraggiungibile (rete) non ferma gli altri
             try:
-                todo += [(c, l) for l in sorted(
-                    (l for l in discover_moodle_videos(c) if l["status"] in ("nuova", "errore", "media_ok")),
-                    key=lambda l: l["date"] or "9999")]
+                todo += [(c, lec) for lec in sorted(
+                    (lec for lec in discover_moodle_videos(c) if lec["status"] in ("nuova", "errore", "media_ok")),
+                    key=lambda lec: lec["date"] or "9999")]
             except Exception as e:
                 _log(f"[red]video Moodle {c['fullname']}: {e}[/]")
         _media_progress(total=len(todo), done=0, errors=0)
@@ -178,8 +178,8 @@ def media_track() -> None:
         todo = []
         for c in courses:
             try:
-                todo += [(c, l) for l in discover(sess, c)
-                         if l["source"] == "panopto" and l["status"] in ("nuova", "errore", "media_ok")]
+                todo += [(c, lec) for lec in discover(sess, c)
+                         if lec["source"] == "panopto" and lec["status"] in ("nuova", "errore", "media_ok")]
             except Exception as e:
                 _log(f"[red]Panopto {c['fullname']}: {e}[/]")
         todo.sort(key=lambda x: x[1]["date"] or "9999")
@@ -283,8 +283,8 @@ def run() -> None:
     except LockTimeout:
         console.print("[yellow]L'elaborazione completa è già in corso.[/]")
         return
-    _keep_awake(True)
     try:
+        _keep_awake(True)
         state.clear()
         _save(started_at=_now(), finished_at=None, phase="Avvio", media={}, study={})
         media_done = threading.Event()

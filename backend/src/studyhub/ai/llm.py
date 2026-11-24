@@ -30,7 +30,7 @@ from pathlib import Path
 from ..config import LOCAL_DIR, settings, get_local_llm_key
 from ..filelock import LockTimeout, file_lock
 from .claude_runner import ClaudeError, RateLimited, run as claude_run
-from .privacy import check_external_allowed, log_provider_selection, scope as privacy_scope, PrivacyMode
+from .privacy import check_external_allowed, log_provider_selection
 
 AGY_CWD = LOCAL_DIR / "agy-cwd"
 AGY_TIMEOUT_S = 8 * 60
@@ -445,8 +445,18 @@ def _openai_blocks(blocks: list[dict]) -> list[dict]:
     return out
 
 
-def _local_vision(system: str, content: list[dict], schema: dict) -> tuple[dict, str]:
+def _validated_vision_content(content: list[dict]) -> list[dict]:
+    try:
+        from .vision import validate_image_block
+    except ImportError:
+        raise ValueError("Pillow è necessario per validare le immagini.") from None
+    return [validate_image_block(b) if b.get("type") == "image" else b for b in content]
+
+
+def _local_vision(system: str, content: list[dict], schema: dict, *, validated: bool = False) -> tuple[dict, str]:
     """Come _local, ma con foto: solo su un server che le legge. Ritorna (risposta grezza, server)."""
+    if not validated:
+        content = _validated_vision_content(content)
     intro = (f"{system}\n\nNON inserire tag <think> o ragionamenti preliminari. "
              f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme a questo schema:\n"
              f"{json.dumps(schema, ensure_ascii=False)}")
@@ -471,10 +481,11 @@ def _local_vision(system: str, content: list[dict], schema: dict) -> tuple[dict,
     raise NoVision("nessun server locale con vista (" + "; ".join(errors or ["nessun server raggiungibile"]) + ")")
 
 
-def _local(system: str, text: str, schema: dict, quality: str, content: list[dict] | None = None) -> LLMResult:
+def _local(system: str, text: str, schema: dict, quality: str, content: list[dict] | None = None,
+           *, validated: bool = False) -> LLMResult:
     t0 = time.time()
     if content and any(b.get("type") == "image" for b in content):
-        res, _base = _local_vision(system, content, schema)
+        res, _base = _local_vision(system, content, schema, validated=validated)
         msg = (res.get("choices") or [{}])[0].get("message", {})
         raw = msg.get("content") or msg.get("reasoning_content") or ""
         return LLMResult(_extract_json(raw), "local", res.get("model", "local-qwen3.6-35b"),
@@ -600,10 +611,11 @@ def run_json_content(system: str, content: list[dict], schema: dict, quality: st
     text = "\n\n".join(b["text"] for b in content if b.get("type") == "text")
     if not images:
         return run_json(system, text, schema, quality, kind=kind, private=private)
+    content = _validated_vision_content(content)
     for prov in provider_order():
         try:
             if prov == "local":
-                return _local(system, text, schema, quality, content=content)
+                return _local(system, text, schema, quality, content=content, validated=True)
             if prov == "claude":
                 # Privacy check per contenuto con immagini
                 decision = check_external_allowed("claude", text, kind=kind, private=private)

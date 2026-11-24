@@ -104,6 +104,7 @@ def lezioni_da_trascrivere() -> list[tuple[dict, dict]]:
 
 
 def trascrivi(lec: dict, course: dict) -> None:
+    """Usa la pipeline comune, compresi il watchdog Whisper e l'attesa del lock GPU."""
     from .media.pipeline import transcribe_ready
     transcribe_ready(lec, course)
 

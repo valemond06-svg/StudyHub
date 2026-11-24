@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
+from random import Random
 
 from ..ai.llm import run_json
 from ..ai.lecture_notes import existing
@@ -91,6 +92,8 @@ def get(quiz_id: int, with_solutions: bool = False) -> dict:
     if not row:
         raise KeyError(quiz_id)
     qs = json.loads(row["questions"])
+    # Installazione monoutente: lo stesso ordine vale per visualizzazione e correzione.
+    Random(quiz_id).shuffle(qs)
     if not with_solutions:
         qs = [{k: v for k, v in q.items() if k not in ("corretta", "soluzione_md")} for q in qs]
     return {**{k: row[k] for k in ("id", "course_id", "lecture_id", "title", "created_at")}, "questions": qs,

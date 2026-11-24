@@ -2,24 +2,29 @@
 from __future__ import annotations
 
 import json
+import logging
+import secrets
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, Security
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.security import APIKeyHeader, APIKeyCookie
+from pydantic import BaseModel, ConfigDict
+from starlette.datastructures import Headers
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import Response as StarletteResponse
+from starlette.types import Message, Receive, Scope, Send
 
-from ..config import settings
 from ..db import session
 from ..paths import uni_path
-from .csrf import CSRFMiddleware, csrf_protect, generate_csrf_token, set_csrf_cookie
+from .csrf import CSRFMiddleware, csrf_protect
+from .log_redaction import install_log_redaction
 
 # Rate limiting per IP: {ip: {"count": int, "time": float}}
 _setup_rate_limit = {}
@@ -95,33 +100,47 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 STATIC = Path(__file__).parent / "static"
 
-import secrets
-
-
-from contextlib import asynccontextmanager
-
-
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Startup/shutdown: avvia la coda AI in background (BE-002: on_event → lifespan)."""
+    """Avvia la coda AI in background all'avvio del server."""
+    install_log_redaction()
     from ..ai import jobs
+
     try:
         jobs.start_if_needed()
     except Exception:  # il server deve partire comunque
-        import logging
         logging.getLogger(__name__).exception("coda AI: avvio non riuscito")
     yield
 
 
 app = FastAPI(title="StudyHub", lifespan=_lifespan)
 
-# CORS Middleware (SEC-006) - explicit configuration
+
+class _LocalCORSMiddleware(CORSMiddleware):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        origin = Headers(scope=scope).get("origin") if scope["type"] == "http" else None
+        if origin is None or self.is_allowed_origin(origin):
+            await super().__call__(scope, receive, send)
+            return
+
+        async def send_without_cors(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message["headers"] = [
+                    (name, value) for name, value in message.get("headers", [])
+                    if not name.lower().startswith(b"access-control-")
+                ]
+            await send(message)
+
+        await super().__call__(scope, receive, send_without_cors)
+
+
 app.add_middleware(
-    CORSMiddleware,
+    _LocalCORSMiddleware,
     allow_origins=[
         "http://127.0.0.1:5173",
         "http://localhost:5173",
         "http://127.0.0.1:8765",
+        "http://localhost:8765",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -379,8 +398,6 @@ def ai_providers(token: str = Depends(get_current_token)) -> dict:
     from ..ai.llm import (
         local_llm_healthy,
         get_local_llm_url,
-        local_llm_candidates,
-        invalidate_local_llm,
     )
     from ..ai.claude_runner import check_budget, last_usage
 
@@ -424,10 +441,6 @@ def ai_cancel(_csrf: None = Depends(csrf_protect), token: str = Depends(get_curr
 
 
 # --- Studio: flashcard, tutor, quiz ---------------------------------------------
-
-from fastapi.responses import PlainTextResponse  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
-
 
 def _ai_call(fn, *args):
     """Errori di Claude → risposte HTTP leggibili dalla UI."""
@@ -475,7 +488,7 @@ def cards_import(course_id: int | None = None, _csrf: None = Depends(csrf_protec
 
 
 class Review(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = ConfigDict(extra="forbid")
 
     rating: int
 
@@ -499,14 +512,14 @@ def cards_anki(course_id: int | None = None, token: str = Depends(get_current_to
 
 
 class NewThread(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = ConfigDict(extra="forbid")
 
     course_id: int | None = None
     mode: str = "normale"
 
 
-class Ask(BaseModel):
-    model_config = {"extra": "forbid"}
+class TutorAsk(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     question: str
 
@@ -533,7 +546,7 @@ def tutor_get(thread_id: int, token: str = Depends(get_current_token)):
 
 
 @app.post("/api/tutor/threads/{thread_id}/ask")
-def tutor_ask(thread_id: int, body: Ask, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+def tutor_ask(thread_id: int, body: TutorAsk, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import tutor
     if not body.question.strip():
         raise HTTPException(400, "Domanda vuota")
@@ -576,7 +589,7 @@ def quiz_history(course_id: int | None = None, limit: int = 50, token: str = Dep
 
 
 class Submit(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = ConfigDict(extra="forbid")
 
     answers: list
 
@@ -595,7 +608,7 @@ def quiz_submit(quiz_id: int, body: Submit, _csrf: None = Depends(csrf_protect),
 # --- Esami: calendario, profilo, simulazioni, piano ------------------------------
 
 class NewExam(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = ConfigDict(extra="forbid")
 
     course_id: int
     date: str
@@ -641,7 +654,7 @@ def course_exam(course_id: int, token: str = Depends(get_current_token)):
 
 
 class ProfileRequest(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = ConfigDict(extra="forbid")
 
     force: bool = False
 
@@ -677,7 +690,7 @@ def sim_get(sim_id: int, token: str = Depends(get_current_token)):
 
 
 class SimSubmit(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = ConfigDict(extra="forbid")
 
     answers: list[dict]
     elapsed_min: float | None = None
@@ -774,7 +787,6 @@ def study_courses(token: str = Depends(get_current_token)):
         ids = [r[0] for r in db.execute("""SELECT id FROM courses WHERE active=1 AND folder IS NOT NULL
                                            ORDER BY priority DESC, year_of_study DESC, fullname""")]
     out = []
-    from ..study.archetype import get_course_archetype
     for cid in ids:
         ov, pr = mastery.overview(cid), bank.prepare_status(cid)
         nxt = next(((i + 1, t["name"]) for i, t in enumerate(ov["topics"]) if not t["learned"]), None)
@@ -887,7 +899,7 @@ def study_overview(course_id: int, token: str = Depends(get_current_token)):
 
 
 class PrepareRequest(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = ConfigDict(extra="forbid")
 
     limit: int | None = None
 
@@ -918,6 +930,8 @@ def study_prepare_stop(course_id: int, _csrf: None = Depends(csrf_protect), toke
 
 
 class NewSession(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     minutes: int = 45
     focus_topic: int | None = None
 
@@ -997,6 +1011,8 @@ def study_session_finish(sid: int, _csrf: None = Depends(csrf_protect), token: s
 
 
 class Chapter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     chapter: str
     exclude: bool = True
 
@@ -1077,6 +1093,8 @@ def study_lesson_done(topic_id: int):
 
 
 class Ask(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question: str = ""
     context: str = ""
     mode: str = "domanda"   # domanda | altro_modo
@@ -1195,7 +1213,6 @@ def study_topic_artifact(topic_id: int, token: str = Depends(get_current_token))
     if lab and lab.get("codice"):
         code = lab["codice"]
     elif widget and widget.get("tipo") and widget.get("tipo") != "none":
-        wtype = widget.get("tipo")
         wtit = widget.get("titolo", out["topic"]["name"])
         winst = widget.get("istruzioni", "")
         if arch.file_extension == ".m":

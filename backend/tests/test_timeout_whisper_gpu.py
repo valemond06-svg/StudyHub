@@ -71,6 +71,36 @@ def test_timeout_default_dalla_durata():
     assert tr.total_timeout(3600) == 3 * 3600
 
 
+def test_attesa_lock_gpu_allineata_al_timeout_massimo():
+    assert tr.GPU_LOCK_TIMEOUT_S == tr.MAX_TIMEOUT_S == tr.total_timeout(None) == 4 * 3600
+    assert tr.total_timeout(10 * 3600) == tr.MAX_TIMEOUT_S
+
+
+def test_trascrizione_notturna_usa_la_stessa_attesa_gpu(ambiente, monkeypatch):
+    from studyhub import notte
+    from studyhub.media import pipeline
+
+    folder = ambiente / "uni" / "lezione"
+    folder.mkdir()
+    (folder / "audio.opus").touch()
+    monkeypatch.setattr(pipeline.ff, "probe", lambda _: {"duration": 10 * 3600})
+    monkeypatch.setattr(pipeline, "_glossary", lambda _: None)
+    monkeypatch.setattr(pipeline, "_update", lambda *a, **k: None)
+    monkeypatch.setattr(pipeline.riprese, "segna_fallita", lambda *a, **k: None)
+    wait = []
+
+    @contextmanager
+    def lock(owner, *, timeout):
+        wait.append(timeout)
+        raise tr.LockTimeout("lock occupato da Whisper")
+        yield
+
+    monkeypatch.setattr(tr, "gpu_lock", lock)
+    with pytest.raises(RuntimeError, match="attesa oltre 240 minuti"):
+        notte.trascrivi({"id": 1, "folder": "lezione"}, {})
+    assert wait == [tr.MAX_TIMEOUT_S]
+
+
 def test_gpu_occupata_diventa_runtime_error(monkeypatch, tmp_path):
     visti = {}
 
@@ -83,7 +113,7 @@ def test_gpu_occupata_diventa_runtime_error(monkeypatch, tmp_path):
     monkeypatch.setattr(tr, "gpu_lock", lock)
     with pytest.raises(RuntimeError, match="GPU occupata da ollama bge-m3"):
         tr.transcribe(tmp_path / "a.wav", tmp_path / "o.json")
-    assert visti["timeout"] == 2 * 3600
+    assert visti["timeout"] == 4 * 3600
 
 
 def test_embed_gpu_occupata_diventa_embedding_error(monkeypatch):

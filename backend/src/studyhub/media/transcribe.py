@@ -91,13 +91,15 @@ def _worker(audio: str, out: str, prompt: str | None) -> None:
     tmp.replace(out)
 
 
-GPU_LOCK_TIMEOUT_S = 2 * 3600
 IDLE_TIMEOUT_S = 20 * 60          # nessuna riga PROGRESS per tanto: Whisper è bloccato
-DEFAULT_TIMEOUT_S = 4 * 3600      # durata audio ignota
+MAX_TIMEOUT_S = 4 * 3600          # anche il timeout usato quando la durata audio è ignota
+GPU_LOCK_TIMEOUT_S = MAX_TIMEOUT_S
 
 
 def total_timeout(duration_s: float | None) -> float:
-    return max(1800.0, 3 * duration_s) if duration_s and duration_s > 0 else float(DEFAULT_TIMEOUT_S)
+    if duration_s and duration_s > 0:
+        return min(float(MAX_TIMEOUT_S), max(1800.0, 3 * duration_s))
+    return float(MAX_TIMEOUT_S)
 
 
 def transcribe(audio: Path, out: Path, prompt: str | None = None, on_progress=None,
@@ -107,6 +109,7 @@ def transcribe(audio: Path, out: Path, prompt: str | None = None, on_progress=No
     if prompt:
         cmd += ["--prompt", prompt]
     limit = float(timeout_s) if timeout_s else total_timeout(duration_s)
+    lock_timeout = max(GPU_LOCK_TIMEOUT_S, limit)
     idle = float(idle_timeout_s) if idle_timeout_s else IDLE_TIMEOUT_S
 
     def attempt(dev: str) -> tuple[int, str]:
@@ -163,7 +166,7 @@ def transcribe(audio: Path, out: Path, prompt: str | None = None, on_progress=No
         return code, "".join(tail)
 
     try:
-        with gpu_lock(f"whisper {audio.name}", timeout=GPU_LOCK_TIMEOUT_S):
+        with gpu_lock(f"whisper {audio.name}", timeout=lock_timeout):
             dev = device()
             code, err = attempt(dev)
             if code != 0 and dev == "cuda":
@@ -173,7 +176,7 @@ def transcribe(audio: Path, out: Path, prompt: str | None = None, on_progress=No
             if code != 0:
                 raise RuntimeError(f"Whisper fallito (codice {code & 0xFFFFFFFF:#x}): {err[-1500:].strip() or 'nessun messaggio'}")
     except LockTimeout as e:
-        raise RuntimeError(f"GPU occupata da {str(e).split('occupato da ', 1)[-1]}: attesa oltre {GPU_LOCK_TIMEOUT_S // 60} minuti")
+        raise RuntimeError(f"GPU occupata da {str(e).split('occupato da ', 1)[-1]}: attesa oltre {lock_timeout // 60:g} minuti")
     return json.loads(out.read_text(encoding="utf-8"))
 
 
