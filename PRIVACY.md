@@ -17,7 +17,7 @@
 | `permissive` | Consente sensibilità media con un avviso nei log. Mantiene il blocco per alta sensibilità e per job privati. |
 | `local_only` | Esclude i provider esterni nelle chiamate instradate da questo modulo. |
 
-La modalità agisce sui flussi che passano dal filtro. Gli appunti delle lezioni e l’OCR degli arretrati chiamano direttamente il runner Claude. Questi flussi possono inviare a Claude materiale didattico, trascrizioni o immagini anche con `local_only`.
+La modalità agisce sui flussi che passano dal filtro: dal 24/11/2026 anche gli appunti in coda (trascrizioni, tipo `transcript`) e le consegne d'esame (testo e foto, tipo `exam_answers`). Resta da verificare l'OCR degli arretrati, che chiama ancora direttamente il runner Claude e può inviare immagini anche con `local_only`.
 
 ## Database, backup e log
 
