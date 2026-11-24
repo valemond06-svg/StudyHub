@@ -24,7 +24,6 @@ def _png(w=300, h=200):
 def client(ambiente):
     from conftest import AuthenticatedTestClient
     from studyhub.api.app import app
-    from fastapi.testclient import TestClient
 
     test_client = TestClient(app, raise_server_exceptions=False)
     response = test_client.get("/")

@@ -1,108 +1,52 @@
 # StudyHub
 
-App locale per studiare i corsi UniVR. Scarica da Moodle tutto il materiale dei tuoi corsi e trascrive le registrazioni delle lezioni (Moodle e Panopto). Poi, con Claude e Gemini, prepara:
-
-- **Impara**: lezioni interattive in ordine di programma, a passi brevi, con verifiche immediate, un esempio d'esame da svolgere ed errori tipici.
-- **Allenati**: domande su tutto il materiale fino a oggi, con ripetizione dilazionata (FSRS).
-- **Prontezza**: una stima onesta per l'esame, cioè quello che hai dimostrato di sapere, non quello che hai letto.
-- **Video lezioni**: player con trascrizione sincronizzata, slide e appunti AI di ogni lezione.
-
-Tutto resta sui tuoi computer. Il repository contiene solo il programma: nessun dato personale, nessun materiale dei corsi.
-
-## Dove gira
-
-- **PC fisso (Linux)**: è il server. StudyHub vi gira come servizio utente systemd `studyhub` sulla porta 8765; lì stanno il database,
-  i materiali, Whisper, Ollama e il modello locale (llama-server, 1 slot) usato di notte.
-- **Windows del laptop**: è un client. Apre l'app del fisso nel browser (`collega_al_fisso.bat`, che prova cavo diretto, Wi-Fi e Tailscale
-  sulla porta 8765). L'installazione locale su Windows (`installa.ps1`, `start.bat`) resta possibile per usarlo da solo.
-- **Second Brain**: StudyHub gli manda eventi (`brain_events.py`: `studyhub.sync`, `studyhub.notte`, `studyhub.ai_job_fallito`) con POST all'URL
-  indicato da `BRAIN_EVENT_URL` (endpoint `/ingest/event` del Brain); se il Brain non risponde, gli eventi restano in una coda locale di 200 righe.
-  Non c'è più nessuna copia del database su Drive: l'agente Ada legge il database in locale, sul fisso. Impostazioni: `brain_events` e
-  `brain_event_env` in `config.yaml`.
-
-### Lavoro automatico
-
-- **Sync** (`studyhub auto-sync`): Moodle, nuove registrazioni, indice; non chiama Claude e salta se il turno di notte o l'elaborazione completa
-  sono in corso. Prima di ogni sync le lezioni o le unità in errore tornano in coda con backoff (1 h, 6 h, 24 h, poi serve un intervento tuo).
-- **Appunti delle lezioni**: solo con Claude Sonnet, nella coda degli arretrati (`claude_backlog: true`): parte da sola finché la finestra Pro
-  è sotto il 70% (`claude_backlog_stop_at`). Anche i PDF scansionati (OCR) entrano nella stessa coda. Il modello locale (35B) non scrive gli
-  appunti: fa solo le domande e gli esercizi a valle.
-- **Turno di notte** (`studyhub notte --solo-locale`): fasi in sequenza, mai sovrapposte: Whisper ed embedding, scarico di Ollama dalla memoria,
-  unità di studio col 35B. Lo lancia `brain-notte.timer` ogni notte alle 22:30 tramite `notte.sh` del Brain, che esce subito se
-  `studyhub notte --conta` dice che non c'è lavoro. Dettagli in `scripts/linux/README.md`.
-- **Pannello «Coda AI e turno di notte»** nella vista Oggi: coda dei job, uso della finestra Claude e ultimo turno di notte.
-- **Correzione da foto**: anche nelle sessioni di studio, non solo negli esami simulati.
+StudyHub è un’app per studiare i corsi UniVR. Sincronizza materiali e registrazioni da Moodle e Panopto, trascrive le lezioni e offre ricerca, appunti, sessioni guidate, flashcard con ripasso FSRS e simulazioni d’esame. Il backend conserva dati e progressi sul computer che lo esegue. Alcune funzioni AI possono inviare contenuti ai provider indicati in [Privacy](PRIVACY.md).
 
 ## Requisiti
 
-- Windows 10 o 11 con circa 10 GB liberi (più lo spazio per i video), oppure Linux (`studyhub.sh`, come sul PC fisso).
-- Account UniVR con accesso a Moodle (`moodledidattica.univr.it`).
-- Almeno uno dei due abbonamenti AI (meglio entrambi):
-  - **Google AI Pro** con **Antigravity** e la sua riga di comando `agy`: fa la maggior parte del lavoro (domande, lezioni, correzioni);
-  - **Claude Pro** con **Claude Code** (`claude`): appunti delle lezioni e riserva se Gemini non risponde. Usa solo Sonnet e Haiku.
-- Facoltativi:
-  - scheda NVIDIA: la trascrizione è molto più veloce, ma senza funziona lo stesso su CPU;
-  - [Ollama](https://ollama.com) con il modello `bge-m3`, per la ricerca per significato.
+- Python 3.12 o superiore e uv per il backend.
+- Node.js 22 (almeno 22.22.2 per la suite frontend) e npm.
+- Account UniVR e Chromium per la sincronizzazione con Moodle e Panopto.
+- Spazio per materiali, registrazioni e trascrizioni. Whisper può usare CPU o GPU NVIDIA. Ollama con `bge-m3` serve per gli embedding della ricerca semantica. Le funzioni generative richiedono un provider configurato.
 
-## Installazione
+## Avvio in sviluppo
 
-**Il modo più semplice**: scrivi a Claude (Claude Code o la scheda Code di Claude Desktop):
+Dal repo, prepara il backend e avvialo dal suo ambiente virtuale. Su Windows con PowerShell:
 
-> Installa StudyHub sul mio PC seguendo le istruzioni in https://github.com/valemond06-svg/StudyHub/blob/main/SETUP_CON_CLAUDE.md
+```powershell
+cd backend
+uv sync --locked --python 3.12
+. .\.venv\Scripts\Activate.ps1
+studyhub serve
+```
 
-**A mano:**
+Su Linux, dopo `uv sync`, attiva il venv con `source .venv/bin/activate`. Il backend apre l’interfaccia integrata su `http://localhost:8765`. Per usare la sincronizzazione, imposta `PLAYWRIGHT_BROWSERS_PATH` su `~/.studyhub/ms-playwright` (percorso predefinito di StudyHub), installa Chromium con `python -m playwright install chromium` e avvia `studyhub login` dal venv.
 
-1. Scarica il programma in una cartella dedicata. La cartella che contiene `_StudyHub` diventa la cartella dei corsi:
+In un secondo terminale, dalla radice del repo:
 
-   ```powershell
-   git clone https://github.com/valemond06-svg/StudyHub.git "$env:USERPROFILE\Università\_StudyHub"
-   ```
+```sh
+cd studyhub-frontend
+npm ci
+npm run dev
+```
 
-2. Installa, indicando il tuo anno di corso:
+Apri `http://localhost:5173` per usare il frontend React. Vite inoltra `/api`, `/media` e `/video` al backend sulla porta 8765.
 
-   ```powershell
-   cd "$env:USERPROFILE\Università\_StudyHub"
-   powershell -ExecutionPolicy Bypass -File installa.ps1 -Anno 2
-   ```
+## Test e build
 
-   Lo script installa uv, Python 3.12, le librerie e il browser per il login. Poi crea l'icona **StudyHub** sul desktop, registra il server MCP in Claude Code e controlla tutto. Puoi rilanciarlo quando vuoi.
+| Cartella | Comandi |
+| --- | --- |
+| `backend/` (venv attivo) | `pytest` |
+| `studyhub-frontend/` | `npm test` · `npm run lint` · `npm run build` |
 
-3. Fai il login una volta nelle due AI: esegui `agy` e `claude` in un terminale.
+## Struttura
 
-4. Apri **StudyHub** dal desktop. La sezione **Studia** ti guida in tre passi:
-   1. **Accedi a Moodle**: si apre una finestra del browser e fai il login d'ateneo. La password la scrivi solo lì.
-   2. **Trova i miei corsi**: legge i corsi a cui sei iscritto. Se la classificazione per anno è sbagliata, correggila in `corsi.yaml`.
-   3. **Scarica ed elabora tutto**: materiale, registrazioni, appunti e domande. Ci vogliono ore e va avanti anche se chiudi l'app.
+| Percorso | Contenuto |
+| --- | --- |
+| `backend/src/studyhub/` | CLI, API FastAPI, SQLite, sincronizzazione, acquisizione e funzioni di studio |
+| `backend/tests/` | Suite pytest |
+| `studyhub-frontend/src/` | Pagine React, client API, componenti e test Vitest |
+| `scripts/linux/` | Esempi di unità systemd per sync e turno notturno |
+| `.github/workflows/` | Controlli CI |
 
-## Uso quotidiano
-
-- **Studia → corso → ① Impara**: la prossima lezione interattiva, nell'ordine del programma.
-- **② Allenati**: sessione da 25 o 45 minuti, con ripasso di quello che stai per dimenticare, punti deboli e argomenti nuovi.
-- Nella mappa degli argomenti, «escludi capitolo» toglie le parti che non porti all'esame.
-- Su Windows, ogni giorno alle 20 si può scaricare in automatico il materiale nuovo: `studyhub.bat schedule --time 20:00`. Sul fisso lo fa `studyhub-sync.timer` (esempi in `scripts/linux/`).
-
-## Aggiornare
-
-Doppio clic su `aggiorna.bat`: scarica l'ultima versione e ricontrolla l'installazione. I tuoi dati non vengono toccati.
-
-## Dove stanno i dati
-
-| Cosa | Dove |
-|---|---|
-| Materiale dei corsi, trascrizioni, appunti | la cartella che contiene `_StudyHub` (es. `Università\2_Anno\...`) |
-| Database (progressi, domande, lezioni) | `_StudyHub\studyhub.db` |
-| Impostazioni | `_StudyHub\config.yaml`, `_StudyHub\corsi.yaml` |
-| Sessione Moodle, browser, Python | `%USERPROFILE%\.studyhub` |
-
-Tutti questi file sono esclusi da git.
-
-## Problemi comuni
-
-- **Controllo dell'installazione**: `studyhub.bat doctor` dice cosa manca e come sistemarlo.
-- **«Login scaduto» o «Moodle non raggiungibile»**: premi «Accedi a Moodle» in Studia, o fai doppio clic su `accedi_moodle.bat`. Se Moodle è in manutenzione, l'elaborazione riprova da sola ogni 10 minuti.
-- **L'app non si apre**: guarda il log in `%TEMP%\studyhub-server.log`.
-- **Gemini o Claude non rispondono**: esegui `agy` o `claude` in un terminale e rifai il login.
-
-## Uso responsabile
-
-Il materiale dei corsi è dei docenti e di UniVR: tienilo per il tuo studio e non ridistribuirlo. StudyHub fa poche richieste a Moodle, con pause, e solo con il tuo account.
+[Architettura](ARCHITECTURE.md) · [API](API.md) · [Privacy](PRIVACY.md) · [Deployment](DEPLOYMENT.md) · [Changelog](CHANGELOG.md)

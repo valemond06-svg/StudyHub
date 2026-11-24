@@ -1,11 +1,9 @@
-import json
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fsrs import Card, Rating
 
 from conftest import inserisci_corso
-from studyhub.db import session
 from studyhub.study import mastery as ms
 from studyhub.study.flashcards import _iso, scheduler
 
@@ -76,7 +74,7 @@ def test_item_states_qualita_media_mobile_e_filtri(ambiente, db):
     inserisci_corso(db)
     a = _item(db, 1, card=_carta_ripassata(0))
     _item(db, 1, suspended=1)                      # sospesa: fuori
-    nascosto = _item(db, 2)                        # argomento nascosto: fuori
+    _item(db, 2)                        # argomento nascosto: fuori
     db.execute("UPDATE study_topics SET hidden=1 WHERE id=2")
     _tentativo(db, a, 0.0, "2026-11-08")
     _tentativo(db, a, 1.0, "2026-11-09")           # q = 0.6*1 + 0.4*0 = 0.6

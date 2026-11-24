@@ -1,7 +1,6 @@
 """Foto dello svolgimento nella correzione dei compiti: ridimensionamento, invio, avvisi onesti."""
 import base64
 import io
-import json
 from types import SimpleNamespace
 
 import pytest

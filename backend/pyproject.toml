@@ -48,3 +48,10 @@ studyhub = "studyhub.cli:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+# Stile storico del progetto: variabili a una lettera e istruzioni con ";" sono accettate
+ignore = ["E741", "E702"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F811"]  # le fixture pytest ridefiniscono il nome importato

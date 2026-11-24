@@ -1,6 +1,5 @@
 """Ogni GET con id inesistente su un database vuoto deve rispondere 404/200, mai 500."""
 import pytest
-from fastapi.testclient import TestClient
 
 GET = [
     "/api/courses", "/api/courses/999", "/api/courses/999/lectures", "/api/courses/999/notes-index",

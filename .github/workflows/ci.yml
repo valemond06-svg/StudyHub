@@ -1,0 +1,72 @@
+name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Installa le dipendenze dal lockfile
+        id: backend-install
+        run: |
+          python -m pip install uv ruff
+          uv sync --locked --python 3.12 --group dev
+      - name: Ruff
+        run: ruff check src tests
+      - name: Pytest
+        if: ${{ !cancelled() && steps.backend-install.outcome == 'success' }}
+        run: uv run --no-sync pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studyhub-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: studyhub-frontend/package-lock.json
+      - run: npm ci
+      - name: TypeScript
+        run: npm exec -- tsc -b
+      - name: Oxlint
+        run: npm run lint
+      - name: Vitest
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Audit Python
+        working-directory: backend
+        continue-on-error: true
+        run: |
+          python -m pip install uv pip-audit
+          uv export --locked --no-dev --no-emit-project --no-hashes --output-file "$RUNNER_TEMP/studyhub-requirements.txt"
+          pip-audit --no-deps --disable-pip -r "$RUNNER_TEMP/studyhub-requirements.txt"
+      - name: Audit npm
+        working-directory: studyhub-frontend
+        continue-on-error: true
+        run: npm audit --audit-level=high

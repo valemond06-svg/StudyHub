@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from studyhub import config, notte, turno
-from studyhub.ai import claude_runner, jobs, llm
+from studyhub.ai import claude_runner, llm
 from studyhub.db import session
 
 from conftest import inserisci_corso
@@ -30,7 +30,6 @@ def locale(ambiente, monkeypatch):
 def client(ambiente, locale, monkeypatch):
     """Use the authenticated client fixture from conftest with isolated LOCAL_DIR."""
     from conftest import AuthenticatedTestClient
-    from fastapi.testclient import TestClient
     from studyhub.api.app import app
 
     def vietato(*a, **k):

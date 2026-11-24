@@ -9,10 +9,9 @@ from __future__ import annotations
 import secrets
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Request, Response
+from fastapi import HTTPException, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import Response as StarletteResponse
 
 # CSRF token cookie name
 CSRF_COOKIE_NAME = "csrf_token"

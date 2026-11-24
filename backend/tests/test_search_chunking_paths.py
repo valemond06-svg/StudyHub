@@ -2,7 +2,6 @@ import pytest
 
 from conftest import inserisci_corso
 from studyhub import paths, search
-from studyhub.db import session
 from studyhub.ingest import chunking
 from studyhub.ingest.embed import EmbeddingError
 

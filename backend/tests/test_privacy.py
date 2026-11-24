@@ -4,11 +4,8 @@ import os
 from studyhub.ai.privacy import (
     analyze_sensitivity,
     check_external_allowed,
-    get_privacy_mode,
-    PrivacyMode,
     scope,
     current_scope,
-    PRIVATE_KINDS,
 )
 
 

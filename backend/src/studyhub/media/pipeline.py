@@ -20,7 +20,7 @@ from urllib.parse import unquote, urlsplit
 from rich.console import Console
 
 from ..db import session
-from ..paths import rel_to_uni, safe_name, uni_path
+from ..paths import safe_name, uni_path
 from ..study import riprese
 from ..sync.auth import MoodleSession
 from . import ff, storage
@@ -188,7 +188,8 @@ def _srt_to_segments(srt: str) -> list[dict]:
         if len(lines) < 3 or "-->" not in lines[1]:
             continue
         a, b = (x.strip().replace(",", ".") for x in lines[1].split("-->"))
-        to_s = lambda t: sum(float(p) * m for p, m in zip(t.split(":"), (3600, 60, 1)))
+        def to_s(t):
+            return sum(float(p) * m for p, m in zip(t.split(":"), (3600, 60, 1)))
         text = " ".join(lines[2:]).replace("[Auto-generated transcript. Edits may have been applied for clarity.]", "").strip()
         if text:
             segs.append({"start": round(to_s(a), 2), "end": round(to_s(b), 2), "text": text})

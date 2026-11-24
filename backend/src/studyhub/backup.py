@@ -9,12 +9,11 @@ import os
 import re
 import shutil
 import subprocess
-import time
 import secrets as pysecrets
 from pathlib import Path
 from typing import Dict, Any, List
 
-from .config import LOCAL_DIR, APP_DIR, settings
+from .config import LOCAL_DIR, settings
 
 # restic binary
 RESTIC = shutil.which("restic") or r"C:\Tools\restic\restic.exe"

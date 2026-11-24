@@ -1,5 +1,13 @@
 # Changelog — StudyHub
 
+## Sprint 2-3 (24/11/2026)
+
+- Frontend React v3 con proxy Vite e sessioni Studio collegate alle API reali. Aggiornati piano, quiz, tutor e padronanza. Aggiunti feed StudyTok e interfaccia per le simulazioni. (`c31c78a`, `b681e0c`, `f02e2f8`, `2c3b5a1`)
+- Database operativo spostato nella directory locale con supporto ai backup restic. Aggiunto il filtro privacy per i provider AI instradati da `llm.py`. (`af09ac9`)
+- Introdotte protezioni CSRF sulle mutazioni coperte e una lista esplicita delle origini CORS. Rafforzate la validazione di payload e immagini e la redazione dei log. (`2c3b5a1`, `ea5e896`)
+- Resa atomica la presa in carico dei job AI e rafforzato il lock di `fullrun`. Ricerca vettoriale a blocchi e rimescolamento deterministico delle risposte ai quiz. (`ea5e896`)
+- Abilitato TypeScript strict, estesi i test Vitest e corretta una race condition nella gamification. Il login rinnova anche i cookie Panopto nello stesso profilo Chromium. (`32310c9`, `9494fc6`)
+
 ## 2026-11-14 — P1 e P2: coda arretrati, turno di notte nativo, eventi al Brain
 
 **P1** (su main, merge `2ae4539`)

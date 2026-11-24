@@ -22,7 +22,7 @@ import os
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Set
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -194,7 +194,7 @@ def check_external_allowed(
         return PrivacyDecision(
             allowed=False,
             provider=provider,
-            reason=f"Modalità LOCAL_ONLY: provider esterni disabilitati",
+            reason="Modalità LOCAL_ONLY: provider esterni disabilitati",
             sensitivity="high"
         )
 
@@ -259,7 +259,6 @@ def log_provider_selection(provider: str, decision: PrivacyDecision, text_previe
 
 if __name__ == "__main__":
     # Test rapidi
-    import sys
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     test_cases = [

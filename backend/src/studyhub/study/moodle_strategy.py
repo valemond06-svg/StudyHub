@@ -82,7 +82,7 @@ def evaluate_course_moodle_strategy(course_id: int) -> CourseMoodleStrategy:
         elif cat == "codice" or low_path.endswith((".m", ".c", ".h", ".py", ".cir", ".dat", ".mat")):
             tier = 1
             motivo = f"Codice sorgente / dataset pratico ({arch.software_default}): core della prova pratica"
-            adattamento = f"Integrato nel blocco Laboratorio Pratico con syntax highlighting e download diretto"
+            adattamento = "Integrato nel blocco Laboratorio Pratico con syntax highlighting e download diretto"
         elif cat == "esercizi" or re.search(r"hw|homework|eserciz|lab\d", low_path):
             tier = 1
             motivo = "Esercitazione o compito con soluzioni assegnato durante il corso"

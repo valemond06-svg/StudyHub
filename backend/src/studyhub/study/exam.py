@@ -197,7 +197,7 @@ def build_profile(course_id: int, force: bool = False) -> dict:
             note_titles.append(f.read_text(encoding="utf-8").splitlines()[0].lstrip("# "))
     intro = (f"Corso: {course['fullname']}\n\n=== Regole d'esame ufficiali ===\n{rules or '(non disponibili)'}\n\n"
              f"=== Programma / registro lezioni ===\n{syllabus or '(non disponibile)'}\n\n"
-             + (f"=== Lezioni già studiate (appunti) ===\n" + "\n".join(f"- {t}" for t in note_titles) + "\n\n" if note_titles else "")
+             + ("=== Lezioni già studiate (appunti) ===\n" + "\n".join(f"- {t}" for t in note_titles) + "\n\n" if note_titles else "")
              + f"Appelli passati forniti: {len(exams)}.")
     content = [{"type": "text", "text": intro}, *exam_content,
                {"type": "text", "text": "\nProduci il profilo d'esame secondo lo schema."}]

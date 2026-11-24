@@ -1,7 +1,6 @@
 from datetime import date, timedelta
 
 from conftest import inserisci_corso
-from studyhub.db import session
 from studyhub.study import planner
 
 
@@ -89,7 +88,6 @@ def test_appello_lontano_non_genera_profilo(ambiente, db):
 
 
 def test_limite_giornaliero_di_attivita_ai_e_flashcard_sempre_in_cima(ambiente, db):
-    from studyhub.study import flashcards
     for cid in range(1, 6):
         inserisci_corso(db, cid, f"Corso {cid}")
         _lezione(db, cid * 10, cid)
