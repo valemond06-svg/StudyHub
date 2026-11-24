@@ -2,22 +2,15 @@ import { QueryClient } from "@tanstack/react-query"
 import type {
   Course,
   Lecture,
-  Flashcard,
   Quiz,
-  Exam,
   ExamProfile,
-  Simulation,
   TutorThread,
   AIPanelData,
   PlanData,
-  NotificationItem,
   DueFlashcardsResponse,
-  FeedResponse,
   StudyCourseStats,
   StudyCourseOverview,
-  AIJobStatus,
   AIProvidersStatus,
-  StorageStatus,
   FullrunStatus,
 } from "@/types"
 

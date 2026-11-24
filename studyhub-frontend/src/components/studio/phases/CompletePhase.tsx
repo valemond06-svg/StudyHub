@@ -4,7 +4,6 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { StatCard } from "./StatCard"
 import { useNavigate } from "react-router-dom"
-import { cn } from "@/lib/utils"
 
 interface CompletePhaseProps {
   xpEarned: number

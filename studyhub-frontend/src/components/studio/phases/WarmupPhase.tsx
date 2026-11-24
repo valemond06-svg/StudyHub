@@ -1,11 +1,10 @@
 import { useState } from "react"
-import { Check, X, Loader2 } from "lucide-react"
+import { X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { RadioGroup, RadioGroupItem } from "@radix-ui/react-radio-group"
 import { MathMarkdown } from "@/components/ui/math-markdown"
 import type { SessionEntry, PhaseConfig } from "./types"
 

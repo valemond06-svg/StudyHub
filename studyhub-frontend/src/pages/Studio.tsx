@@ -1,13 +1,10 @@
 import { useParams, useSearchParams, useNavigate } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState, useEffect, useCallback, useRef } from "react"
-import { ArrowLeft, Play, Pause, SkipForward, RotateCcw, Flag, Target, Zap, Heart, X, Check, Loader2, Volume2, VolumeX, Settings, ChevronDown, ChevronUp, HelpCircle, Brain } from "lucide-react"
+import { ArrowLeft, Pause, RotateCcw, Flag, Target, Zap, Heart, Check, Loader2, VolumeX, ChevronDown, HelpCircle, Brain } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { useSessionStore } from "@/store/session"
@@ -19,7 +16,6 @@ import {
   BossPhase,
   CooldownPhase,
   CompletePhase,
-  StatCard,
   type SessionEntry,
   type PhaseConfig,
 } from "@/components/studio/phases"

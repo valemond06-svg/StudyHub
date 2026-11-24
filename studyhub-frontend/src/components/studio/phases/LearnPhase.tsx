@@ -1,10 +1,9 @@
-import { Zap, Flag, X, Check, Brain, Loader2, BookOpen } from "lucide-react"
+import { Flag, Check, Loader2, BookOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
-import type { SessionEntry, PhaseConfig, OnAnswerCallback } from "./types"
+import type { SessionEntry, OnAnswerCallback } from "./types"
 
 interface LearnPhaseProps {
   entries: SessionEntry[]

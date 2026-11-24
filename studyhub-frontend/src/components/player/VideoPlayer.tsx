@@ -20,7 +20,6 @@ import {
   Mic,
   FileText,
   Image as ImageIcon,
-  Settings,
   Video,
   Film,
   Presentation,

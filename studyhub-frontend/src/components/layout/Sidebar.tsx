@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom"
-import { BookOpen, Brain, Sparkles, Zap, Settings, Menu, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { BookOpen, Brain, Sparkles, Zap, Settings, X, ChevronLeft, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useUIStore } from "@/store/ui"
 

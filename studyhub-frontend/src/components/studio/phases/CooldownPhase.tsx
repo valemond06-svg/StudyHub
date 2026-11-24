@@ -2,7 +2,6 @@ import { Heart, Zap, HelpCircle, Check, X } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { StatCard } from "./StatCard"
-import { cn } from "@/lib/utils"
 
 interface CooldownPhaseProps {
   xpEarned: number

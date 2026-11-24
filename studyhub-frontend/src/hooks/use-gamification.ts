@@ -126,8 +126,11 @@ function isMilestoneHit(m: Milestone, s: GamificationState): boolean {
 export function useGamification(): Gamification {
   const [state, setState] = useState<GamificationState>(loadState)
   const milestoneListeners = useRef<Array<(m: Milestone) => void>>([])
+  // Stato più recente: più azioni nello stesso tick non devono sovrascriversi a vicenda.
+  const latest = useRef<GamificationState>(state)
 
   const persist = (next: GamificationState) => {
+    latest.current = next
     setState(next)
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
@@ -154,28 +157,28 @@ export function useGamification(): Gamification {
   }
 
   const addXp = (n: number) => {
-    persist(checkMilestones({ ...state, xp: state.xp + Math.max(0, n) }))
+    persist(checkMilestones({ ...latest.current, xp: latest.current.xp + Math.max(0, n) }))
   }
 
   const incrementStreak = () => {
     const today = new Date().toISOString().slice(0, 10)
-    const relation = isSameOrNextDay(state.lastActiveDay, today)
-    let streak = state.streak
+    const relation = isSameOrNextDay(latest.current.lastActiveDay, today)
+    let streak = latest.current.streak
     if (relation === "next") streak += 1
     else if (relation === "same") streak = Math.max(streak, 1)
     else streak = 1
-    persist(checkMilestones({ ...state, streak, lastActiveDay: today }))
+    persist(checkMilestones({ ...latest.current, streak, lastActiveDay: today }))
   }
 
   const resetStreak = () => {
-    persist({ ...state, streak: 0 })
+    persist({ ...latest.current, streak: 0 })
   }
 
   const awardMilestone = (id: string) => {
     const milestone = MILESTONES.find((m) => m.id === id)
     if (!milestone) return
-    if (state.unlockedMilestones.includes(id)) return
-    persist(checkMilestones({ ...state, unlockedMilestones: [...state.unlockedMilestones, id] }))
+    if (latest.current.unlockedMilestones.includes(id)) return
+    persist(checkMilestones({ ...latest.current, unlockedMilestones: [...latest.current.unlockedMilestones, id] }))
   }
 
   const onMilestone = useCallback((cb: (m: Milestone) => void) => {
@@ -186,17 +189,17 @@ export function useGamification(): Gamification {
   }, [])
 
   const recordSession = () => {
-    persist(checkMilestones({ ...state, totalSessions: state.totalSessions + 1 }))
+    persist(checkMilestones({ ...latest.current, totalSessions: latest.current.totalSessions + 1 }))
   }
 
   const addMatureFlashcards = (n: number) => {
     persist(
-      checkMilestones({ ...state, totalFlashcardsMature: state.totalFlashcardsMature + Math.max(0, n) })
+      checkMilestones({ ...latest.current, totalFlashcardsMature: latest.current.totalFlashcardsMature + Math.max(0, n) })
     )
   }
 
   const recordSimulationPassed = () => {
-    persist(checkMilestones({ ...state, totalSimulationsPassed: state.totalSimulationsPassed + 1 }))
+    persist(checkMilestones({ ...latest.current, totalSimulationsPassed: latest.current.totalSimulationsPassed + 1 }))
   }
 
   const level = levelFromXp(state.xp)

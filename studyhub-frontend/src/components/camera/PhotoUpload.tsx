@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react"
-import { Camera, Upload, X, ZoomIn, ChevronLeft, ChevronRight, Loader2, Sparkles, AlertCircle } from "lucide-react"
+import { Camera, Upload, X, ZoomIn, ChevronLeft, ChevronRight, Loader2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"

@@ -3,10 +3,8 @@ import { render, screen, fireEvent } from "@testing-library/react"
 import { BrowserRouter } from "react-router-dom"
 import {
   WarmupPhase,
-  LearnPhase,
   PracticePhase,
   BossPhase,
-  CooldownPhase,
   CompletePhase,
   StatCard,
   type SessionEntry,

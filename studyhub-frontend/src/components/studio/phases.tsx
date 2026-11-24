@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   Check,
-  X,
   Zap,
   Brain,
   Target,
@@ -11,11 +10,9 @@ import {
   Sparkles,
   Trophy,
   Flame,
-  BookOpen,
   ArrowRight,
   PenTool,
   CheckCircle2,
-  XCircle,
   RotateCcw,
   HelpCircle,
   Lightbulb,

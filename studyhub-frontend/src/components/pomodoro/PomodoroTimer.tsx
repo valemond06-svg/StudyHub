@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react"
-import { Play, Pause, RotateCcw, SkipForward, Volume2, VolumeX, Sparkles, Coffee, Brain } from "lucide-react"
+import { Play, Pause, RotateCcw, SkipForward, Volume2, VolumeX, Coffee, Brain } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"

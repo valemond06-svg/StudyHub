@@ -1,9 +1,8 @@
-import { Menu, Search, Bell, Sun, Moon, Monitor, Command } from "lucide-react"
+import { Menu, Search, Bell, Sun, Moon, Monitor } from "lucide-react"
 import { useState } from "react"
 import { useUIStore } from "@/store/ui"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Separator } from "@/components/ui/separator"
 
 export function Header() {
   const { theme, setTheme, commandPaletteOpen, setCommandPaletteOpen, sidebarOpen, setSidebarOpen } = useUIStore()

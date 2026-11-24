@@ -1,19 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import {
   X,
-  RotateCw,
   Clock,
-  Sparkles,
   Trophy,
   Flame,
-  Award,
   CheckCircle2,
   AlertCircle,
-  HelpCircle,
   ArrowRight,
-  BookOpen,
   Volume2,
-  VolumeX,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
