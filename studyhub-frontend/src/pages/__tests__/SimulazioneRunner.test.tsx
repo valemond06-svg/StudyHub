@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { SimulazioneRunner } from "../SimulazioneRunner"
@@ -165,5 +165,34 @@ describe("SimulazioneRunner Page", () => {
       expect(screen.getByText(/Ottima comprensione dei concetti/)).toBeDefined()
       expect(screen.getByText("Polinomio ausiliario")).toBeDefined()
     })
+  })
+
+  it("consegna 50 minuti dopo 3000 secondi di countdown", async () => {
+    queryClient.setQueryData(["simulation", "12"], mockSimulation)
+    vi.mocked(api.getSimulation).mockResolvedValue(mockSimulation)
+    vi.mocked(api.submitSimulation).mockImplementation(() => new Promise(() => {}))
+    vi.useFakeTimers()
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/simulazione/12"]}>
+            <Routes>
+              <Route path="/simulazione/:id" element={<SimulazioneRunner />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+
+      await act(async () => vi.advanceTimersByTimeAsync(3_000_000))
+      expect(screen.getByText("10:00")).toBeDefined()
+      fireEvent.click(screen.getByText("Consegna Esame"))
+      await act(async () => {
+        fireEvent.click(screen.getByText("Conferma e Consegna"))
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(api.submitSimulation).toHaveBeenCalledExactlyOnceWith("12", expect.any(Array), 50)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -355,7 +355,7 @@ def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None
         content.append({"type": "text", "text": head})
         content.extend(pronte)
     content.append({"type": "text", "text": "\nCorreggi la prova secondo lo schema."})
-    res = run_json_content(GRADE_SYSTEM, content, GRADE_SCHEMA, quality="veloce")
+    res = run_json_content(GRADE_SYSTEM, content, GRADE_SCHEMA, quality="veloce", kind="exam_answers")
     g = res.data
     foto_info = _photo_notice(n_requested, n_img, getattr(res, "images_sent", 0))
     if foto_info["avviso"]:

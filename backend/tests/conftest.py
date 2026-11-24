@@ -22,6 +22,7 @@ def ambiente(tmp_path, monkeypatch):
     uni = tmp_path / "uni"
     uni.mkdir()
     monkeypatch.setattr(Settings, "db_path", property(lambda self: db_file))
+    monkeypatch.setattr(Settings, "old_db_path", property(lambda self: tmp_path / "legacy.db"))
     monkeypatch.setattr(settings, "uni_root", uni)
     monkeypatch.setattr(settings, "extra", {})
     for var in ("STUDYHUB_LOCAL_LLM", "STUDYHUB_LLM_KEY", "STUDYHUB_LOCAL_LLM_KEY", "LOCAL_LLM_API_KEY",

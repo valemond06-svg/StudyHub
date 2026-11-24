@@ -10,10 +10,13 @@ import re
 import shutil
 import subprocess
 import secrets as pysecrets
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Dict, Any, List
 
 from .config import LOCAL_DIR, settings
+from .db import snapshot_database
+from .filelock import file_lock
 
 # restic binary
 RESTIC = shutil.which("restic") or r"C:\Tools\restic\restic.exe"
@@ -31,14 +34,12 @@ REPOS = {
     "gdrive": "rclone:gdrive:StudyHub/restic",
 }
 
-# Paths to backup
+_SNAPSHOT_DIR = ".restic-snapshot"
+
+
 def backup_paths() -> List[str]:
-    """Percorsi da includere nel backup."""
+    """Percorsi dei media e della cache da includere nel backup."""
     paths = []
-    # Database principale
-    db_path = settings.db_path
-    if db_path.exists():
-        paths.append(str(db_path))
     # Appunti e output AI (in uni_root)
     # Nota: uni_root è su Google Drive, ma gli appunti generati localmente vanno backuppati
     # Includiamo solo la cartella _StudyHub/media se esiste
@@ -122,6 +123,20 @@ def _sanitize_error(err: str) -> str:
     return " ".join(s.split())[:200]
 
 
+@contextmanager
+def _db_snapshot(db_path: Path):
+    # Restic raggruppa gli snapshot per percorso: usa lo stesso nome a ogni esecuzione.
+    staging = settings.db_path.parent / _SNAPSHOT_DIR
+    snapshot = staging / settings.db_path.name
+    with file_lock(staging / "backup.lock", "backup Restic"):
+        try:
+            snapshot.unlink(missing_ok=True)
+            snapshot_database(db_path, snapshot)
+            yield snapshot
+        finally:
+            snapshot.unlink(missing_ok=True)
+
+
 def backup(targets: List[str] = None) -> Dict[str, Dict[str, Any]]:
     """Esegue backup sui target specificati (default: local, vps)."""
     if targets is None:
@@ -138,9 +153,20 @@ def backup(targets: List[str] = None) -> Dict[str, Dict[str, Any]]:
             pass
 
     paths = backup_paths()
-    if not paths:
+    db_path = settings.db_path
+    if not db_path.is_file():
+        db_path = settings.old_db_path
+    has_db = db_path.is_file()
+    if not has_db and not paths:
         return {"error": {"ok": False, "code": -1, "summary": "", "err": "No paths to backup"}}
 
+    with (_db_snapshot(db_path) if has_db else nullcontext()) as snapshot:
+        if snapshot is not None:
+            paths.insert(0, str(snapshot))
+        return _backup_targets(targets, paths)
+
+
+def _backup_targets(targets: List[str], paths: List[str]) -> Dict[str, Dict[str, Any]]:
     excl = sum((["--exclude", e] for e in EXCLUDES), [])
     out = {}
 
@@ -264,8 +290,10 @@ if __name__ == "__main__":
             result = restore_latest("local", Path(tmp))
             print("Restore result:", result)
             if result["ok"]:
-                db_file = Path(tmp) / "home" / "valem" / ".studyhub" / "studyhub.db"
-                if db_file.exists():
+                restored = list(Path(tmp).rglob(settings.db_path.name))
+                db_file = next((p for p in restored if p.parent.name == _SNAPSHOT_DIR),
+                               next(iter(restored), None))
+                if db_file is not None:
                     verify = verify_restore(db_file)
                     print("Verify result:", verify)
     else:

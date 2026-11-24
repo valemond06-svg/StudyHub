@@ -22,10 +22,11 @@ import pymupdf
 from ..db import session
 from ..ingest.extract import render_page
 from ..paths import rel_to_uni, uni_path
-from .claude_runner import ClaudeResult, image_block, run
+from .claude_runner import image_block
+from .llm import run_json_content
 
 PROMPT_VERSION = "lecture-v2"  # v2: regole d'esame ufficiali nel contesto
-MODEL = "sonnet"
+CACHE_MODEL = "sonnet"  # Mantiene validi gli hash degli appunti già generati.
 MAX_IMAGES = 12
 MAX_LONG_SIDE = 1568      # oltre, Claude ridimensiona comunque: sarebbero token sprecati
 TRANSCRIPT_LINE_S = 45
@@ -216,7 +217,7 @@ def build_input(lecture_id: int) -> tuple[dict, list[dict], list[dict], str]:
                   f"{rules}\n=== fine regole d'esame ===\n")
         sources.append({"tipo": "regole_esame", "caratteri": len(rules)})
     content.append({"type": "text", "text": intro})
-    hash_parts = [PROMPT_VERSION, MODEL, transcript, hint, rules]
+    hash_parts = [PROMPT_VERSION, CACHE_MODEL, transcript, hint, rules]
 
     n_img = 0
     if pdf:
@@ -306,7 +307,12 @@ def process(lecture_id: int, force: bool = False) -> dict:
     prev = existing(lecture_id)
     if prev and prev["input_hash"] == input_hash and not force and uni_path(prev["json_path"]).exists():
         return {**prev, "cached": True}
-    res: ClaudeResult = run(SYSTEM, content, SCHEMA, model=MODEL)
+    blocks = [
+        {"type": "image", "media_type": block["source"]["media_type"], "data": block["source"]["data"]}
+        if block["type"] == "image" else block
+        for block in content
+    ]
+    res = run_json_content(SYSTEM, blocks, SCHEMA, kind="transcript")
     with session() as db:
         course = dict(db.execute("SELECT * FROM courses WHERE id=?", (lec["course_id"],)).fetchone())
     out_dir = uni_path(course["folder"]) / "studio_ai" / "lezioni"
@@ -317,17 +323,15 @@ def process(lecture_id: int, force: bool = False) -> dict:
     json_path, md_path = out_dir / f"{base}.json", out_dir / f"{base}.md"
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     md_path.write_text(to_markdown(res.data, lec), encoding="utf-8")
-    u = res.usage
+    usage = res.usage or {}
     row = {"kind": "lecture_notes", "target_id": lecture_id, "course_id": lec["course_id"], "input_hash": input_hash,
            "prompt_version": PROMPT_VERSION, "model": res.model, "json_path": rel_to_uni(json_path),
            "md_path": rel_to_uni(md_path), "sources": json.dumps(sources, ensure_ascii=False),
-           "input_tokens": (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0)
-                           + (u.get("cache_creation_input_tokens") or 0),
-           "output_tokens": u.get("output_tokens"), "cost_usd": res.cost_usd, "duration_s": res.duration_s,
+           "input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens"),
+           "cost_usd": 0.0, "duration_s": res.duration_s,
            "created_at": payload["created_at"]}
     with session() as db:
         db.execute(f"INSERT INTO ai_outputs ({','.join(row)}) VALUES ({','.join('?' * len(row))})", list(row.values()))
     from ..study.flashcards import import_from_notes
     import_from_notes(lec["course_id"])  # le nuove flashcard entrano subito nel ripasso
-    return {**row, "cached": False, "utilization": res.utilization, "api_calls": res.api_calls,
-            "num_turns": res.num_turns}
+    return {**row, "cached": False}

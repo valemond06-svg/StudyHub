@@ -525,9 +525,9 @@ class TutorAsk(BaseModel):
 
 
 @app.get("/api/tutor/threads")
-def tutor_threads(token: str = Depends(get_current_token)):
+def tutor_threads(course_id: int | None = None, token: str = Depends(get_current_token)):
     from ..study import tutor
-    return tutor.threads()
+    return tutor.threads(course_id=course_id)
 
 
 @app.post("/api/tutor/threads")
@@ -667,10 +667,9 @@ def course_exam_profile(course_id: int, body: ProfileRequest | None = None, forc
 
 
 @app.post("/api/courses/{course_id}/exam/sims")
-def course_exam_sim(course_id: int, body: dict | None = None, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+def course_exam_sim(course_id: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import exam
-    count = body.get("count", 1) if body else 1
-    return _ai_call(exam.generate_sim, course_id, count)
+    return _ai_call(exam.generate_sim, course_id)
 
 
 @app.get("/api/courses/{course_id}/exam/sims")
@@ -1323,12 +1322,6 @@ _clients: dict[str, dict] = {}
 def get_csrf(request: Request, response: Response):
     """Restituisce il token CSRF e assicura che il cookie CSRF sia presente.
     Per richieste da loopback locale (127.0.0.1/localhost), assicura anche il cookie api_token."""
-    from .csrf import generate_csrf_token, get_csrf_token_from_cookie, set_csrf_cookie
-    token = get_csrf_token_from_cookie(request)
-    if not token:
-        token = generate_csrf_token()
-        set_csrf_cookie(response, token)
-
     client_host = request.client.host if request.client else ""
     if client_host in ("127.0.0.1", "::1", "localhost", "testclient"):
         from ..config import get_or_create_api_token
@@ -1340,7 +1333,7 @@ def get_csrf(request: Request, response: Response):
                 samesite="lax",
                 path="/",
             )
-    return {"csrf_token": token}
+    return {"csrf_token": request.state.csrf_token}
 
 
 @app.get("/api/version")
@@ -1372,7 +1365,4 @@ def index(request: Request):
         samesite="lax",
         path="/",
     )
-    from .csrf import generate_csrf_token, get_csrf_token_from_cookie, set_csrf_cookie
-    token = get_csrf_token_from_cookie(request) or generate_csrf_token()
-    set_csrf_cookie(res, token)
     return res

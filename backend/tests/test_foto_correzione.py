@@ -51,7 +51,7 @@ def test_limite_numero_immagini():
 # --- grade_sim -------------------------------------------------------------------------------
 
 def _correttore(images_sent):
-    def run(system, content, schema, quality="accurato"):
+    def run(system, content, schema, quality="accurato", *, kind=None):
         run.content = content
         return SimpleNamespace(data={"valutazioni": [], "voto_30": 20, "superato": True, "commento_md": "Bene.",
                                      "da_ripassare": []}, provider="local", model="m", duration_s=0,

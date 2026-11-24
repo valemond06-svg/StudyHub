@@ -25,7 +25,7 @@ def _falso(data):
 
 def _contenuto(falso):
     """Adatta un falso run_json (system, text, ...) a run_json_content (system, blocchi, ...)."""
-    def run(system, content, schema, quality="accurato"):
+    def run(system, content, schema, quality="accurato", *, kind=None):
         testo = " ".join(b["text"] for b in content if b.get("type") == "text")
         r = falso(system, testo, schema, quality)
         r.images_sent = 0

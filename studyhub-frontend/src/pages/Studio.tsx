@@ -1,11 +1,8 @@
 import { useParams, useSearchParams, useNavigate } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { useState, useEffect, useCallback, useRef } from "react"
-import { ArrowLeft, Pause, RotateCcw, Flag, Target, Zap, Heart, Check, Loader2, VolumeX, ChevronDown, HelpCircle, Brain } from "lucide-react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { ArrowLeft, RotateCcw, Flag, Target, Zap, Heart, Check, Loader2, Brain } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { useSessionStore } from "@/store/session"
 import { cn } from "@/lib/utils"
@@ -16,6 +13,7 @@ import {
   BossPhase,
   CooldownPhase,
   CompletePhase,
+  type QuestionResult,
   type SessionEntry,
   type PhaseConfig,
 } from "@/components/studio/phases"
@@ -31,7 +29,10 @@ interface SessionData {
   ended_at?: string
   xp: number
   entries: SessionEntry[]
-  topics: Record<number, any>
+  topics: Record<number, { name: string; summary_md: string }>
+  answered?: number
+  correct?: number
+  streak?: number
 }
 
 const PHASE_CONFIG: Record<SessionPhase, PhaseConfig> = {
@@ -51,387 +52,259 @@ interface AnswerPayload {
   text?: string
   confidence: number
   seconds: number
-  photos?: string[]
+}
+
+function groupSessionEntries(session: SessionData | null) {
+  const entries = (session?.entries ?? []).map((entry, idx) => ({ ...entry, idx }))
+  const questions = entries.filter((entry) => entry.t === "domanda")
+  const explicitBoss = questions.filter((entry) => entry.boss)
+  const regularQuestions = questions.filter((entry) => !entry.boss)
+  const recalls = regularQuestions.filter((entry) => entry.question?.kind === "richiamo")
+  const nonRecalls = regularQuestions.filter((entry) => entry.question?.kind !== "richiamo")
+  const fallbackBoss = nonRecalls.findLast(
+    (entry) => (entry.question?.difficulty ?? 0) >= 3 || entry.question?.kind === "aperta"
+  ) ?? nonRecalls.at(-1)
+  const boss = explicitBoss.length > 0 ? explicitBoss : fallbackBoss ? [fallbackBoss] : []
+  const bossIndices = new Set(boss.map((entry) => entry.idx))
+  const regular = regularQuestions.filter((entry) => !bossIndices.has(entry.idx))
+  const warmup = recalls.length > 0 ? recalls : regular.slice(0, 2)
+  const warmupIndices = new Set(warmup.map((entry) => entry.idx))
+  const practice = regular.filter((entry) => !warmupIndices.has(entry.idx))
+  const learn = entries.filter((entry) => entry.t === "scheda").map((entry) => {
+    const topic = entry.topic === undefined ? undefined : session?.topics?.[entry.topic]
+    return topic ? { ...entry, scheda: { ...entry.scheda, title: topic.name, content: topic.summary_md } } : entry
+  })
+
+  return { warmup, learn, practice, boss, cooldown: [], complete: [] }
 }
 
 export function Studio() {
   const { courseId } = useParams()
   const [searchParams] = useSearchParams()
+  const duration = Number(searchParams.get("duration")) || 45
+  const topic = searchParams.get("topic") ?? ""
+  const topicId = Number(topic)
+  const focusTopic = /^\d+$/.test(topic) && Number.isSafeInteger(topicId) && topicId > 0 ? topicId : undefined
+
+  return <StudioSession key={`${courseId}:${duration}:${focusTopic}`} courseId={Number(courseId)} duration={duration} focusTopic={focusTopic} />
+}
+
+function StudioSession({ courseId, duration, focusTopic }: { courseId: number; duration: number; focusTopic?: number }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { currentSession, startSession, endSession, updateSessionProgress } = useSessionStore()
 
-  const duration = Number(searchParams.get("duration")) || 45
-  const courseIdNum = Number(courseId)
-
-  const { currentSession, startSession, endSession, cancelSession, updateSessionProgress } = useSessionStore()
-
-  // Redirect if no courseId
   useEffect(() => {
-    if (!courseIdNum) {
-      navigate("/corsi", { replace: true })
-    }
-  }, [courseIdNum, navigate])
+    if (!courseId) navigate("/corsi", { replace: true })
+  }, [courseId, navigate])
 
-  // Course data
   const { data: course, isLoading: courseLoading, isError: courseError, refetch: refetchCourse } = useQuery({
-    queryKey: ["course", courseIdNum],
-    queryFn: () => api.getCourse(courseIdNum),
-    enabled: !!courseIdNum,
+    queryKey: ["course", courseId],
+    queryFn: () => api.getCourse(courseId),
+    enabled: !!courseId,
   })
 
-  // Session state
   const [phase, setPhase] = useState<SessionPhase>("warmup")
   const [phaseProgress, setPhaseProgress] = useState(0)
   const [currentEntryIndex, setCurrentEntryIndex] = useState(0)
-  const [showAnswer, setShowAnswer] = useState(false)
+  const [schedaConfirmed, setSchedaConfirmed] = useState(false)
+  const [questionResults, setQuestionResults] = useState<Record<number, QuestionResult>>({})
   const [confidence, setConfidence] = useState(3)
   const [xpEarned, setXpEarned] = useState(0)
   const [streak, setStreak] = useState(0)
   const [combo, setCombo] = useState(0)
   const [questionsAnswered, setQuestionsAnswered] = useState(0)
   const [correctAnswers, setCorrectAnswers] = useState(0)
-  const [isLoading, setIsLoading] = useState(false)
   const [sessionData, setSessionData] = useState<SessionData | null>(null)
+  const creationRequested = useRef(false)
+  const finishRequested = useRef(false)
 
-  // Timer with requestAnimationFrame for precise timing
-  const timerRef = useRef<number | null>(null)
-  const startTimeRef = useRef<number>(0)
-  const durationMsRef = useRef<number>(0)
-  const animationFrameRef = useRef<number | null>(null)
-
-  const currentPhaseConfig = PHASE_CONFIG[phase as SessionPhase]
+  const currentPhaseConfig = PHASE_CONFIG[phase]
   const totalPhases = PHASE_ORDER.length - 1
   const currentPhaseIndex = PHASE_ORDER.indexOf(phase)
+  const phaseEntries = useMemo(() => groupSessionEntries(sessionData), [sessionData])
+  const currentPhaseEntries = phaseEntries[phase]
+  const currentEntry = currentPhaseEntries[currentEntryIndex]
+  const questionResult = currentEntry ? questionResults[currentEntry.idx] : undefined
+  const showAnswer = phase === "learn" ? schedaConfirmed : Boolean(questionResult)
 
-  // Get entries for current phase
-  const getPhaseEntries = useCallback((phaseName: SessionPhase): SessionEntry[] => {
-    if (!sessionData || !sessionData.entries || sessionData.entries.length === 0) return []
-    
-    const questions = sessionData.entries.filter((e) => e.t === "domanda")
-    const schede = sessionData.entries.filter((e) => e.t === "scheda")
+  const resumeId = currentSession?.courseId === courseId &&
+    (focusTopic === undefined || currentSession.focusTopic === focusTopic)
+    ? currentSession.backendId : undefined
+  const resumeQuery = useQuery<SessionData>({
+    queryKey: ["studioSession", resumeId],
+    queryFn: () => api.getSession(resumeId!),
+    enabled: Boolean(resumeId) && !sessionData,
+    staleTime: 0,
+  })
 
-    if (phaseName === "warmup") {
-      const richiami = questions.filter((e) => e.question?.kind === "richiamo")
-      if (richiami.length > 0) return richiami
-      // Fallback: first 1 or 2 questions for warmup if no explicit richiamo
-      return questions.slice(0, Math.min(2, questions.length))
-    }
-
-    if (phaseName === "learn") {
-      return schede
-    }
-
-    if (phaseName === "practice") {
-      const richiamiIds = new Set(
-        questions.filter((e) => e.question?.kind === "richiamo").map((e) => (e as any).item ?? e.id)
-      )
-      const nonRichiami = questions.filter((e) => !richiamiIds.has((e as any).item ?? e.id))
-      if (nonRichiami.length > 1) {
-        // Reserve the last one for boss
-        return nonRichiami.slice(0, -1)
-      }
-      return nonRichiami.length > 0 ? nonRichiami : questions
-    }
-
-    if (phaseName === "boss") {
-      const explicitBoss = sessionData.entries.filter((e) => e.boss)
-      if (explicitBoss.length > 0) return explicitBoss
-      // Use the last question or hardest question
-      const hardQuestions = questions.filter(
-        (e) => (e.question?.difficulty || 0) >= 3 || e.question?.kind === "aperta"
-      )
-      if (hardQuestions.length > 0) return [hardQuestions[hardQuestions.length - 1]]
-      if (questions.length > 0) return [questions[questions.length - 1]]
-      return []
-    }
-
-    return []
-  }, [sessionData])
-
-  const currentPhaseEntries = getPhaseEntries(phase)
-
-  // Timer using requestAnimationFrame for precise sync
-  const startTimer = useCallback((phaseDurationMinutes: number) => {
-    durationMsRef.current = phaseDurationMinutes * 60 * 1000
-    startTimeRef.current = performance.now()
-
-    const tick = () => {
-      const elapsed = performance.now() - startTimeRef.current
-      const progress = Math.min((elapsed / durationMsRef.current) * 100, 100)
-      setPhaseProgress(progress)
-
-      if (progress >= 100) {
-        advancePhase()
-      } else {
-        animationFrameRef.current = requestAnimationFrame(tick)
-      }
-    }
-
-    animationFrameRef.current = requestAnimationFrame(tick)
+  const openSession = useCallback((data: SessionData) => {
+    setSessionData(data)
+    setPhase(data.ended_at ? "cooldown" : groupSessionEntries(data).warmup.length > 0 ? "warmup" : "learn")
   }, [])
 
-  const stopTimer = useCallback(() => {
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current)
-      animationFrameRef.current = null
-    }
-  }, [])
+  const { mutate: createSession, isPending: isCreating, isError: createFailed } = useMutation<SessionData>({
+    mutationFn: () => api.createSession(courseId, duration, focusTopic),
+  })
+
+  const requestSession = useCallback(() => {
+    createSession(undefined, {
+      onSuccess: (data) => {
+        startSession(courseId, duration, data.id, data.entries, focusTopic)
+        openSession(data)
+      },
+    })
+  }, [createSession, startSession, courseId, duration, focusTopic, openSession])
 
   useEffect(() => {
-    if (phase === "complete" || phase === "cooldown") {
-      stopTimer()
-      setPhaseProgress(0)
+    if (sessionData || !course || creationRequested.current) return
+    if (resumeId) {
+      const data = resumeQuery.data
+      if (data && !resumeQuery.isFetching && !resumeQuery.isError) {
+        openSession(data)
+        setXpEarned(data.xp ?? currentSession?.xpEarned ?? 0)
+        setStreak(data.streak ?? 0)
+        setQuestionsAnswered(data.answered ?? currentSession?.questionsAnswered ?? 0)
+        setCorrectAnswers(data.correct ?? currentSession?.correctAnswers ?? 0)
+      }
       return
     }
 
-    const config = PHASE_CONFIG[phase]
-    if (config.duration === 0) {
+    creationRequested.current = true
+    requestSession()
+  }, [sessionData, course, resumeId, resumeQuery.data, resumeQuery.isFetching, resumeQuery.isError, currentSession, openSession, requestSession])
+
+  const saveQuestionResult = (idx: number, result: QuestionResult) => {
+    setQuestionResults((previous) => ({ ...previous, [idx]: result }))
+  }
+
+  const answerMutation = useMutation({
+    mutationFn: ({ sid, payload, images }: { sid: number; payload: AnswerPayload; images?: string[] }) => {
+      if (images?.length) {
+        const { idx, text, confidence, seconds } = payload
+        return api.photoSession(sid, { idx, text, confidence, seconds, images })
+      }
+      return api.answerSession(sid, payload)
+    },
+    onSuccess: (result: QuestionResult, { sid, payload }) => {
+      saveQuestionResult(payload.idx, result)
+      const isCorrect = (result.score ?? 0) >= 0.7
+      const xp = xpEarned + (result.xp ?? (isCorrect ? 10 + Math.min(combo * 5, 50) : 0))
+      const answered = questionsAnswered + 1
+      const correct = correctAnswers + Number(isCorrect)
+      setXpEarned(xp)
+      setQuestionsAnswered(answered)
+      setCorrectAnswers(correct)
+      setStreak(isCorrect ? streak + 1 : 0)
+      setCombo(isCorrect ? combo + 1 : 0)
+      if (useSessionStore.getState().currentSession?.backendId === sid) {
+        updateSessionProgress({ xpEarned: xp, questionsAnswered: answered, correctAnswers: correct })
+      }
+    },
+  })
+
+  const revealMutation = useMutation({
+    mutationFn: ({ sid, idx }: { sid: number; idx: number }) => api.revealSession(sid, idx),
+    onSuccess: (result: QuestionResult, { idx }) => saveQuestionResult(idx, result),
+  })
+
+  const { mutate: finishSession, isPending: isFinishing, isError: finishFailed } = useMutation({
+    mutationFn: (sid: number) => api.finishSession(sid),
+    onSuccess: (result: Partial<SessionData>, sid) => {
+      const xp = result.xp ?? xpEarned
+      const answered = result.answered ?? questionsAnswered
+      const correct = result.correct ?? correctAnswers
+      setXpEarned(xp)
+      setStreak(result.streak ?? streak)
+      setQuestionsAnswered(answered)
+      setCorrectAnswers(correct)
+      setSessionData((previous) => previous ? { ...previous, ...result } : null)
+      if (useSessionStore.getState().currentSession?.backendId === sid) {
+        updateSessionProgress({ xpEarned: xp, questionsAnswered: answered, correctAnswers: correct })
+      }
+      setPhase("cooldown")
       setPhaseProgress(0)
-      return
-    }
+      void queryClient.invalidateQueries({ queryKey: ["plan"] })
+      void queryClient.invalidateQueries({ queryKey: ["studioSession", sid] })
+    },
+    onError: () => { finishRequested.current = false },
+  })
 
-    startTimer(config.duration)
-
-    return () => stopTimer()
-  }, [phase, startTimer, stopTimer])
+  const isQuestionPending = answerMutation.isPending || revealMutation.isPending
+  const isSessionBusy = isQuestionPending || isFinishing
 
   const advancePhase = useCallback(() => {
-    stopTimer()
-    const nextIndex = PHASE_ORDER.indexOf(phase) + 1
-    if (nextIndex < PHASE_ORDER.length) {
-      setPhase(PHASE_ORDER[nextIndex])
+    if (!sessionData || isSessionBusy) return
+    const nextPhase = PHASE_ORDER[PHASE_ORDER.indexOf(phase) + 1]
+    if (nextPhase === "cooldown") {
+      if (finishRequested.current) return
+      finishRequested.current = true
+      finishSession(sessionData.id)
+    } else if (nextPhase && nextPhase !== "complete") {
+      setPhase(nextPhase)
       setCurrentEntryIndex(0)
-      setShowAnswer(false)
+      setSchedaConfirmed(false)
       setConfidence(3)
       setPhaseProgress(0)
     }
-  }, [phase, stopTimer])
+  }, [sessionData, isSessionBusy, phase, finishSession])
 
-  // Create session mutation
-  const createSessionMutation = useMutation({
-    mutationFn: () => api.createSession(courseIdNum, duration),
-    onSuccess: (data) => {
-      setSessionData(data)
-      startSession(courseIdNum, duration, data.id, data.entries)
-      // Start with warmup phase entries
-      const warmupEntries = data.entries.filter((e: SessionEntry) => e.t === "domanda" && !e.boss)
-      if (warmupEntries.length > 0) {
-        setPhase("warmup")
-        setCurrentEntryIndex(0)
-      } else {
-        // No warmup, go to learn
-        setPhase("learn")
-      }
-    },
-    onError: (error) => {
-      console.error("Failed to create session:", error)
-      alert("Impossibile avviare la sessione: " + error.message)
-    },
-  })
+  const sessionId = sessionData?.id
+  useEffect(() => {
+    if (!sessionId || phase === "cooldown" || phase === "complete") return
+    const startedAt = performance.now()
+    const durationMs = PHASE_CONFIG[phase].duration * 60_000
+    let frame: number
+    const tick = (now: number) => {
+      const progress = Math.min((now - startedAt) / durationMs * 100, 100)
+      setPhaseProgress(progress)
+      if (progress < 100) frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [phase, sessionId])
 
-  // Answer mutation
-  const answerMutation = useMutation({
-    mutationFn: ({ sid, payload }: { sid: number; payload: AnswerPayload }) =>
-      api.answerSession(sid, payload),
-    onSuccess: (result, variables) => {
-      const isCorrect = (result.score || 0) >= 0.7
-      setShowAnswer(true)
-      setQuestionsAnswered((prev) => prev + 1)
-      if (isCorrect) {
-        setCorrectAnswers((prev) => prev + 1)
-        setStreak((prev) => prev + 1)
-        setCombo((prev) => prev + 1)
-        const xpGain = result.xp || (10 + Math.min(combo * 5, 50))
-        setXpEarned((prev) => prev + xpGain)
-        updateSessionProgress({ xpEarned: xpEarned + xpGain, questionsAnswered: questionsAnswered + 1, correctAnswers: correctAnswers + 1 })
-      } else {
-        setStreak(0)
-        setCombo(0)
-        updateSessionProgress({ questionsAnswered: questionsAnswered + 1 })
-      }
-    },
-    onError: (error) => {
-      console.error("Failed to answer:", error)
-      alert("Errore nella risposta: " + error.message)
-    },
-  })
-
-  // Reveal mutation
-  const revealMutation = useMutation({
-    mutationFn: ({ sid, idx }: { sid: number; idx: number }) => api.revealSession(sid, idx),
-    onSuccess: () => {
-      setShowAnswer(true)
-    },
-    onError: (error) => {
-      console.error("Failed to reveal:", error)
-    },
-  })
-
-  // Finish mutation
-  const finishMutation = useMutation({
-    mutationFn: (sid: number) => api.finishSession(sid),
-    onSuccess: (result) => {
-      setXpEarned(result.xp || xpEarned)
-      setStreak(result.streak || streak)
-      setQuestionsAnswered(result.answered || questionsAnswered)
-      setCorrectAnswers(result.correct || correctAnswers)
-      setPhase("cooldown")
-      updateSessionProgress({
-        xpEarned: result.xp || xpEarned,
-        questionsAnswered: result.answered || questionsAnswered,
-        correctAnswers: result.correct || correctAnswers,
-      })
-      // Store session result for cooldown
-      setSessionData((prev) => prev ? { ...prev, ...result } : null)
-    },
-    onError: (error) => {
-      console.error("Failed to finish session:", error)
-      alert("Errore nel completamento: " + error.message)
-    },
-  })
-
-  // Photo upload mutation for handwritten work
-  const photoMutation = useMutation({
-    mutationFn: ({ sid, photo, idx }: { sid: number; photo: string; idx: number }) =>
-      api.photoSession(sid, { photo, idx }),
-    onError: (error) => {
-      console.warn("Invio foto sessione in background:", error)
-    },
-  })
-
-  const handlePhotoUpload = useCallback(
-    (photo: string, entryId: number) => {
-      if (!sessionData) return
-      photoMutation.mutate({ sid: sessionData.id, photo, idx: entryId })
-    },
-    [sessionData, photoMutation]
-  )
-
-  const handleStartSession = () => {
-    createSessionMutation.mutate()
-  }
+  useEffect(() => {
+    if (phaseProgress >= 100 && !finishFailed) advancePhase()
+  }, [phaseProgress, advancePhase, finishFailed])
 
   const handleAnswer = (
-    isCorrect: boolean,
+    _isCorrect: boolean,
     conf: number,
-    answerData?: { choice?: number; text?: string; photos?: string[] }
+    answerData?: { choice?: number; text?: string; photos?: string[] },
   ) => {
-    if (!sessionData) return
-    const entry = currentPhaseEntries[currentEntryIndex]
-    if (!entry || entry.t !== "domanda" || !entry.question) return
-
-    let targetIdx = (entry as any).idx ?? (entry as any).id
-    if (targetIdx === undefined && sessionData?.entries) {
-      targetIdx = sessionData.entries.indexOf(entry)
-      if (targetIdx === -1) {
-        targetIdx = sessionData.entries.findIndex(
-          (e: any) => e === entry || (e.item && (entry as any).item && e.item === (entry as any).item)
-        )
-      }
-    }
-    if (targetIdx === undefined || targetIdx === -1) {
-      targetIdx = currentEntryIndex
-    }
+    if (!sessionData || !currentEntry || currentEntry.t !== "domanda" || showAnswer || isSessionBusy) return
 
     const payload: AnswerPayload = {
-      idx: targetIdx,
-      confidence: conf || 3,
-      seconds: 0, // Could track actual time
-      photos: answerData?.photos,
+      idx: currentEntry.idx,
+      confidence: conf,
+      seconds: 0,
+      choice: answerData?.choice,
+      text: answerData?.text,
     }
-
-    if (entry.question.kind === "multipla" || entry.question.kind === "vero_falso") {
-      payload.choice = answerData?.choice ?? 0
-    } else {
-      payload.text = answerData?.text ?? ""
-    }
-
-    answerMutation.mutate({ sid: sessionData.id, payload })
+    answerMutation.mutate({ sid: sessionData.id, payload, images: answerData?.photos })
   }
 
   const handleNext = () => {
+    if (isSessionBusy) return
     if (currentEntryIndex < currentPhaseEntries.length - 1) {
       setCurrentEntryIndex((prev) => prev + 1)
-      setShowAnswer(false)
+      setSchedaConfirmed(false)
       setConfidence(3)
     } else {
       advancePhase()
     }
   }
 
-  const handleReveal = async () => {
-    if (!sessionData) return
-    const entry = currentPhaseEntries[currentEntryIndex]
-    if (!entry || entry.t !== "domanda") return
-    let targetIdx = (entry as any).idx ?? (entry as any).id
-    if (targetIdx === undefined && sessionData?.entries) {
-      targetIdx = sessionData.entries.indexOf(entry)
-      if (targetIdx === -1) {
-        targetIdx = sessionData.entries.findIndex(
-          (e: any) => e === entry || (e.item && (entry as any).item && e.item === (entry as any).item)
-        )
-      }
-    }
-    if (targetIdx === undefined || targetIdx === -1) {
-      targetIdx = currentEntryIndex
-    }
-    await revealMutation.mutateAsync({ sid: sessionData.id, idx: targetIdx })
-  }
-
-  const handleFinish = () => {
-    if (!sessionData) return
-    finishMutation.mutate(sessionData.id)
+  const handleReveal = () => {
+    if (!sessionData || !currentEntry || currentEntry.t !== "domanda" || showAnswer || isSessionBusy) return
+    revealMutation.mutate({ sid: sessionData.id, idx: currentEntry.idx })
   }
 
   const handleCooldownComplete = () => {
     setPhase("complete")
-    if (sessionData) {
-      endSession({
-        xpEarned: xpEarned,
-        questionsAnswered: questionsAnswered,
-        correctAnswers: correctAnswers,
-      })
-    }
+    endSession({ xpEarned, questionsAnswered, correctAnswers })
   }
-
-  // Hydrate or start session
-  useEffect(() => {
-    // If we have an existing session for this course with valid entries, hydrate it
-    if (
-      currentSession &&
-      currentSession.courseId === courseIdNum &&
-      currentSession.entries &&
-      currentSession.entries.length > 0 &&
-      !sessionData
-    ) {
-      const enhancedEntries = currentSession.entries.map((entry: any, index: number) => ({
-        ...entry,
-        id: entry.id ?? index,
-        idx: entry.idx ?? index,
-      }))
-      setSessionData({
-        id: currentSession.backendId || 0,
-        course_id: currentSession.courseId,
-        minutes: currentSession.duration,
-        started_at: new Date().toISOString(),
-        xp: currentSession.xpEarned || 0,
-        entries: enhancedEntries,
-        topics: {},
-      })
-      return
-    }
-
-    // If current session is from a different course or has no entries, cancel it
-    if (currentSession && (currentSession.courseId !== courseIdNum || !currentSession.entries?.length)) {
-      cancelSession()
-      return
-    }
-
-    // Auto-start session if not already started and course is loaded
-    if (!currentSession && !createSessionMutation.isPending && course && !sessionData) {
-      handleStartSession()
-    }
-  }, [courseIdNum, currentSession, createSessionMutation.isPending, course, sessionData, cancelSession])
 
   if (courseLoading) {
     return (
@@ -445,7 +318,7 @@ export function Studio() {
   if (courseError || !course) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
-        <p className="text-neutral-600 dark:text-neutral-400">Impossibile avviare lo studio per il corso #{courseIdNum}.</p>
+        <p className="text-neutral-600 dark:text-neutral-400">Impossibile avviare lo studio per il corso #{courseId}.</p>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => navigate("/corsi")}>Torna ai corsi</Button>
           <Button onClick={() => refetchCourse()}>Riprova</Button>
@@ -519,14 +392,21 @@ export function Studio() {
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {createSessionMutation.isPending && (
+        {(isCreating || (resumeId && resumeQuery.isFetching && !sessionData)) && (
           <div className="flex items-center justify-center h-64">
             <Loader2 className="h-8 w-8 animate-spin text-accent-500" />
-            <span className="ml-2 text-neutral-500">Creazione sessione...</span>
+            <span className="ml-2 text-neutral-500">{resumeId ? "Caricamento sessione..." : "Creazione sessione..."}</span>
           </div>
         )}
 
-        {sessionData && !createSessionMutation.isPending && (
+        {!sessionData && (createFailed || resumeQuery.isError) && (
+          <div role="alert" className="text-center py-12">
+            <p>Impossibile caricare la sessione di studio.</p>
+            <Button className="mt-4" onClick={() => resumeId ? resumeQuery.refetch() : requestSession()}>Riprova</Button>
+          </div>
+        )}
+
+        {sessionData && !isCreating && (
           <>
             {phase === "warmup" && currentPhaseEntries.length > 0 && (
               <WarmupPhase
@@ -537,12 +417,12 @@ export function Studio() {
                 currentPhaseConfig={currentPhaseConfig}
                 onAnswer={handleAnswer}
                 onNext={handleNext}
-                onSetShowAnswer={setShowAnswer}
+                onSetShowAnswer={setSchedaConfirmed}
                 onSetConfidence={setConfidence}
                 onReveal={handleReveal}
-                isLoading={answerMutation.isPending || revealMutation.isPending}
+                result={questionResult}
+                isLoading={isSessionBusy}
                 sessionId={sessionData.id}
-                onPhotoUpload={handlePhotoUpload}
               />
             )}
             {phase === "learn" && currentPhaseEntries.length > 0 && (
@@ -551,9 +431,9 @@ export function Studio() {
                 currentIndex={currentEntryIndex}
                 showAnswer={showAnswer}
                 confidence={confidence}
-                onAnswer={handleAnswer}
-                onSetShowAnswer={setShowAnswer}
-                isLoading={answerMutation.isPending}
+                onSetShowAnswer={setSchedaConfirmed}
+                onNext={handleNext}
+                isLoading={isSessionBusy}
               />
             )}
             {phase === "practice" && currentPhaseEntries.length > 0 && (
@@ -564,28 +444,30 @@ export function Studio() {
                 confidence={confidence}
                 onAnswer={handleAnswer}
                 onNext={handleNext}
-                onSetShowAnswer={setShowAnswer}
+                onSetShowAnswer={setSchedaConfirmed}
                 onSetConfidence={setConfidence}
                 onReveal={handleReveal}
-                isLoading={answerMutation.isPending || revealMutation.isPending}
+                result={questionResult}
+                isLoading={isSessionBusy}
                 xpEarned={xpEarned}
                 streak={streak}
                 combo={combo}
                 questionsAnswered={questionsAnswered}
                 correctAnswers={correctAnswers}
                 sessionId={sessionData.id}
-                onPhotoUpload={handlePhotoUpload}
               />
             )}
             {phase === "boss" && currentPhaseEntries.length > 0 && (
               <BossPhase
-                entry={currentPhaseEntries[0]}
+                entry={currentEntry}
                 showAnswer={showAnswer}
                 onAnswer={handleAnswer}
-                onSetShowAnswer={setShowAnswer}
-                isLoading={answerMutation.isPending}
+                onSetShowAnswer={setSchedaConfirmed}
+                onNext={handleNext}
+                result={questionResult}
+                hasNext={currentEntryIndex < currentPhaseEntries.length - 1}
+                isLoading={isSessionBusy}
                 sessionId={sessionData.id}
-                onPhotoUpload={handlePhotoUpload}
               />
             )}
             {phase === "cooldown" && (
@@ -604,11 +486,22 @@ export function Studio() {
                 streak={streak}
                 questionsAnswered={questionsAnswered}
                 correctAnswers={correctAnswers}
-                courseId={courseId || ""}
+                courseId={String(courseId)}
                 duration={duration}
-                verdict={sessionData.ended_at ? "Hai completato la sessione. I risultati sono stati salvati." : "Sessione completata!"}
+                verdict="Hai completato la sessione. I risultati sono stati salvati."
                 nextRecommendations={[]}
               />
+            )}
+
+            {(answerMutation.isError || revealMutation.isError) && !showAnswer && (
+              <p role="alert" className="mt-4 text-center">Impossibile ottenere la correzione o la soluzione. Riprova.</p>
+            )}
+            {isFinishing && <p role="status" className="mt-4 text-center">Salvataggio della sessione...</p>}
+            {finishFailed && (
+              <div role="alert" className="mt-4 text-center">
+                <p>Impossibile salvare il completamento della sessione.</p>
+                <Button className="mt-2" onClick={advancePhase}>Riprova il salvataggio</Button>
+              </div>
             )}
 
             {/* Phase empty states */}
@@ -633,7 +526,7 @@ export function Studio() {
                 <Flag className="h-12 w-12 mx-auto text-neutral-400 mb-4" />
                 <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100 mb-2">Nessun Boss Finale</h3>
                 <p className="text-neutral-500">Non ci sono esercizi d'esame per questa sessione.</p>
-                <Button onClick={advancePhase} className="mt-4">Vai al defaticamento</Button>
+                <Button onClick={advancePhase} disabled={isFinishing} className="mt-4">Vai al defaticamento</Button>
               </div>
             )}
           </>
@@ -668,20 +561,11 @@ export function Studio() {
                 ))}
               </RadioGroup>
             </div>
-            <Button
-              size="lg"
-              className="flex-1 sm:flex-none min-w-[160px]"
-              onClick={showAnswer ? handleNext : () => handleAnswer(true, confidence)}
-              disabled={!showAnswer && phase !== "learn" || answerMutation.isPending}
-            >
-              {showAnswer ? (
-                currentEntryIndex < currentPhaseEntries.length - 1
-                  ? "Avanti"
-                  : "Fase successiva"
-              ) : (
-                "Conferma risposta"
-              )}
-            </Button>
+            {showAnswer && (
+              <Button size="lg" onClick={handleNext} disabled={isSessionBusy} className="min-w-[160px]">
+                {currentEntryIndex < currentPhaseEntries.length - 1 ? "Avanti" : "Fase successiva"}
+              </Button>
+            )}
           </div>
         )}
 

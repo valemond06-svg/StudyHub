@@ -33,3 +33,6 @@ studyhub-frontend/*.local
 studyhub-frontend/.env
 studyhub-frontend/.env.*
 studyhub-frontend/!.env.example
+
+# residui di prove restic (ACL bloccate da restic)
+backend/test-restic-work-*/

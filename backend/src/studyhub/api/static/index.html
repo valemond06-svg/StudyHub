@@ -686,7 +686,10 @@ const fmt = (t) => { t = Math.max(0, Math.floor(t || 0)); const h = Math.floor(t
 const shortName = (s) => (s || "").replace(/\s*\(20\d\d\/20\d\d\)/, "").replace(/\s*\[[^\]]*\]/, "");
 const getJ = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `Errore ${r.status}`); return r.json(); };
 async function postJ(url, body, method = "POST") {
-  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const cookie = document.cookie.split(";").find((part) => part.trimStart().startsWith("csrf_token="));
+  const csrfToken = cookie?.trimStart().slice("csrf_token=".length) || (await getJ("/api/csrf")).csrf_token;
+  const headers = { "Content-Type": "application/json", "X-CSRF-Token": csrfToken };
+  const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.detail || `Errore ${r.status}`);
   return data;
@@ -1178,7 +1181,7 @@ function renderStudyCourse(d, arch = null) {
   $("exAdd")?.addEventListener("click", () => { $("exF").hidden = false; $("exF").style.display = "inline-flex"; $("exAdd").hidden = true; });
   $("exF")?.addEventListener("submit", async (e) => { e.preventDefault();
     try { await postJ("/api/exams", { course_id: cid, date: $("exD").value, kind: $("exK").value }); loadStudyCourse(cid, true); } catch (err) { alert(err.message); } });
-  $("exDel")?.addEventListener("click", async () => { await fetch(`/api/exams/${$("exDel").dataset.ex}`, { method: "DELETE" }); loadStudyCourse(cid, true); });
+  $("exDel")?.addEventListener("click", async () => { await postJ(`/api/exams/${$("exDel").dataset.ex}`, undefined, "DELETE"); loadStudyCourse(cid, true); });
   b.querySelectorAll("[data-min]").forEach((x) => (x.onclick = () => startRun(cid, +x.dataset.min)));
   $("learnGo")?.addEventListener("click", () => openLesson(+$("learnGo").dataset.learn));
   $("eurekaGo")?.addEventListener("click", () => openLesson(+$("eurekaGo").dataset.learn));
@@ -2159,7 +2162,7 @@ async function loadToday() {
   $("exCourse").innerHTML = activeCourses().map((c) => `<option value="${c.id}">${esc(shortName(c.fullname))}</option>`).join("");
   $("exForm").onsubmit = async (e) => { e.preventDefault();
     try { await postJ("/api/exams", { course_id: +$("exCourse").value, date: $("exDate").value, kind: $("exKind").value }); loadToday(); } catch (err) { alert(err.message); } };
-  body.querySelectorAll("[data-del]").forEach((x) => (x.onclick = async () => { await fetch(`/api/exams/${x.dataset.del}`, { method: "DELETE" }); loadToday(); }));
+  body.querySelectorAll("[data-del]").forEach((x) => (x.onclick = async () => { await postJ(`/api/exams/${x.dataset.del}`, undefined, "DELETE"); loadToday(); }));
   body.querySelectorAll("[data-course]").forEach((el) => (el.onclick = () => openCourse(+el.dataset.course)));
   body.querySelectorAll("[data-task]").forEach((b) => (b.onclick = () => runTask(tasks[+b.dataset.task])));
   body.querySelectorAll("[data-lec]").forEach((b) => (b.onclick = () => setView("lessons", { lecture: +b.dataset.lec })));

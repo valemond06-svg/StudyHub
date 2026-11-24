@@ -76,7 +76,7 @@ export async function ensureCsrfToken(): Promise<string | null> {
   return csrfFetchPromise
 }
 
-async function request<T = any>(path: string, options?: RequestInit): Promise<T> {
+async function requestResponse(path: string, options?: RequestInit): Promise<Response> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options?.headers as Record<string, string> || {}),
@@ -101,8 +101,32 @@ async function request<T = any>(path: string, options?: RequestInit): Promise<T>
     throw new Error(error.message || `HTTP ${res.status}`)
   }
 
+  return res
+}
+
+async function request<T = any>(path: string, options?: RequestInit): Promise<T> {
+  const res = await requestResponse(path, options)
   if (res.status === 204) return undefined as any
   return res.json()
+}
+
+async function downloadAnki(format: "tsv" | "apkg", courseId?: number) {
+  const query = courseId === undefined ? "" : `?course_id=${courseId}`
+  const response = await requestResponse(`/api/flashcards/anki.${format}${query}`)
+  const disposition = response.headers.get("Content-Disposition") ?? ""
+  const encodedName = /filename\*=utf-8''([^;]+)/i.exec(disposition)?.[1]
+  const filename = /filename="([^"]+)"/i.exec(disposition)?.[1]
+  const link = document.createElement("a")
+  link.download = (encodedName ? decodeURIComponent(encodedName) : filename) || `studyhub_flashcards.${format}`
+  const url = URL.createObjectURL(await response.blob())
+  link.href = url
+  document.body.append(link)
+  try {
+    link.click()
+  } finally {
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
 }
 
 function enhanceFlashcard(card: any): any {
@@ -194,12 +218,11 @@ export const api = {
       cards: (data.cards || data.flashcards || []).map(enhanceFlashcard),
     })),
   importFlashcards: (course_id?: number) =>
-    request<any>(`/api/flashcards/import`, { method: "POST", body: JSON.stringify({ course_id }) }),
+    request<{ added: number }>(`/api/flashcards/import${course_id === undefined ? "" : `?course_id=${course_id}`}`, { method: "POST" }),
   reviewFlashcard: (id: number, rating: number) =>
     request<any>(`/api/flashcards/${id}/review`, { method: "POST", body: JSON.stringify({ rating }) }),
-  exportAnki: () => request<string>(`/api/flashcards/anki.tsv`),
-  exportAnkiApkg: (course_id?: number) =>
-    request<Blob>(`/api/flashcards/anki.apkg${course_id ? `?course_id=${course_id}` : ''}`, { method: "GET" }),
+  exportAnki: (courseId?: number) => downloadAnki("tsv", courseId),
+  exportAnkiApkg: (courseId?: number) => downloadAnki("apkg", courseId),
   getFlashcardStats: (course_id?: number) => request<any>(`/api/flashcards/stats${course_id ? `?course_id=${course_id}` : ''}`),
 
   // Tutor
@@ -252,7 +275,7 @@ export const api = {
   getSession: (id: number) => request<any>(`/api/study/sessions/${id}`).then(enhanceSession),
   answerSession: (id: number, answer: any) =>
     request<any>(`/api/study/sessions/${id}/answer`, { method: "POST", body: JSON.stringify(answer) }),
-  photoSession: (id: number, photo: any) =>
+  photoSession: (id: number, photo: { idx: number; images: string[]; text?: string; confidence?: number; seconds?: number }) =>
     request<any>(`/api/study/sessions/${id}/photo`, { method: "POST", body: JSON.stringify(photo) }),
   revealSession: (id: number, idx: number) =>
     request<any>(`/api/study/sessions/${id}/reveal/${idx}`, { method: "POST" }),

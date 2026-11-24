@@ -79,13 +79,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     """Middleware that ensures CSRF cookie is set on all responses."""
 
     async def dispatch(self, request: StarletteRequest, call_next):
+        cookie_token = get_csrf_token_from_cookie(request)
+        request.state.csrf_token = cookie_token or generate_csrf_token()
         response = await call_next(request)
-
-        # Set CSRF cookie if not already present (for GET requests that load the UI)
-        if CSRF_COOKIE_NAME not in request.cookies:
-            token = generate_csrf_token()
-            set_csrf_cookie(response, token)
-
+        if not cookie_token:
+            set_csrf_cookie(response, request.state.csrf_token)
         return response
 
 

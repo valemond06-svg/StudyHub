@@ -5,6 +5,7 @@ interface StudySession {
   id: string                    // frontend UUID
   backendId?: number            // backend session ID
   courseId: number
+  focusTopic?: number
   duration: number              // minutes: 25, 45, 90
   startedAt: Date
   completedAt?: Date
@@ -16,7 +17,7 @@ interface StudySession {
 
 interface SessionState {
   currentSession: StudySession | null
-  startSession: (courseId: number, duration: number, backendId?: number, entries?: any[]) => void
+  startSession: (courseId: number, duration: number, backendId?: number, entries?: any[], focusTopic?: number) => void
   endSession: (results: { xpEarned: number; questionsAnswered: number; correctAnswers: number }) => void
   cancelSession: () => void
   updateSessionProgress: (progress: Partial<StudySession>) => void
@@ -30,10 +31,11 @@ export const useSessionStore = create<SessionState>()(
       currentSession: null,
       todaySessions: [],
 
-      startSession: (courseId, duration, backendId, entries) => {
+      startSession: (courseId, duration, backendId, entries, focusTopic) => {
         const session: StudySession = {
           id: crypto.randomUUID(),
           courseId,
+          focusTopic,
           duration,
           startedAt: new Date(),
           xpEarned: 0,

@@ -2,9 +2,26 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from .config import settings
+from .filelock import file_lock
+
+_CANCEL_DUPLICATE_AI_JOBS = """
+WITH ranked AS (
+    SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY kind, target_id ORDER BY status = 'in_corso' DESC, id
+    ) AS position
+    FROM ai_jobs
+    WHERE status IN ('in_coda', 'in_corso')
+)
+UPDATE ai_jobs
+SET status = 'annullato', message = 'Duplicato riconciliato durante la migrazione',
+    finished_at = datetime('now', 'localtime')
+WHERE id IN (SELECT id FROM ranked WHERE position > 1);
+"""
 
 MIGRATIONS = [
     """
@@ -390,7 +407,32 @@ MIGRATIONS = [
     ALTER TABLE study_units ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE study_units ADD COLUMN next_retry_at TEXT;
     """,
+    # Recupera l'indice sui DB che avevano già applicato la migrazione delle priorità.
+    """
+    WITH priorities AS (
+        SELECT kind, target_id, MAX(priority) AS priority
+        FROM ai_jobs
+        WHERE status IN ('in_coda', 'in_corso')
+        GROUP BY kind, target_id
+        HAVING COUNT(*) > 1
+    )
+    UPDATE ai_jobs AS job SET priority = priorities.priority
+    FROM priorities
+    WHERE job.kind = priorities.kind AND job.target_id = priorities.target_id
+      AND job.status IN ('in_coda', 'in_corso') AND job.priority < priorities.priority;
+    """
+    + _CANCEL_DUPLICATE_AI_JOBS
+    + """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_jobs_unique
+    ON ai_jobs(kind, target_id)
+    WHERE status IN ('in_coda', 'in_corso');
+    """,
 ]
+
+# Versione storica che aggiunge priority e tenta di creare lo stesso indice.
+_AI_JOB_PRIORITY_VERSION = 1 + next(
+    i for i, sql in enumerate(MIGRATIONS) if "ALTER TABLE ai_jobs ADD COLUMN priority" in sql
+)
 
 
 def _load_vec(conn: sqlite3.Connection) -> bool:
@@ -407,23 +449,55 @@ def _load_vec(conn: sqlite3.Connection) -> bool:
 VEC_AVAILABLE: bool | None = None
 
 
+def snapshot_database(source: Path, destination: Path) -> None:
+    """Copia uno snapshot autonomo, comprese le transazioni confermate nel WAL."""
+    source_uri = source.resolve().as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(source_uri, uri=True, timeout=30)) as src:
+        with closing(sqlite3.connect(destination, timeout=30)) as dst:
+            src.backup(dst)
+            dst.execute("PRAGMA journal_mode = DELETE")
+
+
+def _copy_legacy_database(path: Path) -> None:
+    old = settings.old_db_path
+    if not path.exists() and old.is_file():
+        with TemporaryDirectory(prefix="db-migration-", dir=path.parent) as tmp:
+            snapshot = Path(tmp) / path.name
+            snapshot_database(old, snapshot)
+            snapshot.replace(path)
+
+
 def connect() -> sqlite3.Connection:
     global VEC_AVAILABLE
-    conn = sqlite3.connect(settings.db_path, timeout=30)
-    conn.row_factory = sqlite3.Row
-    VEC_AVAILABLE = _load_vec(conn)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    _migrate(conn)
+    path = settings.db_path
+    lock_path = path.with_suffix(path.suffix + ".init.lock")
+    if not path.exists():
+        # Il lock crea anche la directory locale al primo avvio.
+        with file_lock(lock_path, "inizializzazione database"):
+            _copy_legacy_database(path)
+    conn = sqlite3.connect(path, timeout=30)
+    try:
+        conn.row_factory = sqlite3.Row
+        VEC_AVAILABLE = _load_vec(conn)
+        conn.execute("PRAGMA foreign_keys = ON")
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < len(MIGRATIONS) or conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+            with file_lock(lock_path, "migrazione database"):
+                conn.execute("PRAGMA journal_mode = WAL")
+                _migrate(conn)
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     for i, sql in enumerate(MIGRATIONS[version:], start=version + 1):
-        conn.executescript(sql)
-        conn.execute(f"PRAGMA user_version = {i}")
-    conn.commit()
+        # Sui database ancora precedenti a priority, evita che l'indice storico
+        # fallisca prima che si possa raggiungere la nuova migrazione.
+        before = _CANCEL_DUPLICATE_AI_JOBS if i == _AI_JOB_PRIORITY_VERSION else ""
+        conn.executescript(f"BEGIN IMMEDIATE;\n{before}{sql}\nPRAGMA user_version = {i};\nCOMMIT;")
 
 
 @contextmanager

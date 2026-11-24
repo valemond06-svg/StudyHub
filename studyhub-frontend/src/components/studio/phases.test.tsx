@@ -71,7 +71,6 @@ describe("Studio Phases Components", () => {
     const onNext = vi.fn()
     const onSetShowAnswer = vi.fn()
     const onSetConfidence = vi.fn()
-    const onPhotoUpload = vi.fn()
 
     const mockEntries: SessionEntry[] = [
       {
@@ -94,7 +93,6 @@ describe("Studio Phases Components", () => {
         onNext={onNext}
         onSetShowAnswer={onSetShowAnswer}
         onSetConfidence={onSetConfidence}
-        onPhotoUpload={onPhotoUpload}
       />
     )
 

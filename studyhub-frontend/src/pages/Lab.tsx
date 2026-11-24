@@ -89,7 +89,7 @@ export function Lab() {
             <Search className="h-4 w-4" />
             <kbd className="hidden sm:inline-flex px-1.5 text-[10px] font-mono text-neutral-400">⌘K</kbd>
           </Button>
-          <Button variant="outline" size="sm" className="gap-1">
+          <Button variant="outline" size="sm" className="gap-1" onClick={() => api.exportAnki(courseFilter ? Number(courseFilter) : undefined).catch(() => alert("Download Anki non riuscito."))}>
             <Download className="h-4 w-4" />
             Export Anki
           </Button>
@@ -480,7 +480,7 @@ export function Lab() {
               desc="Esporta tutte le flashcard in formato .apkg per Anki. LaTeX convertito in MathJax, GUID stabili per reimport senza duplicati."
               icon={<FlaskConical className="h-8 w-8 text-accent-500" />}
               action="Esporta .apkg"
-              onAction={() => api.exportAnki()}
+              onAction={() => api.exportAnkiApkg().catch(() => alert("Download Anki non riuscito."))}
             />
             <ExportCard
               title="Appunti → PDF"

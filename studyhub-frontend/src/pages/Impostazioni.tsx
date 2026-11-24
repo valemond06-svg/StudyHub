@@ -246,7 +246,7 @@ export function Impostazioni() {
               <div className="flex gap-2">
                 <Button variant="outline"><RotateCcw className="h-4 w-4 mr-1" /> Riscansiona</Button>
                 <Button variant="outline"><Link className="h-4 w-4 mr-1" /> Cambia cartella</Button>
-                <Button variant="outline" onClick={() => api.exportAnki()}><Download className="h-4 w-4 mr-1" /> Migra media</Button>
+                <Button variant="outline" onClick={() => api.exportAnki().catch(() => alert("Download Anki non riuscito."))}><Download className="h-4 w-4 mr-1" /> Migra media</Button>
               </div>
             </CardContent>
           </Card>
@@ -430,7 +430,7 @@ export function Impostazioni() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <ExportBtn title="Flashcard → Anki (.apkg)" desc="LaTeX→MathJax, GUID stabili" icon={<FlaskConical />} onClick={() => api.exportAnki()} />
+                <ExportBtn title="Flashcard → Anki (.apkg)" desc="LaTeX→MathJax, GUID stabili" icon={<FlaskConical />} onClick={() => api.exportAnkiApkg().catch(() => alert("Download Anki non riuscito."))} />
                 <ExportBtn title="Appunti corso → PDF" desc="Copertina, indice, profilo, lezioni" icon={<BookOpen />} onClick={() => {}} />
                 <ExportBtn title="Quiz → TSV" desc="Per analisi offline" icon={<HelpCircle />} onClick={() => {}} />
                 <ExportBtn title="Profilo esame → PDF" desc="Parti, argomenti, esercizi, teoria" icon={<Target />} onClick={() => {}} />

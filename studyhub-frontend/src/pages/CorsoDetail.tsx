@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom"
 import { useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, Play, BookOpen, FlaskConical, HelpCircle, Target, Zap, Settings, Download, Upload, Edit, Plus, ListMusic, Image as ImageIcon, Brain, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -59,6 +59,10 @@ export function CorsoDetail() {
   })
   const examProfile = courseExam?.profile ?? null
   const simulations = courseExam?.sims ?? []
+  const profileMutation = useMutation({
+    mutationFn: (force: boolean) => api.generateExamProfile(courseId, force),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["examProfile", courseId] }),
+  })
 
   const examProfileRaw = (courseExam?.profile as any) ?? null
   const examMarkdown = courseExam?.profile_md || examProfileRaw?.sintesi_md || null
@@ -120,6 +124,14 @@ export function CorsoDetail() {
     queryFn: () => api.getFlashcardStats(courseId),
     enabled: !!courseId,
   })
+  const importMutation = useMutation({
+    mutationFn: () => api.importFlashcards(courseId),
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["flashcardStats"] }),
+      queryClient.invalidateQueries({ queryKey: ["flashcards-due"] }),
+    ]),
+  })
+  const exportMutation = useMutation({ mutationFn: () => api.exportAnki(courseId) })
 
   // Exams: get from plan or use the course_exam endpoint which might have it
   const { data: plan } = useQuery<PlanData>({
@@ -544,18 +556,19 @@ export function CorsoDetail() {
                 Profilo d'esame
               </CardTitle>
               {examProfile ? (
-                <Button variant="outline" size="sm" onClick={() => api.generateExamProfile(courseId)}>
+                <Button variant="outline" size="sm" disabled={profileMutation.isPending} onClick={() => profileMutation.mutate(true)}>
                   <Settings className="h-3 w-3 mr-1" />
                   Rigenera
                 </Button>
               ) : (
-                <Button onClick={() => api.generateExamProfile(courseId)}>
+                <Button disabled={profileMutation.isPending} onClick={() => profileMutation.mutate(false)}>
                   <Plus className="h-4 w-4 mr-1" />
                   Genera profilo
                 </Button>
               )}
             </CardHeader>
             <CardContent>
+              {profileMutation.isError && <p role="alert">Errore nella generazione del profilo. Riprova.</p>}
               {examProfileRaw ? (
                 <div className="space-y-6">
                   {/* Sintesi / Guida Esame Markdown */}
@@ -685,7 +698,7 @@ export function CorsoDetail() {
                   <p className="text-neutral-500 dark:text-neutral-400 mb-6">
                     Genera il profilo analizzando appelli passati e programma del corso
                   </p>
-                  <Button onClick={() => api.generateExamProfile(courseId)} className="gap-2">
+                  <Button disabled={profileMutation.isPending} onClick={() => profileMutation.mutate(false)} className="gap-2">
                     <Plus className="h-4 w-4" />
                     Genera profilo
                   </Button>
@@ -800,17 +813,19 @@ export function CorsoDetail() {
                 Flashcard (FSRS)
               </CardTitle>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => api.exportAnki()}>
+                <Button variant="outline" size="sm" disabled={exportMutation.isPending} onClick={() => exportMutation.mutate()}>
                   <Download className="h-3 w-3 mr-1" />
                   Anki
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => api.importFlashcards(courseId)}>
+                <Button variant="outline" size="sm" disabled={importMutation.isPending} onClick={() => importMutation.mutate()}>
                   <Upload className="h-3 w-3 mr-1" />
                   Import
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
+              {importMutation.isError && <p role="alert">Errore nell’importazione delle flashcard. Riprova.</p>}
+              {exportMutation.isError && <p role="alert">Errore nel download Anki. Riprova.</p>}
               {flashcardStats ? (
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Card className="p-4 text-center">

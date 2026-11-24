@@ -65,12 +65,12 @@ export function SimulazioneRunner() {
   }, [simData])
 
   const totalMinutes = simData?.durata_min || simData?.duration_min || 60
-  const totalSeconds = totalMinutes * 60
+  const totalSeconds = Math.round(totalMinutes * 60)
+  const simulationId = simData?.id
 
   // State: timer
   const [remainingSeconds, setRemainingSeconds] = useState<number>(totalSeconds)
-  const [isTimerRunning, setIsTimerRunning] = useState<boolean>(true)
-  const [elapsedMinutes, setElapsedMinutes] = useState<number>(0)
+  const hasTimeRemaining = remainingSeconds > 0
 
   // Answers state: mapped by question index
   const [answers, setAnswers] = useState<Record<number, StudentAnswerState>>({})
@@ -82,35 +82,23 @@ export function SimulazioneRunner() {
 
   // Synchronize timer duration once simulation data arrives
   useEffect(() => {
-    if (simData) {
-      const dur = (simData.durata_min || simData.duration_min || 60) * 60
-      setRemainingSeconds(dur)
-      setIsTimerRunning(true)
-    }
-  }, [simData])
+    if (simulationId !== undefined) setRemainingSeconds(totalSeconds)
+  }, [simulationId, totalSeconds])
 
   // Countdown timer effect
   useEffect(() => {
-    if (!isTimerRunning || gradingResult) return
+    if (simulationId === undefined || !hasTimeRemaining || gradingResult) return
 
     const interval = window.setInterval(() => {
-      setRemainingSeconds((prev) => {
-        if (prev <= 1) {
-          window.clearInterval(interval)
-          setIsTimerRunning(false)
-          return 0
-        }
-        return prev - 1
-      })
-      setElapsedMinutes((prev) => +(prev + 1 / 60).toFixed(2))
+      setRemainingSeconds((prev) => Math.max(0, prev - 1))
     }, 1000)
 
     return () => window.clearInterval(interval)
-  }, [isTimerRunning, gradingResult])
+  }, [simulationId, hasTimeRemaining, gradingResult])
 
   // Submit Mutation
   const submitMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (elapsedSeconds: number) => {
       if (!id) throw new Error("ID simulazione mancante")
       const formattedAnswers = rawQuestions.map((q, idx) => {
         const a = answers[idx] || { testo: "", scelta: null, immagini: [] }
@@ -120,10 +108,10 @@ export function SimulazioneRunner() {
           immagini: a.immagini || [],
         }
       })
-      return api.submitSimulation(id, formattedAnswers, Math.max(1, Math.round(elapsedMinutes)))
+      return api.submitSimulation(id, formattedAnswers, elapsedSeconds / 60)
     },
-    onSuccess: (data: SimulationGrading) => {
-      setIsTimerRunning(false)
+    onSuccess: (data: SimulationGrading, elapsedSeconds) => {
+      setRemainingSeconds(totalSeconds - elapsedSeconds)
       setGradingResult(data)
       setShowConfirmModal(false)
       queryClient.invalidateQueries({ queryKey: ["examProfile", simData?.course_id] })
@@ -276,7 +264,7 @@ export function SimulazioneRunner() {
                     {isPassed ? "Prova Superata" : "Prova Non Superata"}
                   </Badge>
                   <span className="text-xs text-neutral-400 font-mono">
-                    Durata: {Math.max(1, Math.round(elapsedMinutes))} min
+                    Durata: {formatTime(totalSeconds - remainingSeconds)}
                   </span>
                 </div>
 
@@ -508,8 +496,6 @@ export function SimulazioneRunner() {
               setAnswers({})
               setSelectedQuestionIndex(0)
               setRemainingSeconds(totalSeconds)
-              setIsTimerRunning(true)
-              setElapsedMinutes(0)
             }}
             className="rounded-xl gap-2"
           >
@@ -820,7 +806,8 @@ export function SimulazioneRunner() {
 
               <Button
                 type="button"
-                onClick={() => submitMutation.mutate()}
+                onClick={() => submitMutation.mutate(totalSeconds - remainingSeconds)}
+                disabled={submitMutation.isPending}
                 className="flex-1 rounded-xl h-10 text-xs font-semibold bg-accent-600 hover:bg-accent-700 text-white shadow-md gap-1.5"
               >
                 <CheckCircle2 className="h-4 w-4" />

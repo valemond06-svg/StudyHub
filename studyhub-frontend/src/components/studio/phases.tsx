@@ -64,7 +64,19 @@ export interface SessionScheda {
   topic_id?: number
 }
 
+export interface QuestionResult {
+  answer_md?: string
+  solution_md?: string
+  feedback_md?: string
+  feedback?: string
+  correct_choice?: number
+  correct?: number | boolean
+  score?: number
+  xp?: number
+}
+
 export interface SessionEntry {
+  topic?: number
   id: number
   t: "domanda" | "scheda" | string
   boss?: boolean
@@ -162,7 +174,7 @@ export function StatCard({
 // Helper: Extract Question Data
 // ==========================================
 
-function parseQuestionData(entry: SessionEntry) {
+function parseQuestionData(entry: SessionEntry, result?: QuestionResult) {
   const q: any = entry.question || entry
   const prompt = q.prompt_md || q.prompt || q.text_md || q.text || q.domanda || ""
 
@@ -191,12 +203,27 @@ function parseQuestionData(entry: SessionEntry) {
   }
 
   const kind = q.kind || (choicesList.length > 0 ? "multipla" : "aperta")
-  const explanation = q.answer_md || q.explanation_md || q.solution_md || q.explanation || q.solution || ""
+  const correctChoice = result?.correct_choice ?? (typeof result?.correct === "number" ? result.correct : undefined)
+  const explanation = result?.answer_md || result?.solution_md ||
+    q.answer_md || q.explanation_md || q.solution_md || q.explanation || q.solution ||
+    (correctChoice === undefined ? "" : choicesList[correctChoice] || "")
   const hint = q.hint_md || q.hint || ""
   const topicTitle = q.topic_title || entry.topic_title || (entry as any).topic_name || (q.topic_id ? `Topic ${q.topic_id}` : "")
-  const correctAnswer = q.correct_choice ?? q.correct_answer ?? q.answer ?? q.answer_md
+  const correctAnswer = correctChoice ?? q.correct_choice ?? q.correct_answer ?? q.correct ?? q.answer ?? q.answer_md
 
   return { prompt, choices: choicesList, kind, explanation, hint, topicTitle, correctAnswer }
+}
+
+function CorrectionFeedback({ result }: { result?: QuestionResult }) {
+  const feedback = result?.feedback_md || result?.feedback
+  if (!feedback) return null
+
+  return (
+    <div className="p-4 rounded-2xl bg-accent-50 dark:bg-accent-950/30">
+      <p className="text-xs font-bold mb-2">Feedback della correzione</p>
+      <MathMarkdown content={feedback} className="text-sm leading-relaxed" />
+    </div>
+  )
 }
 
 const OPTION_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"]
@@ -218,7 +245,7 @@ export interface WarmupPhaseProps {
   onReveal?: () => void | Promise<void>
   isLoading?: boolean
   sessionId?: number
-  onPhotoUpload?: (photo: string, entryId: number) => Promise<void> | void
+  result?: QuestionResult
 }
 
 export function WarmupPhase({
@@ -233,7 +260,7 @@ export function WarmupPhase({
   onReveal,
   isLoading,
   sessionId,
-  onPhotoUpload,
+  result,
 }: WarmupPhaseProps) {
   const entry = entries[currentIndex]
   const [selectedChoice, setSelectedChoice] = useState<number | null>(null)
@@ -255,20 +282,12 @@ export function WarmupPhase({
 
   if (!entry) return null
 
-  const { prompt, choices, kind, explanation, hint, topicTitle, correctAnswer } = parseQuestionData(entry)
+  const { prompt, choices, kind, explanation, hint, topicTitle, correctAnswer } = parseQuestionData(entry, result)
   const isMultiple = (kind === "multipla" || kind === "vero_falso" || choices.length > 0)
 
   const handleSelectChoice = (index: number) => {
     if (showAnswer || isLoading) return
     setSelectedChoice(index)
-  }
-
-  const handlePhotosChange = (newPhotos: string[]) => {
-    if (newPhotos.length > photos.length && onPhotoUpload && entry) {
-      const latestPhoto = newPhotos[newPhotos.length - 1]
-      onPhotoUpload(latestPhoto, entry.id)
-    }
-    setPhotos(newPhotos)
   }
 
   const handleSubmit = (overrideCorrect?: boolean) => {
@@ -296,7 +315,7 @@ export function WarmupPhase({
 
     onAnswer(isCorrect, confidence, {
       choice: selectedChoice ?? undefined,
-      text: notebookMode ? "Svolto su quaderno" : textAnswer.trim() || (photos.length > 0 ? "Svolto a mano sul quaderno (foto allegata)" : undefined),
+      text: textAnswer.trim() || (notebookMode && photos.length === 0 ? "Svolto su quaderno" : undefined),
       photos: photos.length > 0 ? photos : undefined,
     })
   }
@@ -465,7 +484,7 @@ export function WarmupPhase({
             <div className="p-4 rounded-2xl bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 space-y-3 animate-in fade-in duration-200 text-neutral-900 dark:text-neutral-50">
               <PhotoUpload
                 photos={photos}
-                onPhotosChange={handlePhotosChange}
+                onPhotosChange={setPhotos}
                 maxPhotos={4}
                 label="Foto svolgimento quaderno"
                 disabled={showAnswer || isLoading}
@@ -520,8 +539,9 @@ export function WarmupPhase({
               />
             </div>
 
+            <CorrectionFeedback result={result} />
             <div className="flex justify-end pt-2">
-              <Button onClick={onNext} className="rounded-xl px-6 gap-2">
+              <Button onClick={onNext} disabled={isLoading} className="rounded-xl px-6 gap-2">
                 {currentIndex < entries.length - 1 ? "Prossima domanda" : "Fase successiva"}
                 <ArrowRight className="h-4 w-4" />
               </Button>
@@ -542,7 +562,7 @@ export interface LearnPhaseProps {
   currentIndex: number
   showAnswer: boolean
   confidence: number
-  onAnswer: (isCorrect: boolean, conf: number, answerData?: { choice?: number; text?: string }) => void
+  onAnswer?: (isCorrect: boolean, conf: number, answerData?: { choice?: number; text?: string }) => void
   onSetShowAnswer: (show: boolean) => void
   isLoading?: boolean
   onNext?: () => void
@@ -576,7 +596,7 @@ export function LearnPhase({
   const handleConfirmUnderstanding = (ok: boolean) => {
     setUnderstood(ok)
     onSetShowAnswer(true)
-    onAnswer(ok, ok ? 5 : 2)
+    onAnswer?.(ok, ok ? 5 : 2)
   }
 
   return (
@@ -663,7 +683,7 @@ export function LearnPhase({
               <span className="text-xs text-neutral-500">
                 {understood ? "Salvato come appreso ✓" : "Segnato per il ripasso"}
               </span>
-              <Button onClick={() => (onNext ? onNext() : onAnswer(true, confidence))} className="rounded-xl px-5 text-sm gap-1.5">
+              <Button onClick={() => (onNext ? onNext() : onAnswer?.(true, confidence))} className="rounded-xl px-5 text-sm gap-1.5">
                 Prossima scheda
                 <ArrowRight className="h-4 w-4" />
               </Button>
@@ -696,7 +716,7 @@ export interface PracticePhaseProps {
   questionsAnswered?: number
   correctAnswers?: number
   sessionId?: number
-  onPhotoUpload?: (photo: string, entryId: number) => Promise<void> | void
+  result?: QuestionResult
 }
 
 export function PracticePhase({
@@ -715,7 +735,7 @@ export function PracticePhase({
   questionsAnswered = 0,
   correctAnswers = 0,
   sessionId,
-  onPhotoUpload,
+  result,
 }: PracticePhaseProps) {
   const entry = entries[currentIndex]
   const [selectedChoice, setSelectedChoice] = useState<number | null>(null)
@@ -736,20 +756,12 @@ export function PracticePhase({
 
   if (!entry) return null
 
-  const { prompt, choices, kind, explanation, hint, topicTitle, correctAnswer } = parseQuestionData(entry)
+  const { prompt, choices, kind, explanation, hint, topicTitle, correctAnswer } = parseQuestionData(entry, result)
   const isMultiple = (kind === "multipla" || kind === "vero_falso" || choices.length > 0)
 
   const handleSelectChoice = (idx: number) => {
     if (showAnswer || isLoading) return
     setSelectedChoice(idx)
-  }
-
-  const handlePhotosChange = (newPhotos: string[]) => {
-    if (newPhotos.length > photos.length && onPhotoUpload && entry) {
-      const latestPhoto = newPhotos[newPhotos.length - 1]
-      onPhotoUpload(latestPhoto, entry.id)
-    }
-    setPhotos(newPhotos)
   }
 
   const handleSubmit = (overrideCorrect?: boolean) => {
@@ -776,7 +788,7 @@ export function PracticePhase({
 
     onAnswer(isCorrect, confidence, {
       choice: selectedChoice ?? undefined,
-      text: notebookMode ? "Svolto su quaderno" : textAnswer.trim() || (photos.length > 0 ? "Svolto a mano sul quaderno (foto allegata)" : undefined),
+      text: textAnswer.trim() || (notebookMode && photos.length === 0 ? "Svolto su quaderno" : undefined),
       photos: photos.length > 0 ? photos : undefined,
     })
   }
@@ -963,7 +975,7 @@ export function PracticePhase({
             <div className="p-4 rounded-2xl bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 space-y-3 animate-in fade-in duration-200 text-neutral-900 dark:text-neutral-50">
               <PhotoUpload
                 photos={photos}
-                onPhotosChange={handlePhotosChange}
+                onPhotosChange={setPhotos}
                 maxPhotos={4}
                 label="Foto svolgimento quaderno"
                 disabled={showAnswer || isLoading}
@@ -1018,8 +1030,9 @@ export function PracticePhase({
               />
             </div>
 
+            <CorrectionFeedback result={result} />
             <div className="flex justify-end pt-2">
-              <Button onClick={onNext} className="rounded-xl px-6 gap-2">
+              <Button onClick={onNext} disabled={isLoading} className="rounded-xl px-6 gap-2">
                 {currentIndex < entries.length - 1 ? "Prossimo esercizio" : "Fase successiva"}
                 <ArrowRight className="h-4 w-4" />
               </Button>
@@ -1037,24 +1050,26 @@ export function PracticePhase({
 
 export interface BossPhaseProps {
   entry: SessionEntry
+  hasNext?: boolean
   showAnswer: boolean
   onAnswer: (isCorrect: boolean, conf: number, answerData?: { choice?: number; text?: string; photos?: string[] }) => void
   onSetShowAnswer: (show: boolean) => void
   isLoading?: boolean
   onNext?: () => void
   sessionId?: number
-  onPhotoUpload?: (photo: string, entryId: number) => Promise<void> | void
+  result?: QuestionResult
 }
 
 export function BossPhase({
   entry,
+  hasNext,
   showAnswer,
   onAnswer,
   onSetShowAnswer,
   isLoading,
   onNext,
   sessionId,
-  onPhotoUpload,
+  result,
 }: BossPhaseProps) {
   const [selectedChoice, setSelectedChoice] = useState<number | null>(null)
   const [textAnswer, setTextAnswer] = useState("")
@@ -1072,16 +1087,8 @@ export function BossPhase({
 
   if (!entry) return null
 
-  const { prompt, choices, kind, explanation, hint, topicTitle, correctAnswer } = parseQuestionData(entry)
+  const { prompt, choices, kind, explanation, hint, topicTitle, correctAnswer } = parseQuestionData(entry, result)
   const isMultiple = (kind === "multipla" || kind === "vero_falso" || choices.length > 0)
-
-  const handlePhotosChange = (newPhotos: string[]) => {
-    if (newPhotos.length > photos.length && onPhotoUpload && entry) {
-      const latestPhoto = newPhotos[newPhotos.length - 1]
-      onPhotoUpload(latestPhoto, entry.id)
-    }
-    setPhotos(newPhotos)
-  }
 
   const handleSubmit = (overrideCorrect?: boolean) => {
     if (isLoading) return
@@ -1107,7 +1114,7 @@ export function BossPhase({
 
     onAnswer(isCorrect, 4, {
       choice: selectedChoice ?? undefined,
-      text: notebookMode ? "Svolto su quaderno" : textAnswer.trim() || (photos.length > 0 ? "Svolto a mano sul quaderno (foto allegata)" : undefined),
+      text: textAnswer.trim() || (notebookMode && photos.length === 0 ? "Svolto su quaderno" : undefined),
       photos: photos.length > 0 ? photos : undefined,
     })
   }
@@ -1254,7 +1261,7 @@ export function BossPhase({
             <div className="p-4 rounded-2xl bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 space-y-3 animate-in fade-in duration-200 text-neutral-900 dark:text-neutral-50">
               <PhotoUpload
                 photos={photos}
-                onPhotosChange={handlePhotosChange}
+                onPhotosChange={setPhotos}
                 maxPhotos={6}
                 label="Foto svolgimento dimostrazione / quaderno"
                 disabled={showAnswer || isLoading}
@@ -1295,9 +1302,10 @@ export function BossPhase({
                 className="text-sm leading-relaxed"
               />
             </div>
+            <CorrectionFeedback result={result} />
             <div className="flex justify-end">
-              <Button onClick={() => (onNext ? onNext() : onAnswer(true, 5))} className="rounded-xl px-6 gap-2">
-                Termina sfida
+              <Button onClick={() => (onNext ? onNext() : onAnswer(true, 5))} disabled={isLoading} className="rounded-xl px-6 gap-2">
+                {hasNext ? "Prossima sfida" : "Termina sfida"}
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </div>

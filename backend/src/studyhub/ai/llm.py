@@ -170,6 +170,7 @@ class LLMResult:
     model: str
     duration_s: float
     images_sent: int = 0   # foto davvero consegnate a un modello con vista (0 = nessuna letta)
+    usage: dict | None = None
 
 # --- FreeLLMAPI (VPS / Brain) ----------------------------------------------------------------
 # FRAGILE: provider gratuito OpenAI-compatible.
@@ -489,7 +490,8 @@ def _local(system: str, text: str, schema: dict, quality: str, content: list[dic
         msg = (res.get("choices") or [{}])[0].get("message", {})
         raw = msg.get("content") or msg.get("reasoning_content") or ""
         return LLMResult(_extract_json(raw), "local", res.get("model", "local-qwen3.6-35b"),
-                         round(time.time() - t0, 1), images_sent=sum(1 for b in content if b.get("type") == "image"))
+                         round(time.time() - t0, 1), images_sent=sum(1 for b in content if b.get("type") == "image"),
+                         usage=res.get("usage"))
     prompt = (
         f"{system}\n\nNON inserire tag <think> o ragionamenti preliminari. "
         f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme a questo schema:\n"
@@ -528,7 +530,7 @@ def _local(system: str, text: str, schema: dict, quality: str, content: list[dic
         raw = msg.get("reasoning_content")
     data = _extract_json(raw)
     model_name = res.get("model", "local-qwen3.6-35b")
-    return LLMResult(data, "local", model_name, round(time.time() - t0, 1))
+    return LLMResult(data, "local", model_name, round(time.time() - t0, 1), usage=res.get("usage"))
 
 
 def _gemini(system: str, text: str, schema: dict, quality: str, kind: str | None = None, private: bool = False) -> LLMResult:
