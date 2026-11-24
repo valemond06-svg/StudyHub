@@ -7,6 +7,16 @@
     <meta name="description" content="StudyHub - La tua app di studio intelligente per l'università" />
     <meta name="theme-color" content="#3d52ff" />
     <title>StudyHub</title>
+      <script>
+      // Applica il tema prima del primo paint (niente lampo bianco): stessa logica di useThemeSync in App.tsx.
+      try {
+        var t = (JSON.parse(localStorage.getItem("studyhub-ui") || "{}").state || {}).theme || "system";
+        var dark = t === "dark" || t === "oled" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        var c = document.documentElement.classList;
+        c.add(dark ? "dark" : "light");
+        if (t === "oled") c.add("oled");
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

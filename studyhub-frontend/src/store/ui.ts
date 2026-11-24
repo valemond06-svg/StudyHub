@@ -26,6 +26,10 @@ export const useUIStore = create<UIState>()(
       commandPaletteOpen: false,
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
     }),
-    { name: "studyhub-ui" }
+    {
+      name: "studyhub-ui",
+      // Si ricordano solo le preferenze: palette comandi e sidebar mobile ripartono sempre chiuse/di default.
+      partialize: (s) => ({ theme: s.theme, sidebarCollapsed: s.sidebarCollapsed }),
+    }
   )
 )
