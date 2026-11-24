@@ -104,6 +104,23 @@ def list_for_lecture(lecture_id: int) -> list[dict]:
                FROM quizzes q WHERE q.lecture_id=? ORDER BY q.id DESC""", (lecture_id,))]
 
 
+def history(course_id: int | None = None, limit: int = 50) -> list[dict]:
+    """Storico quiz: tentativi con punteggio."""
+    with session() as db:
+        sql = """SELECT a.id, a.quiz_id, q.title, q.lecture_id, q.course_id, a.score, a.max_score,
+                        a.created_at, l.title AS lecture_title
+                 FROM quiz_attempts a
+                 JOIN quizzes q ON q.id = a.quiz_id
+                 LEFT JOIN lectures l ON l.id = q.lecture_id"""
+        params: list = []
+        if course_id is not None:
+            sql += " WHERE q.course_id=?"
+            params.append(course_id)
+        sql += " ORDER BY a.id DESC LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in db.execute(sql, params)]
+
+
 def submit(quiz_id: int, answers: list) -> dict:
     """answers[i]: indice scelto (multipla), 1/0 (vero_falso), testo (aperta/esercizio), None se saltata."""
     quiz = get(quiz_id, with_solutions=True)

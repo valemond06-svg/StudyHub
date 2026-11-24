@@ -72,11 +72,24 @@ def thread(thread_id: int) -> dict:
     return {**dict(t), "messages": msgs}
 
 
-def threads(limit: int = 30) -> list[dict]:
+def threads(limit: int = 30, course_id: int | None = None) -> list[dict]:
     with session() as db:
-        return [dict(r) for r in db.execute(
-            """SELECT t.*, c.fullname AS course, (SELECT COUNT(*) FROM tutor_messages m WHERE m.thread_id=t.id) AS n
-               FROM tutor_threads t LEFT JOIN courses c ON c.id=t.course_id ORDER BY t.id DESC LIMIT ?""", (limit,))]
+        sql = """SELECT t.*, c.fullname AS course, (SELECT COUNT(*) FROM tutor_messages m WHERE m.thread_id=t.id) AS n
+               FROM tutor_threads t LEFT JOIN courses c ON c.id=t.course_id"""
+        params: list = []
+        if course_id is not None:
+            sql += " WHERE t.course_id=?"
+            params.append(course_id)
+        sql += " ORDER BY t.id DESC LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in db.execute(sql, params)]
+
+
+def delete_thread(thread_id: int) -> dict:
+    with session() as db:
+        db.execute("DELETE FROM tutor_messages WHERE thread_id=?", (thread_id,))
+        db.execute("DELETE FROM tutor_threads WHERE id=?", (thread_id,))
+    return {"ok": True}
 
 
 def ask(thread_id: int, question: str) -> dict:

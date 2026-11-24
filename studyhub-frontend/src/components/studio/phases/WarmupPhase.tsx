@@ -6,6 +6,7 @@ import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { RadioGroup, RadioGroupItem } from "@radix-ui/react-radio-group"
+import { MathMarkdown } from "@/components/ui/math-markdown"
 import type { SessionEntry, PhaseConfig } from "./types"
 
 interface WarmupPhaseProps {
@@ -88,11 +89,12 @@ export function WarmupPhase({
             <Button
               key={i}
               variant={userAnswer === i ? "default" : "outline"}
-              className="w-full justify-start"
+              className="w-full justify-start text-left h-auto py-3 whitespace-normal"
               onClick={() => handleOptionClick(i)}
               disabled={showAnswer || isLoading}
             >
-              {opt}
+              <span className="mr-2 font-semibold text-xs opacity-60">{String.fromCharCode(65 + i)}.</span>
+              <span className="flex-1"><MathMarkdown content={opt} /></span>
             </Button>
           ))}
         </div>
@@ -145,7 +147,9 @@ export function WarmupPhase({
             </Badge>
           </div>
 
-          <p className="text-2xl font-medium text-neutral-950 dark:text-neutral-50 mb-6">{question.prompt_md}</p>
+          <p className="text-2xl font-medium text-neutral-950 dark:text-neutral-50 mb-6">
+            <MathMarkdown content={question.prompt_md || ""} />
+          </p>
 
           {!showAnswer && (
             <div className="space-y-3">

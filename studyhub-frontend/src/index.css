@@ -1,17 +1,24 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* === COLORS — Apple minimal === */
-  /* Neutral 10-step scale */
+  /* Neutral 10-step scale + micro-steps */
   --color-neutral-50:  #fafafa;
   --color-neutral-100: #f5f5f5;
+  --color-neutral-150: #efefef;
   --color-neutral-200: #e5e5e5;
   --color-neutral-300: #d4d4d4;
+  --color-neutral-350: #bebebe;
   --color-neutral-400: #a3a3a3;
   --color-neutral-500: #737373;
   --color-neutral-600: #525252;
+  --color-neutral-650: #484848;
+  --color-neutral-750: #333333;
   --color-neutral-700: #404040;
   --color-neutral-800: #262626;
+  --color-neutral-850: #1c1c1c;
   --color-neutral-900: #171717;
   --color-neutral-950: #0a0a0a;
 
@@ -37,6 +44,7 @@
   --color-error-600: #dc2626;
 
   /* === SPACING — 4px base === */
+  --spacing: 0.25rem;
   --spacing-0: 0;
   --spacing-1: 4px;   /* 0.25rem */
   --spacing-2: 8px;   /* 0.5rem */
@@ -48,6 +56,14 @@
   --spacing-10: 40px; /* 2.5rem */
   --spacing-12: 48px; /* 3rem */
   --spacing-16: 64px; /* 4rem */
+  --spacing-20: 80px; /* 5rem */
+  --spacing-24: 96px; /* 6rem */
+  --spacing-32: 128px; /* 8rem */
+  --spacing-48: 192px; /* 12rem */
+  --spacing-64: 256px; /* 16rem - sidebar & main layout */
+  --spacing-72: 288px; /* 18rem */
+  --spacing-80: 320px; /* 20rem */
+  --spacing-96: 384px; /* 24rem */
 
   /* === TYPOGRAPHY — SF Pro / system-ui === */
   --font-family-sans: "SF Pro Display", "SF Pro Text", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -97,33 +113,57 @@
   --z-toast: 600;
 }
 
-/* === DARK MODE === */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg-primary: var(--color-neutral-950);
-    --color-bg-secondary: var(--color-neutral-900);
-    --color-bg-tertiary: var(--color-neutral-800);
-    --color-text-primary: var(--color-neutral-50);
-    --color-text-secondary: var(--color-neutral-300);
-    --color-text-tertiary: var(--color-neutral-500);
-    --color-border-primary: var(--color-neutral-800);
-    --color-border-secondary: var(--color-neutral-700);
-    --shadow-subtle: none;
-    --shadow-default: none;
-    --shadow-elevated: 0 4px 16px rgba(0,0,0,0.3), 0 8px 32px rgba(0,0,0,0.3);
-    --shadow-modal: 0 8px 48px rgba(0,0,0,0.4), 0 16px 64px rgba(0,0,0,0.4);
-  }
-}
-
+/* === LIGHT THEME (default) === */
 :root {
   --color-bg-primary: var(--color-neutral-50);
   --color-bg-secondary: var(--color-neutral-100);
   --color-bg-tertiary: var(--color-neutral-200);
   --color-text-primary: var(--color-neutral-950);
-  --color-text-secondary: var(--color-neutral-600);
-  --color-text-tertiary: var(--color-neutral-400);
+  --color-text-secondary: var(--color-neutral-700);
+  --color-text-tertiary: var(--color-neutral-500);
   --color-border-primary: var(--color-neutral-200);
   --color-border-secondary: var(--color-neutral-300);
+}
+
+/* === DARK THEME (via class or system preference) === */
+.dark, :root:has(.dark), html.dark {
+  --color-bg-primary: var(--color-neutral-950);
+  --color-bg-secondary: var(--color-neutral-900);
+  --color-bg-tertiary: var(--color-neutral-800);
+  --color-text-primary: var(--color-neutral-50);
+  --color-text-secondary: var(--color-neutral-300);
+  --color-text-tertiary: var(--color-neutral-400);
+  --color-border-primary: var(--color-neutral-800);
+  --color-border-secondary: var(--color-neutral-700);
+  --shadow-subtle: none;
+  --shadow-default: none;
+  --shadow-elevated: 0 4px 16px rgba(0,0,0,0.3), 0 8px 32px rgba(0,0,0,0.3);
+  --shadow-modal: 0 8px 48px rgba(0,0,0,0.4), 0 16px 64px rgba(0,0,0,0.4);
+}
+
+/* === OLED / PURE BLACK THEME === */
+.oled, html.oled {
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #0a0a0a;
+  --color-bg-tertiary: #141414;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #e5e5e5;
+  --color-text-tertiary: #a3a3a3;
+  --color-border-primary: #262626;
+  --color-border-secondary: #404040;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --color-bg-primary: var(--color-neutral-950);
+    --color-bg-secondary: var(--color-neutral-900);
+    --color-bg-tertiary: var(--color-neutral-800);
+    --color-text-primary: var(--color-neutral-50);
+    --color-text-secondary: var(--color-neutral-300);
+    --color-text-tertiary: var(--color-neutral-400);
+    --color-border-primary: var(--color-neutral-800);
+    --color-border-secondary: var(--color-neutral-700);
+  }
 }
 
 * {

@@ -14,6 +14,7 @@ import type {
   DueFlashcardsResponse,
   FeedResponse,
   StudyCourseStats,
+  StudyCourseOverview,
   AIJobStatus,
   AIProvidersStatus,
   StorageStatus,
@@ -23,16 +24,22 @@ import type {
 const API_BASE = ""
 const CSRF_COOKIE_NAME = "csrf_token"
 
+let cachedCsrfToken: string | null = null
+let csrfFetchPromise: Promise<string | null> | null = null
+
 export function setCsrfToken(token: string | null) {
-  // Store in a global variable for backward compatibility if needed
+  cachedCsrfToken = token
   if (typeof window !== "undefined") {
     (window as any).__csrf_token = token
   }
 }
 
 export function getCsrfToken(): string | null {
+  if (cachedCsrfToken) return cachedCsrfToken
   if (typeof window !== "undefined") {
-    return (window as any).__csrf_token || getCsrfTokenFromCookie()
+    const winToken = (window as any).__csrf_token
+    if (winToken) return winToken
+    return getCsrfTokenFromCookie()
   }
   return null
 }
@@ -50,6 +57,32 @@ export function getCsrfTokenFromCookie(): string | null {
   return null
 }
 
+export async function ensureCsrfToken(): Promise<string | null> {
+  const current = getCsrfToken()
+  if (current) return current
+
+  if (!csrfFetchPromise) {
+    csrfFetchPromise = (async () => {
+      try {
+        const res = await fetch("/api/csrf", { credentials: "include" })
+        if (res.ok) {
+          const data = await res.json()
+          if (data?.csrf_token) {
+            setCsrfToken(data.csrf_token)
+            return data.csrf_token as string
+          }
+        }
+      } catch (e) {
+        console.warn("CSRF token fetch warning:", e)
+      } finally {
+        csrfFetchPromise = null
+      }
+      return getCsrfTokenFromCookie()
+    })()
+  }
+  return csrfFetchPromise
+}
+
 async function request<T = any>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -58,7 +91,7 @@ async function request<T = any>(path: string, options?: RequestInit): Promise<T>
 
   // Add CSRF token for mutating requests
   if (options?.method && ["POST", "PUT", "PATCH", "DELETE"].includes(options.method.toUpperCase())) {
-    const csrfToken = getCsrfTokenFromCookie()
+    const csrfToken = await ensureCsrfToken()
     if (csrfToken) {
       headers["X-CSRF-Token"] = csrfToken
     }
@@ -77,6 +110,21 @@ async function request<T = any>(path: string, options?: RequestInit): Promise<T>
 
   if (res.status === 204) return undefined as any
   return res.json()
+}
+
+function enhanceFlashcard(card: any): any {
+  return {
+    ...card,
+    // Normalize backend front/back → fronte/retro
+    fronte: card.fronte ?? card.front ?? "",
+    retro: card.retro ?? card.back ?? "",
+    // Normalize due date field
+    due_date: card.due_date ?? card.due ?? null,
+    // Normalize ease_factor (backend may store as int * 1000 or as float)
+    ease_factor: card.ease_factor ?? 2500,
+    reps: card.reps ?? 0,
+    interval: card.interval ?? 0,
+  }
 }
 
 function enhanceLecture(lecture: any): Lecture {
@@ -109,6 +157,18 @@ function enhanceLectures(lectures: any[]): Lecture[] {
   });
 }
 
+function enhanceSession(session: any): any {
+  if (!session) return session;
+  return {
+    ...session,
+    entries: (session.entries || []).map((entry: any, index: number) => ({
+      ...entry,
+      id: entry.id ?? index,
+      idx: entry.idx ?? index,
+    })),
+  };
+}
+
 
 export const api = {
   // Courses
@@ -127,30 +187,36 @@ export const api = {
 
   // AI
   getAIStatus: () => request<any>(`/api/ai/status`),
-  getAIProviders: () => request<any>(`/api/ai/providers`),
-  getAIPanel: () => request<any>(`/api/ai/pannello`),
+  getAIProviders: () => request<AIProvidersStatus>(`/api/ai/providers`),
+  getAIPanel: () => request<AIPanelData>(`/api/ai/pannello`),
   queueAIJob: (job: { kind: string; course_id: number; lecture_id?: number; priority?: number }) =>
     request<any>(`/api/ai/queue`, { method: "POST", body: JSON.stringify(job) }),
   cancelAIJob: (id: number) =>
     request<any>(`/api/ai/cancel`, { method: "POST", body: JSON.stringify({ id }) }),
 
   // Flashcards
-  getDueFlashcards: () => request<any>(`/api/flashcards/due`),
+  getDueFlashcards: (course_id?: number) =>
+    request<any>(`/api/flashcards/due${course_id ? `?course_id=${course_id}` : ''}`).then((data: any) => ({
+      ...data,
+      cards: (data.cards || data.flashcards || []).map(enhanceFlashcard),
+    })),
   importFlashcards: (course_id?: number) =>
     request<any>(`/api/flashcards/import`, { method: "POST", body: JSON.stringify({ course_id }) }),
   reviewFlashcard: (id: number, rating: number) =>
     request<any>(`/api/flashcards/${id}/review`, { method: "POST", body: JSON.stringify({ rating }) }),
   exportAnki: () => request<string>(`/api/flashcards/anki.tsv`),
   exportAnkiApkg: (course_id?: number) =>
-    request<Blob>(`/api/flashcards/anki.apkg`, { method: "GET" }),
+    request<Blob>(`/api/flashcards/anki.apkg${course_id ? `?course_id=${course_id}` : ''}`, { method: "GET" }),
+  getFlashcardStats: (course_id?: number) => request<any>(`/api/flashcards/stats${course_id ? `?course_id=${course_id}` : ''}`),
 
   // Tutor
-  getTutorThreads: () => request<any[]>(`/api/tutor/threads`),
+  getTutorThreads: (course_id?: number) => request<any[]>(`/api/tutor/threads${course_id ? `?course_id=${course_id}` : ''}`),
   createTutorThread: (course_id: number | null, mode: string = "normale") =>
     request<any>(`/api/tutor/threads`, { method: "POST", body: JSON.stringify({ course_id, mode }) }),
   getTutorThread: (id: string) => request<any>(`/api/tutor/threads/${id}`),
   askTutor: (id: string, question: string) =>
     request<any>(`/api/tutor/threads/${id}/ask`, { method: "POST", body: JSON.stringify({ question }) }),
+  deleteTutorThread: (id: string) => request<any>(`/api/tutor/threads/${id}`, { method: "DELETE" }),
 
   // Quiz
   getLectureQuizzes: (lecture_id: number) => request<any[]>(`/api/lectures/${lecture_id}/quizzes`),
@@ -159,21 +225,38 @@ export const api = {
   getQuiz: (id: number) => request<any>(`/api/quizzes/${id}`),
   submitQuiz: (id: number, answers: any[]) =>
     request<any>(`/api/quizzes/${id}/submit`, { method: "POST", body: JSON.stringify({ answers }) }),
+  getQuizHistory: (course_id?: number) => request<any>(`/api/quizzes/history/list${course_id ? `?course_id=${course_id}` : ''}`),
 
   // Study
-  getPlan: () => request<any>(`/api/plan`),
-  getStudyCourses: () => request<any[]>(`/api/study`),
+  getPlan: () => request<PlanData>(`/api/plan`),
+  getStudyCourses: () => request<StudyCourseOverview[]>(`/api/study`),
   getStudyCourseStats: (id: number) => request<any>(`/api/study/${id}`),
+  getStudyTopics: (id: number) => request<any>(`/api/study/${id}`), // Returns topics with mastery
   prepareStudy: (id: number, limit?: number) =>
     request<any>(`/api/study/${id}/prepare`, { method: "POST", body: JSON.stringify({ limit }) }),
   scanStudy: (id: number) => request<any>(`/api/study/${id}/scan`),
   stopPrepare: (id: number) =>
     request<any>(`/api/study/${id}/prepare/stop`, { method: "POST" }),
+  getStudyTopicDetail: (topicId: number) => request<any>(`/api/study/topics/${topicId}`),
+  getStudyTopicLesson: (topicId: number) => request<any>(`/api/study/topics/${topicId}/lesson`),
+  completeStudyTopicLesson: (topicId: number) => request<any>(`/api/study/topics/${topicId}/lesson/done`, { method: "POST" }),
+  askStudyTopic: (topicId: number, question: string, context?: string, mode?: string) =>
+    request<any>(`/api/study/topics/${topicId}/ask`, { method: "POST", body: JSON.stringify({ question, context, mode }) }),
+  getStudyChapters: (courseId: number) => request<any>(`/api/study/${courseId}/chapters`),
+  getExcludedChapters: (courseId: number) => request<any>(`/api/study/${courseId}/chapters/excluded`),
+  excludeChapter: (courseId: number, chapter: string) =>
+    request<any>(`/api/study/${courseId}/chapters`, { method: "POST", body: JSON.stringify({ chapter }) }),
+  getStudyArchetype: (courseId: number) => request<any>(`/api/courses/${courseId}/archetype`),
+  getMoodleStrategy: (courseId: number) => request<any>(`/api/courses/${courseId}/moodle-strategy`),
+  getStudyTopicArtifact: (topicId: number) => request<any>(`/api/study/topics/${topicId}/artifact`),
+  getStudyTopicScript: (topicId: number) => request<any>(`/api/study/topics/${topicId}/script.m`),
+  prefetchStudyLessons: (courseId: number, topicIds: number[]) =>
+    request<any>(`/api/study/${courseId}/lessons/prefetch`, { method: "POST", body: JSON.stringify({ topic_ids: topicIds }) }),
 
   // Sessions
   createSession: (course_id: number, minutes: number = 45, focus_topic?: number) =>
-    request<any>(`/api/study/${course_id}/sessions`, { method: "POST", body: JSON.stringify({ minutes, focus_topic }) }),
-  getSession: (id: number) => request<any>(`/api/study/sessions/${id}`),
+    request<any>(`/api/study/${course_id}/sessions`, { method: "POST", body: JSON.stringify({ minutes, focus_topic }) }).then(enhanceSession),
+  getSession: (id: number) => request<any>(`/api/study/sessions/${id}`).then(enhanceSession),
   answerSession: (id: number, answer: any) =>
     request<any>(`/api/study/sessions/${id}/answer`, { method: "POST", body: JSON.stringify(answer) }),
   photoSession: (id: number, photo: any) =>
@@ -195,6 +278,8 @@ export const api = {
   getSimulation: (id: string) => request<any>(`/api/sims/${id}`),
   submitSimulation: (id: string, answers: any[], elapsed_min?: number) =>
     request<any>(`/api/sims/${id}/submit`, { method: "POST", body: JSON.stringify({ answers, elapsed_min }) }),
+  getExamSims: (course_id: number) => request<any>(`/api/courses/${course_id}/exam/sims`),
+  getExamSim: (sim_id: string) => request<any>(`/api/sims/${sim_id}`),
 
   // Feed (StudyTok shorts)
   getFeed: (course_id?: number, limit: number = 30) => request<any>(`/api/feed${course_id ? `?course_id=${course_id}&limit=${limit}` : `?limit=${limit}`}`),
@@ -228,27 +313,13 @@ export const api = {
   setupCourses: () => request<{ courses: number; active: number }>(`/api/setup/courses`, { method: "POST" }),
   setupFullrun: () => request<{ started: boolean }>(`/api/setup/fullrun`, { method: "POST" }),
 
-  // Study topics/lessons
-  getLectureTopics: (lecture_id: number) => request<any[]>(`/api/lectures/${lecture_id}/topics`),
-  getStudyLesson: (topic_id: number, prepare: boolean = true) => request<any>(`/api/study/topics/${topic_id}/lesson?prepare=${prepare}`),
-  completeStudyLesson: (topic_id: number) => request<{ ok: boolean }>(`/api/study/topics/${topic_id}/lesson/done`, { method: "POST" }),
-  getStudyTopic: (topic_id: number) => request<any>(`/api/study/topics/${topic_id}`),
-  askStudyTopic: (topic_id: number, question: string, context: string = "", mode: string = "domanda") =>
-    request<any>(`/api/study/topics/${topic_id}/ask`, { method: "POST", body: JSON.stringify({ question, context, mode }) }),
-  prefetchStudyLessons: (course_id: number, n: number = 4) => request<any>(`/api/study/${course_id}/lessons/prefetch?n=${n}`, { method: "POST" }),
-
   // Study chapters
   setChapterExcluded: (course_id: number, chapter: string, exclude: boolean = true) =>
     request<any>(`/api/study/${course_id}/chapters`, { method: "POST", body: JSON.stringify({ chapter, exclude }) }),
-  getExcludedChapters: (course_id: number) => request<string[]>(`/api/study/${course_id}/chapters/excluded`),
 
   // Course archetype & moodle strategy
   getCourseArchetype: (course_id: number) => request<any>(`/api/courses/${course_id}/archetype`),
   getCourseMoodleStrategy: (course_id: number) => request<any>(`/api/courses/${course_id}/moodle-strategy`),
-
-  // Study artifacts
-  getStudyTopicArtifact: (topic_id: number) => request<Blob>(`/api/study/topics/${topic_id}/artifact`),
-  getStudyTopicScriptM: (topic_id: number) => request<Blob>(`/api/study/topics/${topic_id}/script.m`),
 
   // UI version
   getUIVersion: (currentVersion?: string) => request<{ ui: string }>(`/api/version${currentVersion ? `?v=${currentVersion}` : ""}`),

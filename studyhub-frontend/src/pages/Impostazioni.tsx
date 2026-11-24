@@ -20,7 +20,7 @@ export function Impostazioni() {
   const { theme, setTheme } = useUIStore()
   const [localLLMKey, setLocalLLMKey] = useState("")
   const [freellmKey, setFreellmKey] = useState("")
-  const [freellmUrl, setFreellmUrl] = useState("")
+  const [freellmUrl, setFreellmUrl] = useState("http://100.119.96.109:3011")
 
   const { data: storage } = useQuery({ queryKey: ["storage"], queryFn: api.getStorage })
   const { data: aiProviders } = useQuery({ queryKey: ["aiProviders"], queryFn: api.getAIProviders })
@@ -166,7 +166,6 @@ export function Impostazioni() {
                     id="freellm-url"
                     value={freellmUrl}
                     onChange={(e) => setFreellmUrl(e.target.value)}
-                    defaultValue="http://100.119.96.109:3011"
                     placeholder="http://host:port (più URL separati da virgola)"
                   />
                 </div>
@@ -481,7 +480,7 @@ export function Impostazioni() {
                   { id: "proactive-tutor", label: "Tutor proattivo", desc: "Suggerisce mini-lezioni su argomenti deboli", enabled: false },
                   { id: "pwa", label: "PWA / Offline-first", desc: "Installa come app, funziona offline", enabled: false },
                 ].map((f) => (
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-neutral-200 dark:border-neutral-700">
+                  <div key={f.id} className="flex items-center justify-between p-3 rounded-lg border border-neutral-200 dark:border-neutral-700">
                     <div className="flex-1">
                       <p className="font-medium">{f.label}</p>
                       <p className="text-sm text-neutral-500">{f.desc}</p>

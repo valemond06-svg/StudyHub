@@ -1,7 +1,7 @@
 import { useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useSearchParams, useNavigate } from "react-router-dom"
-import { Brain, FlaskConical, HelpCircle, Target, Zap, Download, Upload, Search, Settings, Filter, ChevronRight, Clock, Flame, BookOpen, Award, TrendingUp, RotateCcw, Volume2, VolumeX, SkipForward, RotateCw, Play, Plus } from "lucide-react"
+import { Brain, FlaskConical, HelpCircle, Target, Zap, Download, Upload, Search, Settings, Filter, ChevronRight, Clock, Flame, BookOpen, Award, TrendingUp, RotateCcw, Volume2, VolumeX, SkipForward, RotateCw, Play, Plus, Cpu, Grid3X3, Radio, Compass } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -14,15 +14,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api } from "@/lib/api"
 import { useUIStore } from "@/store/ui"
 import type { Course, Flashcard, Quiz } from "@/types"
-import { cn } from "@/lib/utils"
-import { formatDistanceToNow, parseISO } from "date-fns"
-import { it } from "date-fns/locale"
+import { cn, safeFormatDistance } from "@/lib/utils"
+import { FlashcardReviewModal } from "@/components/flashcards/FlashcardReviewModal"
+import { PomodoroTimer } from "@/components/pomodoro/PomodoroTimer"
+import { InteractiveEngine, type EngineType } from "@/components/engines"
 
 export function Lab() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const { commandPaletteOpen, setCommandPaletteOpen } = useUIStore()
 
+  const queryClient = useQueryClient()
   const initialTab = searchParams.get("tab") || "flashcard"
   const courseFilter = searchParams.get("course")
 
@@ -31,29 +33,44 @@ export function Lab() {
 
   const [activeTab, setActiveTab] = useState(initialTab)
   const [searchQuery, setSearchQuery] = useState("")
+  const [reviewModalOpen, setReviewModalOpen] = useState(false)
+  const [activeEngine, setActiveEngine] = useState<EngineType>("linear_2d")
 
-  // Flashcard data (mock - would come from API)
-  const flashcardStats = {
-    mature: 127,
-    learning: 43,
-    due: 18,
-    new: 5,
-  }
+  // Flashcard stats (real from /api/flashcards/stats)
+  const { data: flashcardStats } = useQuery({
+    queryKey: ["flashcardStats", courseFilter ?? "all"],
+    queryFn: () => api.getFlashcardStats(courseFilter ? Number(courseFilter) : undefined),
+  })
 
-  const flashcards: Flashcard[] = [
-    { id: 1, lecture_id: 10, fronte: "Definizione di derivata", retro: "f'(x) = lim(h→0) [f(x+h)-f(x)]/h", due_date: "2026-11-17", interval: 1, ease_factor: 2.5, reps: 3 },
-    { id: 2, lecture_id: 10, fronte: "Regola della catena", retro: "f(g(x))' = f'(g(x))·g'(x)", due_date: "2026-11-17", interval: 3, ease_factor: 2.5, reps: 2 },
-    { id: 3, lecture_id: 12, fronte: "Derivata di eˣ", retro: "eˣ", due_date: "2026-11-18", interval: 7, ease_factor: 2.7, reps: 4 },
-    { id: 4, lecture_id: 12, fronte: "Derivata di ln(x)", retro: "1/x", due_date: "2026-11-19", interval: 14, ease_factor: 2.8, reps: 5 },
-    { id: 5, lecture_id: 15, fronte: "Punti critici", retro: "f'(x)=0 o f'(x) non esiste. Test seconda derivata per classificare.", due_date: "2026-11-17", interval: 1, ease_factor: 2.3, reps: 1 },
-  ]
+  // Due flashcards (real from /api/flashcards/due)
+  const { data: dueFlashcards } = useQuery({
+    queryKey: ["flashcards-due", courseFilter ?? "all"],
+    queryFn: () => api.getDueFlashcards(courseFilter ? Number(courseFilter) : undefined),
+    enabled: activeTab === "flashcard",
+  })
+  const dueCards: Flashcard[] = dueFlashcards?.cards || dueFlashcards?.flashcards || []
 
-  const quizStats = {
-    richiamo: 12,
-    multipla: 8,
-    vero_falso: 5,
-    aperta: 6,
-    esercizio: 4,
+  // Quiz history (real from /api/quizzes/history/list)
+  const { data: quizHistory } = useQuery({
+    queryKey: ["quizHistory", courseFilter ?? "all"],
+    queryFn: () => api.getQuizHistory(courseFilter ? Number(courseFilter) : undefined),
+    enabled: activeTab === "quiz",
+  })
+
+  // Tutor threads (real from /api/tutor/threads)
+  const { data: tutorThreads = [] } = useQuery({
+    queryKey: ["tutorThreads", courseFilter ?? "all"],
+    queryFn: () => api.getTutorThreads(courseFilter ? Number(courseFilter) : undefined),
+    enabled: activeTab === "tutor",
+  })
+
+  // Mock quiz type counts (backend doesn't expose this yet)
+  const quizTypeCounts = {
+    richiamo: 0,
+    multipla: 0,
+    vero_falso: 0,
+    aperta: 0,
+    esercizio: 0,
   }
 
   return (
@@ -117,16 +134,21 @@ export function Lab() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 h-auto p-1 gap-1">
           <TabsTrigger value="flashcard">
             <FlaskConical className="h-4 w-4 mr-2" />
             Flashcard
-            <Badge variant="outline" className="ml-1 h-5">{flashcardStats.due} da rivedere</Badge>
+            <Badge variant="outline" className="ml-1 h-5">{flashcardStats?.da_ripassare ?? 0} da rivedere</Badge>
           </TabsTrigger>
           <TabsTrigger value="quiz">
             <HelpCircle className="h-4 w-4 mr-2" />
             Quiz
-            <Badge variant="outline" className="ml-1 h-5">{Object.values(quizStats).reduce((a,b)=>a+b,0)} totali</Badge>
+            <Badge variant="outline" className="ml-1 h-5">{(quizHistory?.length ?? 0)} tentativi</Badge>
+          </TabsTrigger>
+          <TabsTrigger value="simulazioni" className="gap-1.5">
+            <Cpu className="h-4 w-4 text-sky-500" />
+            Simulazioni
+            <Badge variant="accent" className="ml-1 text-[10px] px-1.5 py-0 h-4">4 Motori</Badge>
           </TabsTrigger>
           <TabsTrigger value="tutor">
             <Brain className="h-4 w-4 mr-2" />
@@ -142,57 +164,97 @@ export function Lab() {
           </TabsTrigger>
         </TabsList>
 
-        {/* FLASHCARD TAB */}
+{/* FLASHCARD TAB */}
         <TabsContent value="flashcard" className="space-y-6">
-          {/* Stats */}
+          {/* Stats (reali da /api/flashcards/stats) */}
           <div className="grid gap-4 sm:grid-cols-4">
-            <StatCard label="Mature" value={flashcardStats.mature} icon={<Award className="h-5 w-5 text-success-500" />} color="success" />
-            <StatCard label="In apprendimento" value={flashcardStats.learning} icon={<Brain className="h-5 w-5 text-warning-500" />} color="warning" />
-            <StatCard label="Da rivedere oggi" value={flashcardStats.due} icon={<Flame className="h-5 w-5 text-error-500" />} color="error" />
-            <StatCard label="Nuove" value={flashcardStats.new} icon={<Zap className="h-5 w-5 text-accent-500" />} color="accent" />
+            {flashcardStats ? (
+              <>
+                <StatCard label="Totali" value={flashcardStats.totale} icon={<Award className="h-5 w-5 text-success-500" />} color="success" />
+                <StatCard label="Ripassate oggi" value={flashcardStats.ripassate_oggi ?? 0} icon={<Brain className="h-5 w-5 text-warning-500" />} color="warning" />
+                <StatCard label="Da rivedere oggi" value={flashcardStats.da_ripassare} icon={<Flame className="h-5 w-5 text-error-500" />} color="error" />
+                <StatCard label="Mature" value={flashcardStats.totale - flashcardStats.da_ripassare - (flashcardStats.ripassate_oggi ?? 0)} icon={<Zap className="h-5 w-5 text-accent-500" />} color="accent" />
+              </>
+            ) : (
+              <>
+                <StatCard label="Totali" value={0} icon={<Award className="h-5 w-5 text-success-500" />} color="success" />
+                <StatCard label="Ripassate oggi" value={0} icon={<Brain className="h-5 w-5 text-warning-500" />} color="warning" />
+                <StatCard label="Da rivedere oggi" value={0} icon={<Flame className="h-5 w-5 text-error-500" />} color="error" />
+                <StatCard label="Mature" value={0} icon={<Zap className="h-5 w-5 text-accent-500" />} color="accent" />
+              </>
+            )}
           </div>
 
-          {/* Review session */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <Flame className="h-5 w-5 text-error-500" />
-                Sessione di ripasso FSRS
-              </CardTitle>
-              <Button variant="outline" size="sm">
-                <Settings className="h-3 w-3 mr-1" />
-                Opzioni
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-neutral-600 dark:text-neutral-300">
-                Hai <strong>{flashcardStats.due}</strong> flashcard in scadenza. L'algoritmo FSRS ottimizza l'intervallo per la retention al 90%.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button className="gap-2" size="lg">
-                  <Play className="h-4 w-4" />
-                  Inizia ripasso ({flashcardStats.due} carte)
-                </Button>
-                <Button variant="outline" className="gap-2" size="lg">
-                  <BookOpen className="h-4 w-4" />
-                  Sfoglia tutte
-                </Button>
+          {/* Review session + Pomodoro Widget */}
+          <div className="grid gap-6 lg:grid-cols-3">
+            <Card className="lg:col-span-2 flex flex-col justify-between">
+              <div>
+                <CardHeader className="flex flex-row items-center justify-between pb-3">
+                  <CardTitle className="flex items-center gap-2">
+                    <Flame className="h-5 w-5 text-error-500" />
+                    Sessione di ripasso FSRS
+                  </CardTitle>
+                  <Badge variant="outline" className="text-xs">
+                    Flusso Continuo
+                  </Badge>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-neutral-600 dark:text-neutral-300 text-sm leading-relaxed">
+                    Hai <strong>{flashcardStats?.da_ripassare ?? dueCards.length}</strong> flashcard in scadenza. L'algoritmo FSRS ottimizza l'intervallo per la retention al 90%, reinserendo automaticamente le carte difficili in coda finché non vengono memorizzate.
+                  </p>
+                  <div className="flex flex-wrap gap-3 pt-1">
+                    <Button
+                      className="gap-2 shadow-sm font-medium"
+                      size="lg"
+                      onClick={() => setReviewModalOpen(true)}
+                      disabled={dueCards.length === 0}
+                    >
+                      <Play className="h-4 w-4 fill-current" />
+                      Inizia ripasso ({dueCards.length} carte)
+                    </Button>
+                    <Button variant="outline" className="gap-2 font-medium" size="lg">
+                      <BookOpen className="h-4 w-4" />
+                      Sfoglia tutte
+                    </Button>
+                  </div>
+                </CardContent>
               </div>
-            </CardContent>
-          </Card>
 
-          {/* Flashcard list */}
+              <div className="px-6 pb-5 pt-2">
+                <div className="text-xs text-neutral-400 dark:text-neutral-500 flex items-center gap-2 flex-wrap">
+                  <span className="flex items-center gap-1">
+                    <kbd className="px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 font-mono text-2xs border border-neutral-200 dark:border-neutral-700">Spazio</kbd> gira carta
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 font-mono text-2xs border border-neutral-200 dark:border-neutral-700">1-4</kbd> assegna rating
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Riproposizione automatica se voti <strong className="text-rose-500">1 (Di nuovo)</strong>
+                  </span>
+                </div>
+              </div>
+            </Card>
+
+            {/* Pomodoro Timer Widget */}
+            <div className="lg:col-span-1">
+              <PomodoroTimer />
+            </div>
+          </div>
+
+          {/* Flashcard list (reali da /api/flashcards/due) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
-                Tutte le flashcard
-                <Badge variant="outline">{flashcards.length} carte</Badge>
+                Flashcard in scadenza
+                <Badge variant="outline">{(dueFlashcards?.cards ?? []).length} carte</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <ScrollArea className="max-h-96">
                 <div className="space-y-3">
-                  {flashcards.map((card) => (
+                  {(dueFlashcards?.cards ?? []).map((card: Flashcard) => (
                     <FlashcardItem key={card.id} card={card} />
                   ))}
                 </div>
@@ -203,15 +265,40 @@ export function Lab() {
 
         {/* QUIZ TAB */}
         <TabsContent value="quiz" className="space-y-6">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            {Object.entries(quizStats).map(([type, count]) => (
-              <Card key={type} className="p-4 text-center hover:shadow-md transition-shadow cursor-pointer">
-                <Badge variant={type === "esercizio" ? "accent" : "outline"} className="mb-2 capitalize">{type.replace("_", " ")}</Badge>
-                <p className="text-3xl font-bold text-accent-600 dark:text-accent-400">{count}</p>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400">disponibili</p>
-              </Card>
-            ))}
-          </div>
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
+            I quiz vengono generati per lezione. I tentativi completati sono mostrati qui sotto.
+          </p>
+
+          {/* Recent quiz attempts (reali da /api/quizzes/history/list) */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Quiz recenti</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {(quizHistory?.length ?? 0) > 0 ? (
+                <div className="space-y-3">
+                  {quizHistory.map((q: any) => (
+                    <div key={q.id} className="flex items-center justify-between p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/50">
+                      <div className="flex items-center gap-3">
+                        <Badge variant="outline" className="capitalize">{q.title || "Quiz"}</Badge>
+                        <div>
+                          <p className="font-medium">{q.lecture_title || "Lezione"}</p>
+                          <p className="text-sm text-neutral-500 dark:text-neutral-400">{safeFormatDistance(q.created_at)}</p>
+                        </div>
+                      </div>
+                      <Badge variant={q.score >= q.max_score * 0.7 ? "success" : "destructive"}>
+                        {q.score}/{q.max_score}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-neutral-500 dark:text-neutral-400 text-center py-8">
+                  Nessun quiz completato. Genera un quiz da una lezione per iniziare.
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
@@ -261,7 +348,7 @@ export function Lab() {
               </div>
               <Button className="w-full gap-2" size="lg">
                 <Target className="h-4 w-4" />
-                Genera quiz ({Object.values(quizStats).reduce((a,b)=>a+b,0)} domande disponibili)
+                Genera quiz
               </Button>
             </CardContent>
           </Card>
@@ -283,7 +370,7 @@ export function Lab() {
                       <Badge variant={q.type === "esercizio" ? "accent" : "outline"} className="capitalize">{q.type.replace("_", " ")}</Badge>
                       <div>
                         <p className="font-medium">{q.topic}</p>
-                        <p className="text-sm text-neutral-500 dark:text-neutral-400">{formatDistanceToNow(parseISO(q.date), { addSuffix: true, locale: it })}</p>
+                        <p className="text-sm text-neutral-500 dark:text-neutral-400">{safeFormatDistance(q.date)}</p>
                       </div>
                     </div>
                     <Badge variant={q.passed ? "success" : "destructive"}>{q.score}</Badge>
@@ -316,29 +403,33 @@ export function Lab() {
 
               <div className="space-y-3">
                 <h4 className="font-medium">Le tue conversazioni</h4>
-                <div className="space-y-2">
-                  {[
-                    { id: "t1", course: "Analisi 2", title: "Derivata della catena", messages: 8, updated: "2026-11-15" },
-                    { id: "t2", course: "Fisica 1", title: "Cinematica - dubbi su accelerazione", messages: 12, updated: "2026-11-14" },
-                    { id: "t3", course: "Algebra Lineare", title: "Autovalori e autovettori", messages: 5, updated: "2026-11-13" },
-                  ].map((t) => (
-                    <Card key={t.id} className="p-4 hover:shadow-md transition-shadow cursor-pointer">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{t.title}</p>
-                          <p className="text-sm text-neutral-500 dark:text-neutral-400 flex items-center gap-2">
-                            <span>{t.course}</span>
-                            <span>·</span>
-                            <span>{t.messages} messaggi</span>
-                            <span>·</span>
-                            <span>{formatDistanceToNow(parseISO(t.updated), { addSuffix: true, locale: it })}</span>
-                          </p>
+                {(tutorThreads.length > 0) ? (
+                  <div className="space-y-2">
+                    {tutorThreads.map((t: any) => (
+                      <Card key={t.id} className="p-4 hover:shadow-md transition-shadow cursor-pointer">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">{t.title || "Nuova conversazione"}</p>
+                            <p className="text-sm text-neutral-500 dark:text-neutral-400 flex items-center gap-2">
+                              <span>{t.course_name || "Corso"}</span>
+                              <span>·</span>
+                              <span>{t.message_count ?? 0} messaggi</span>
+                              <span>·</span>
+                              <span>{safeFormatDistance(t.updated_at, "Mai")}</span>
+                            </p>
+                          </div>
+                          <Button variant="ghost" size="sm" onClick={() => navigate(`/lab?tab=tutor&thread=${t.id}`)}>
+                            Continua
+                          </Button>
                         </div>
-                        <Button variant="ghost" size="sm">Continua</Button>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-neutral-500 dark:text-neutral-400 text-center py-8">
+                    Nessuna conversazione salvata. Inizia una nuova chat con il tutor.
+                  </p>
+                )}
               </div>
 
               <Button className="w-full gap-2" size="lg" onClick={() => navigate("/lab?tab=tutor&new=1")}>
@@ -444,7 +535,139 @@ export function Lab() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* SIMULAZIONI TAB (StudyHub Graphic Engines) */}
+        <TabsContent value="simulazioni" className="space-y-6">
+          {/* Header intro */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-5 rounded-2xl bg-neutral-50 dark:bg-neutral-900/40 border border-neutral-200 dark:border-neutral-800">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <Cpu className="h-5 w-5 text-sky-500" />
+                <h2 className="text-xl font-semibold text-neutral-950 dark:text-neutral-50">
+                  Laboratori Grafici Interattivi
+                </h2>
+                <Badge variant="accent" className="text-xs">Fisica & Visual Intuition</Badge>
+              </div>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                L'intuizione visiva prima della formula: sperimenta in tempo reale con trasformazioni 2D, analisi nel piano s, campi di vettori e circuiti analogici.
+              </p>
+            </div>
+          </div>
+
+          {/* Selector cards for the 4 engines */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Linear 2D */}
+            <Card
+              className={cn(
+                "p-4 cursor-pointer transition-all border hover:border-neutral-400 dark:hover:border-neutral-600",
+                activeEngine === "linear_2d"
+                  ? "border-sky-500/80 bg-sky-500/[0.04] shadow-sm ring-1 ring-sky-500/50"
+                  : "border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900"
+              )}
+              onClick={() => setActiveEngine("linear_2d")}
+            >
+              <div className="flex items-start justify-between mb-2">
+                <div className="p-2 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400">
+                  <Grid3X3 className="h-4 w-4" />
+                </div>
+                <Badge variant="accent" className="text-[10px] px-1.5 py-0">Algebra Lineare</Badge>
+              </div>
+              <h4 className="font-semibold text-sm text-neutral-900 dark:text-neutral-100">
+                Spazio 2D & Determinante
+              </h4>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2">
+                Griglia deformata, calcolo det(A) in tempo reale, collasso e inversione di orientamento.
+              </p>
+            </Card>
+
+            {/* Pole-Zero */}
+            <Card
+              className={cn(
+                "p-4 cursor-pointer transition-all border hover:border-neutral-400 dark:hover:border-neutral-600",
+                activeEngine === "pole_zero"
+                  ? "border-emerald-500/80 bg-emerald-500/[0.04] shadow-sm ring-1 ring-emerald-500/50"
+                  : "border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900"
+              )}
+              onClick={() => setActiveEngine("pole_zero")}
+            >
+              <div className="flex items-start justify-between mb-2">
+                <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <Radio className="h-4 w-4" />
+                </div>
+                <Badge variant="warning" className="text-[10px] px-1.5 py-0">Controlli & Robotica</Badge>
+              </div>
+              <h4 className="font-semibold text-sm text-neutral-900 dark:text-neutral-100">
+                Piano Complesso s & Risposta
+              </h4>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2">
+                Poli e zeri interattivi, diagnosi stabilità semipiano LHP/RHP e risposta y(t) al gradino.
+              </p>
+            </Card>
+
+            {/* Vector Field */}
+            <Card
+              className={cn(
+                "p-4 cursor-pointer transition-all border hover:border-neutral-400 dark:hover:border-neutral-600",
+                activeEngine === "vector_field"
+                  ? "border-indigo-500/80 bg-indigo-500/[0.04] shadow-sm ring-1 ring-indigo-500/50"
+                  : "border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900"
+              )}
+              onClick={() => setActiveEngine("vector_field")}
+            >
+              <div className="flex items-start justify-between mb-2">
+                <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                  <Compass className="h-4 w-4" />
+                </div>
+                <Badge variant="success" className="text-[10px] px-1.5 py-0">Analisi 2 & Fisica</Badge>
+              </div>
+              <h4 className="font-semibold text-sm text-neutral-900 dark:text-neutral-100">
+                Campi Vettoriali & Flusso
+              </h4>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2">
+                Particelle animate lungo il campo, vortici, divergenza e simulazione evitamento ostacolo.
+              </p>
+            </Card>
+
+            {/* Circuit Sim */}
+            <Card
+              className={cn(
+                "p-4 cursor-pointer transition-all border hover:border-neutral-400 dark:hover:border-neutral-600",
+                activeEngine === "circuit_sim"
+                  ? "border-amber-500/80 bg-amber-500/[0.04] shadow-sm ring-1 ring-amber-500/50"
+                  : "border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900"
+              )}
+              onClick={() => setActiveEngine("circuit_sim")}
+            >
+              <div className="flex items-start justify-between mb-2">
+                <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <Zap className="h-4 w-4" />
+                </div>
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Elettronica</Badge>
+              </div>
+              <h4 className="font-semibold text-sm text-neutral-900 dark:text-neutral-100">
+                Op-Amp & Oscilloscopio
+              </h4>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2">
+                Schema circuitale interattivo, calcolo guadagno Av e oscilloscopio live con saturazione rails.
+              </p>
+            </Card>
+          </div>
+
+          {/* Active Interactive Engine */}
+          <InteractiveEngine type={activeEngine} key={activeEngine} />
+        </TabsContent>
       </Tabs>
+
+      {/* Flashcard FSRS Review Modal */}
+      <FlashcardReviewModal
+        isOpen={reviewModalOpen}
+        onClose={() => setReviewModalOpen(false)}
+        cards={dueCards}
+        onSessionComplete={() => {
+          queryClient.invalidateQueries({ queryKey: ["flashcards-due"] })
+          queryClient.invalidateQueries({ queryKey: ["flashcardStats"] })
+        }}
+      />
     </div>
   )
 }
@@ -476,7 +699,7 @@ function FlashcardItem({ card }: { card: Flashcard }) {
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <Badge variant="outline" className="text-xs">Lezione {card.lecture_id}</Badge>
-          <Badge variant={card.reps >= 5 ? "success" : card.reps >= 2 ? "warning" : "default"} className="text-xs">
+          <Badge variant={(card.reps ?? 0) >= 5 ? "success" : (card.reps ?? 0) >= 2 ? "warning" : "default"} className="text-xs">
             {card.reps} rip.
           </Badge>
         </div>
@@ -501,7 +724,7 @@ function FlashcardItem({ card }: { card: Flashcard }) {
 
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-700">
           <span className="text-xs text-neutral-500 dark:text-neutral-400">
-            Scadenza: {formatDistanceToNow(parseISO(card.due_date), { addSuffix: true, locale: it })}
+            Scadenza: {safeFormatDistance(card.due_date, "Nessuna")}
           </span>
           <div className="flex gap-1">
             <Button variant="ghost" size="icon" className="h-8 w-8"><VolumeX className="h-4 w-4" /></Button>

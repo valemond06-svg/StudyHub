@@ -94,7 +94,26 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 STATIC = Path(__file__).parent / "static"
-app = FastAPI(title="StudyHub")
+
+import secrets
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup/shutdown: avvia la coda AI in background (BE-002: on_event → lifespan)."""
+    from ..ai import jobs
+    try:
+        jobs.start_if_needed()
+    except Exception:  # il server deve partire comunque
+        import logging
+        logging.getLogger(__name__).exception("coda AI: avvio non riuscito")
+    yield
+
+
+app = FastAPI(title="StudyHub", lifespan=_lifespan)
 
 # CORS Middleware (SEC-006) - explicit configuration
 app.add_middleware(
@@ -115,19 +134,6 @@ app.add_middleware(CSRFMiddleware)
 
 # Rate limiting middleware (kept for /api/setup/*)
 app.add_middleware(RateLimitMiddleware)
-
-import secrets
-
-
-@app.on_event("startup")
-def _start_ai_queue() -> None:
-    """Job rimasti in coda (o arretrati attivi): il worker riparte col server, senza aspettare un click."""
-    from ..ai import jobs
-    try:
-        jobs.start_if_needed()
-    except Exception:  # il server deve partire comunque
-        import logging
-        logging.getLogger(__name__).exception("coda AI: avvio non riuscito")
 
 
 def _json(path: Path, default):
@@ -456,6 +462,12 @@ def cards_due(course_id: int | None = None, limit: int = 50, token: str = Depend
     return {"cards": flashcards.due_cards(course_id, limit), "stats": flashcards.stats(course_id)}
 
 
+@app.get("/api/flashcards/stats")
+def cards_stats(course_id: int | None = None, token: str = Depends(get_current_token)):
+    from ..study import flashcards
+    return flashcards.stats(course_id)
+
+
 @app.post("/api/flashcards/import")
 def cards_import(course_id: int | None = None, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import flashcards
@@ -463,6 +475,8 @@ def cards_import(course_id: int | None = None, _csrf: None = Depends(csrf_protec
 
 
 class Review(BaseModel):
+    model_config = {"extra": "forbid"}
+
     rating: int
 
 
@@ -485,11 +499,15 @@ def cards_anki(course_id: int | None = None, token: str = Depends(get_current_to
 
 
 class NewThread(BaseModel):
+    model_config = {"extra": "forbid"}
+
     course_id: int | None = None
     mode: str = "normale"
 
 
 class Ask(BaseModel):
+    model_config = {"extra": "forbid"}
+
     question: str
 
 
@@ -523,6 +541,13 @@ def tutor_ask(thread_id: int, body: Ask, _csrf: None = Depends(csrf_protect), to
     return _ai_call(tutor.ask, thread_id, body.question.strip()[:4000])
 
 
+@app.delete("/api/tutor/threads/{thread_id}")
+def tutor_delete(thread_id: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+    from ..study import tutor
+    _need("thread", thread_id)
+    return tutor.delete_thread(thread_id)
+
+
 @app.get("/api/lectures/{lecture_id}/quizzes")
 def lecture_quizzes(lecture_id: int, token: str = Depends(get_current_token)):
     from ..study import quiz
@@ -544,7 +569,15 @@ def quiz_get(quiz_id: int, token: str = Depends(get_current_token)):
         raise HTTPException(404)
 
 
+@app.get("/api/quizzes/history/list")
+def quiz_history(course_id: int | None = None, limit: int = 50, token: str = Depends(get_current_token)):
+    from ..study import quiz
+    return quiz.history(course_id, limit)
+
+
 class Submit(BaseModel):
+    model_config = {"extra": "forbid"}
+
     answers: list
 
 
@@ -562,6 +595,8 @@ def quiz_submit(quiz_id: int, body: Submit, _csrf: None = Depends(csrf_protect),
 # --- Esami: calendario, profilo, simulazioni, piano ------------------------------
 
 class NewExam(BaseModel):
+    model_config = {"extra": "forbid"}
+
     course_id: int
     date: str
     kind: str = "scritto"
@@ -606,6 +641,8 @@ def course_exam(course_id: int, token: str = Depends(get_current_token)):
 
 
 class ProfileRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
     force: bool = False
 
 
@@ -617,9 +654,17 @@ def course_exam_profile(course_id: int, body: ProfileRequest | None = None, forc
 
 
 @app.post("/api/courses/{course_id}/exam/sims")
-def course_exam_sim(course_id: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+def course_exam_sim(course_id: int, body: dict | None = None, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import exam
-    return _ai_call(exam.generate_sim, course_id)
+    count = body.get("count", 1) if body else 1
+    return _ai_call(exam.generate_sim, course_id, count)
+
+
+@app.get("/api/courses/{course_id}/exam/sims")
+def course_exam_sims_list(course_id: int, token: str = Depends(get_current_token)):
+    from ..study import exam
+    _need("course", course_id)
+    return exam.list_sims(course_id)
 
 
 @app.get("/api/sims/{sim_id}")
@@ -632,6 +677,8 @@ def sim_get(sim_id: int, token: str = Depends(get_current_token)):
 
 
 class SimSubmit(BaseModel):
+    model_config = {"extra": "forbid"}
+
     answers: list[dict]
     elapsed_min: float | None = None
 
@@ -742,7 +789,8 @@ def study_courses(token: str = Depends(get_current_token)):
             "ready_exam": ov["ready_exam"], "exam": ov["exam"],
             "learned": sum(1 for t in ov["topics"] if t["learned"]), "next": nxt,
             "n_topics": len(ov["topics"]), "n_items": ov["n_items"], "due": ov["due"],
-            "units": pr["units"], "running": pr["running"]
+            "units": pr["units"], "running": pr["running"],
+            "streak": ov.get("streak", 0), "best_streak": ov.get("best_streak", 0), "xp_total": ov.get("xp_total", 0), "xp_today": ov.get("xp_today", 0)
         })
     out.sort(key=lambda c: (c["n_items"] == 0 and not c["units"], c["exam"] is None))
     return out
@@ -839,6 +887,8 @@ def study_overview(course_id: int, token: str = Depends(get_current_token)):
 
 
 class PrepareRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
     limit: int | None = None
 
 
@@ -958,6 +1008,33 @@ def study_chapter(course_id: int, body: Chapter, _csrf: None = Depends(csrf_prot
         n = db.execute("""UPDATE study_topics SET hidden=? WHERE course_id=? AND chapter=? AND hidden IN (0, 2)""",
                        (2 if body.exclude else 0, course_id, body.chapter)).rowcount
     return {"topics": n}
+
+
+@app.get("/api/study/{course_id}/chapters")
+def study_chapters(course_id: int, token: str = Depends(get_current_token)):
+    """Capitoli del corso con argomenti, padronanza e peso, per la mappa reale (FE-002)."""
+    from ..study import mastery
+    _need("course", course_id)
+    ov = mastery.overview(course_id)
+    chapters: dict[str, dict] = {}
+    for t in ov["topics"]:
+        ch = chapters.setdefault(t.get("chapter") or "Senza titolo", {
+            "name": t.get("chapter") or "Senza titolo",
+            "topics": 0, "weight_sum": 0, "m_sum": 0.0, "m_exam_sum": 0.0,
+        })
+        ch["topics"] += 1
+        ch["weight_sum"] += t["weight"]
+        ch["m_sum"] += t["weight"] * t["m"]
+        ch["m_exam_sum"] += t["weight"] * t["m_exam"]
+    out = []
+    for ch in chapters.values():
+        ch["mastery"] = round(ch["m_sum"] / ch["weight_sum"], 3) if ch["weight_sum"] else 0.0
+        ch["mastery_exam"] = round(ch["m_exam_sum"] / ch["weight_sum"], 3) if ch["weight_sum"] else 0.0
+        ch["weight"] = ch["weight_sum"]
+        del ch["weight_sum"], ch["m_sum"], ch["m_exam_sum"]
+        out.append(ch)
+    out.sort(key=lambda c: c["name"])
+    return out
 
 
 @app.get("/api/study/{course_id}/chapters/excluded")
@@ -1225,6 +1302,30 @@ def _ui_version() -> str:
 _clients: dict[str, dict] = {}
 
 
+@app.get("/api/csrf")
+def get_csrf(request: Request, response: Response):
+    """Restituisce il token CSRF e assicura che il cookie CSRF sia presente.
+    Per richieste da loopback locale (127.0.0.1/localhost), assicura anche il cookie api_token."""
+    from .csrf import generate_csrf_token, get_csrf_token_from_cookie, set_csrf_cookie
+    token = get_csrf_token_from_cookie(request)
+    if not token:
+        token = generate_csrf_token()
+        set_csrf_cookie(response, token)
+
+    client_host = request.client.host if request.client else ""
+    if client_host in ("127.0.0.1", "::1", "localhost", "testclient"):
+        from ..config import get_or_create_api_token
+        if "api_token" not in request.cookies:
+            response.set_cookie(
+                key="api_token",
+                value=get_or_create_api_token(),
+                httponly=True,
+                samesite="lax",
+                path="/",
+            )
+    return {"csrf_token": token}
+
+
 @app.get("/api/version")
 def ui_version(request: Request, v: str | None = None, token: str = Depends(get_current_token)):
     """La pagina lo confronta con la sua: se l'app è cambiata si ricarica da sola.
@@ -1245,4 +1346,16 @@ def index(request: Request):
     _clients[request.headers.get("user-agent", "")[:120]] = {"version": "pagina servita " + _ui_version(),
                                                               "seen": datetime.now().isoformat(timespec="seconds")}
     html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__UI_VERSION__", _ui_version())
-    return HTMLResponse(html, headers=NO_CACHE)
+    res = HTMLResponse(html, headers=NO_CACHE)
+    from ..config import get_or_create_api_token
+    res.set_cookie(
+        key="api_token",
+        value=get_or_create_api_token(),
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    from .csrf import generate_csrf_token, get_csrf_token_from_cookie, set_csrf_cookie
+    token = get_csrf_token_from_cookie(request) or generate_csrf_token()
+    set_csrf_cookie(res, token)
+    return res

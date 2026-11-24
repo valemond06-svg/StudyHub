@@ -35,6 +35,9 @@ export interface Lecture {
   viewer_url?: string | null
   panopto_embed_url?: string | null
   media_url?: string | null
+  video_path?: string | null
+  audio_path?: string | null
+  slides_path?: string | null
   has_local_audio?: boolean
   has_local_slides?: boolean
   video_modes?: string[]
@@ -47,13 +50,25 @@ export interface Lecture {
 
 export interface Flashcard {
   id: number
+  course_id?: number
   lecture_id: number
+  // Frontend normalized fields (mapped from backend front/back)
   fronte: string
   retro: string
-  due_date: string
-  interval: number
-  ease_factor: number
-  reps: number
+  // Backend raw fields (may also be present)
+  front?: string
+  back?: string
+  due_date?: string
+  due?: string
+  interval?: number
+  ease_factor?: number
+  reps?: number
+  suspended?: number
+  origin?: string
+  lecture_title?: string
+  course?: string
+  t_start?: number | null
+  created_at?: string
 }
 
 export interface Quiz {
@@ -110,14 +125,71 @@ export interface ExamExercise {
 }
 
 export interface Simulation {
-  id: string
+  id: string | number
   course_id: number
-  exam_profile_id: number
-  questions: SimulationQuestion[]
-  started_at: string
+  exam_profile_id?: number
+  title?: string
+  titolo?: string
+  duration_min?: number
+  durata_min?: number
+  istruzioni_md?: string
+  domande?: ExamQuestion[]
+  questions?: SimulationQuestion[]
+  started_at?: string
   completed_at?: string
   score?: number
   passed?: boolean
+  best?: number | null
+  created_at?: string
+  attempts?: SimulationAttempt[]
+}
+
+export interface ExamQuestion {
+  id?: string | number
+  parte?: string
+  tipo?: "multipla" | "aperta" | "esercizio" | string
+  punti?: number
+  testo_md?: string
+  prompt?: string
+  opzioni?: string[]
+  options?: string[]
+  corretta?: number
+  soluzione_md?: string
+  solution?: string
+  criteri_md?: string
+}
+
+export interface SimulationAttempt {
+  id: number
+  grade: number
+  passed: boolean | number
+  elapsed_min?: number
+  created_at: string
+}
+
+export interface SimulationGrading {
+  attempt_id: number
+  voto_30: number
+  superato: boolean
+  commento_md: string
+  da_ripassare: string[]
+  valutazioni: Array<{
+    indice: number
+    punti: number
+    feedback_md: string
+  }>
+  soluzioni?: Array<{
+    soluzione_md: string
+    corretta?: number
+    punti_max: number
+  }>
+  foto?: {
+    avviso?: string | null
+    immagini_richieste?: number
+    immagini_pronte?: number
+    immagini_inviate?: number
+  }
+  utilization?: number
 }
 
 export interface SimulationQuestion {
@@ -159,13 +231,26 @@ export interface StudyTopic {
   id: number
   course_id: number
   name: string
-  chapter: number
+  chapter: string | null
   position: number
   weight: number
-  mastery: number
+  /** padronanza 0-1 (da mastery.overview) */
+  m?: number
+  /** padronanza proiettata all'esame 0-1 */
+  m_exam?: number
+  /** numero di domande in banca */
+  n_items?: number
+  /** numero di domande provate */
+  tried?: boolean
+  /** livello 0-4 */
+  level?: number
+  /** nome del livello (es. "Fragile", "Solido") */
+  level_name?: string
+  /** compatibilità vecchio frontend: mastery 0-100 */
+  mastery?: number
   hidden: 0 | 1 | 2
-  questions_total: number
-  questions_practiced: number
+  questions_total?: number
+  questions_practiced?: number
 }
 
 export interface AIJob {
@@ -192,15 +277,67 @@ export interface NightTurn {
   duration_minutes: number
 }
 
+export interface AIPanelQueueItem {
+  id: number
+  kind: string
+  titolo: string
+  messaggio?: string
+  data?: string
+  avviato?: string
+}
+
+export interface AIPanelQueue {
+  per_stato: Record<string, number>
+  per_tipo: Record<string, number>
+  ultimi_errori: AIPanelQueueItem[]
+  in_corso: AIPanelQueueItem[]
+}
+
+export interface AIPanelArretrati {
+  trascritte_senza_appunti: number
+  da_trascrivere: number
+  unita_nuove: number
+  unita_lezione_attesa_sonnet: number
+}
+
+export interface AIPanelFinestra {
+  claude_backlog: boolean
+  uso_pct: number | null
+  soglia_pct: number
+  arretrati_in_pausa: boolean
+  reset_alle: number | null
+  coda_in_pausa: string | null
+}
+
+export interface AIPanelNotteUltimo {
+  inizio?: string
+  fine?: string
+  esito?: "ok" | "llm_giu" | string
+  trascritte?: number
+  unita_fatte?: number
+  errori?: number
+  saltate?: number
+  durata_min?: number
+}
+
+export interface AIPanelNotte {
+  in_corso: boolean
+  ultimo: AIPanelNotteUltimo | null
+}
+
+export interface AIPanelCluster {
+  url: string
+  model: string
+  healthy: boolean
+  status: "attivo" | "in_attesa" | "offline"
+}
+
 export interface AIPanelData {
-  queue: AIJob[]
-  backlog: AIJob[]
-  pro_window: {
-    utilization: number
-    resets_at: string
-    threshold: number
-  }
-  last_night: NightTurn | null
+  coda: AIPanelQueue
+  arretrati: AIPanelArretrati
+  finestra: AIPanelFinestra
+  notte: AIPanelNotte
+  cluster?: AIPanelCluster
 }
 
 // --- Piano di oggi (/api/plan) ---------------------------------------------------
@@ -240,6 +377,35 @@ export interface PlanData {
   tasks: PlanTask[]
   courses: PlanCourse[]
   flashcards: PlanFlashcards
+  week_progress?: {
+    completed: number
+    total: number
+    tasks_completed?: number
+    label?: string
+  }
+}
+
+export interface StudyCourseOverview {
+  id: number
+  name: string
+  archetype_id?: string
+  archetype_title?: string
+  archetype_badge?: string
+  accent_color?: string
+  software_default?: string
+  ready_exam?: number
+  exam?: Exam | null
+  learned?: number
+  next?: [number, string] | null
+  n_topics?: number
+  n_items?: number
+  due?: number
+  units?: number
+  running?: boolean
+  streak?: number
+  best_streak?: number
+  xp_total?: number
+  xp_today?: number
 }
 
 // --- Novità / notifiche (/api/notifications) ---------------------------------------

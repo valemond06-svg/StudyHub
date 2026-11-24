@@ -12,8 +12,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { useSessionStore } from "@/store/session"
 import { cn } from "@/lib/utils"
-import { formatDistanceToNow, parseISO } from "date-fns"
-import { it } from "date-fns/locale"
 import {
   WarmupPhase,
   LearnPhase,
@@ -57,6 +55,7 @@ interface AnswerPayload {
   text?: string
   confidence: number
   seconds: number
+  photos?: string[]
 }
 
 export function Studio() {
@@ -70,8 +69,15 @@ export function Studio() {
 
   const { currentSession, startSession, endSession, cancelSession, updateSessionProgress } = useSessionStore()
 
+  // Redirect if no courseId
+  useEffect(() => {
+    if (!courseIdNum) {
+      navigate("/corsi", { replace: true })
+    }
+  }, [courseIdNum, navigate])
+
   // Course data
-  const { data: course } = useQuery({
+  const { data: course, isLoading: courseLoading, isError: courseError, refetch: refetchCourse } = useQuery({
     queryKey: ["course", courseIdNum],
     queryFn: () => api.getCourse(courseIdNum),
     enabled: !!courseIdNum,
@@ -103,16 +109,47 @@ export function Studio() {
 
   // Get entries for current phase
   const getPhaseEntries = useCallback((phaseName: SessionPhase): SessionEntry[] => {
-    if (!sessionData) return []
-    return sessionData.entries.filter((e) => {
-      if (phaseName === "warmup" || phaseName === "practice" || phaseName === "boss") {
-        return e.t === "domanda" && (!e.boss || phaseName === "boss") && (e.boss || phaseName !== "boss")
+    if (!sessionData || !sessionData.entries || sessionData.entries.length === 0) return []
+    
+    const questions = sessionData.entries.filter((e) => e.t === "domanda")
+    const schede = sessionData.entries.filter((e) => e.t === "scheda")
+
+    if (phaseName === "warmup") {
+      const richiami = questions.filter((e) => e.question?.kind === "richiamo")
+      if (richiami.length > 0) return richiami
+      // Fallback: first 1 or 2 questions for warmup if no explicit richiamo
+      return questions.slice(0, Math.min(2, questions.length))
+    }
+
+    if (phaseName === "learn") {
+      return schede
+    }
+
+    if (phaseName === "practice") {
+      const richiamiIds = new Set(
+        questions.filter((e) => e.question?.kind === "richiamo").map((e) => (e as any).item ?? e.id)
+      )
+      const nonRichiami = questions.filter((e) => !richiamiIds.has((e as any).item ?? e.id))
+      if (nonRichiami.length > 1) {
+        // Reserve the last one for boss
+        return nonRichiami.slice(0, -1)
       }
-      if (phaseName === "learn") {
-        return e.t === "scheda"
-      }
-      return false
-    })
+      return nonRichiami.length > 0 ? nonRichiami : questions
+    }
+
+    if (phaseName === "boss") {
+      const explicitBoss = sessionData.entries.filter((e) => e.boss)
+      if (explicitBoss.length > 0) return explicitBoss
+      // Use the last question or hardest question
+      const hardQuestions = questions.filter(
+        (e) => (e.question?.difficulty || 0) >= 3 || e.question?.kind === "aperta"
+      )
+      if (hardQuestions.length > 0) return [hardQuestions[hardQuestions.length - 1]]
+      if (questions.length > 0) return [questions[questions.length - 1]]
+      return []
+    }
+
+    return []
   }, [sessionData])
 
   const currentPhaseEntries = getPhaseEntries(phase)
@@ -257,25 +294,60 @@ export function Studio() {
     },
   })
 
+  // Photo upload mutation for handwritten work
+  const photoMutation = useMutation({
+    mutationFn: ({ sid, photo, idx }: { sid: number; photo: string; idx: number }) =>
+      api.photoSession(sid, { photo, idx }),
+    onError: (error) => {
+      console.warn("Invio foto sessione in background:", error)
+    },
+  })
+
+  const handlePhotoUpload = useCallback(
+    (photo: string, entryId: number) => {
+      if (!sessionData) return
+      photoMutation.mutate({ sid: sessionData.id, photo, idx: entryId })
+    },
+    [sessionData, photoMutation]
+  )
+
   const handleStartSession = () => {
     createSessionMutation.mutate()
   }
 
-  const handleAnswer = (isCorrect: boolean, conf: number, answerData?: { choice?: number; text?: string }) => {
+  const handleAnswer = (
+    isCorrect: boolean,
+    conf: number,
+    answerData?: { choice?: number; text?: string; photos?: string[] }
+  ) => {
     if (!sessionData) return
     const entry = currentPhaseEntries[currentEntryIndex]
     if (!entry || entry.t !== "domanda" || !entry.question) return
 
+    let targetIdx = (entry as any).idx ?? (entry as any).id
+    if (targetIdx === undefined && sessionData?.entries) {
+      targetIdx = sessionData.entries.indexOf(entry)
+      if (targetIdx === -1) {
+        targetIdx = sessionData.entries.findIndex(
+          (e: any) => e === entry || (e.item && (entry as any).item && e.item === (entry as any).item)
+        )
+      }
+    }
+    if (targetIdx === undefined || targetIdx === -1) {
+      targetIdx = currentEntryIndex
+    }
+
     const payload: AnswerPayload = {
-      idx: entry.id,
-      confidence: conf,
+      idx: targetIdx,
+      confidence: conf || 3,
       seconds: 0, // Could track actual time
+      photos: answerData?.photos,
     }
 
     if (entry.question.kind === "multipla" || entry.question.kind === "vero_falso") {
-      payload.choice = answerData?.choice
+      payload.choice = answerData?.choice ?? 0
     } else {
-      payload.text = answerData?.text
+      payload.text = answerData?.text ?? ""
     }
 
     answerMutation.mutate({ sid: sessionData.id, payload })
@@ -295,7 +367,19 @@ export function Studio() {
     if (!sessionData) return
     const entry = currentPhaseEntries[currentEntryIndex]
     if (!entry || entry.t !== "domanda") return
-    await revealMutation.mutateAsync({ sid: sessionData.id, idx: entry.id })
+    let targetIdx = (entry as any).idx ?? (entry as any).id
+    if (targetIdx === undefined && sessionData?.entries) {
+      targetIdx = sessionData.entries.indexOf(entry)
+      if (targetIdx === -1) {
+        targetIdx = sessionData.entries.findIndex(
+          (e: any) => e === entry || (e.item && (entry as any).item && e.item === (entry as any).item)
+        )
+      }
+    }
+    if (targetIdx === undefined || targetIdx === -1) {
+      targetIdx = currentEntryIndex
+    }
+    await revealMutation.mutateAsync({ sid: sessionData.id, idx: targetIdx })
   }
 
   const handleFinish = () => {
@@ -314,14 +398,65 @@ export function Studio() {
     }
   }
 
-  if (!course) return <div className="flex items-center justify-center h-64">Caricamento...</div>
-
-  // Auto-start session if not already started
+  // Hydrate or start session
   useEffect(() => {
-    if (!currentSession && !createSessionMutation.isPending) {
+    // If we have an existing session for this course with valid entries, hydrate it
+    if (
+      currentSession &&
+      currentSession.courseId === courseIdNum &&
+      currentSession.entries &&
+      currentSession.entries.length > 0 &&
+      !sessionData
+    ) {
+      const enhancedEntries = currentSession.entries.map((entry: any, index: number) => ({
+        ...entry,
+        id: entry.id ?? index,
+        idx: entry.idx ?? index,
+      }))
+      setSessionData({
+        id: currentSession.backendId || 0,
+        course_id: currentSession.courseId,
+        minutes: currentSession.duration,
+        started_at: new Date().toISOString(),
+        xp: currentSession.xpEarned || 0,
+        entries: enhancedEntries,
+        topics: {},
+      })
+      return
+    }
+
+    // If current session is from a different course or has no entries, cancel it
+    if (currentSession && (currentSession.courseId !== courseIdNum || !currentSession.entries?.length)) {
+      cancelSession()
+      return
+    }
+
+    // Auto-start session if not already started and course is loaded
+    if (!currentSession && !createSessionMutation.isPending && course && !sessionData) {
       handleStartSession()
     }
-  }, [courseIdNum, currentSession, createSessionMutation.isPending])
+  }, [courseIdNum, currentSession, createSessionMutation.isPending, course, sessionData, cancelSession])
+
+  if (courseLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3 text-neutral-500">
+        <Loader2 className="h-8 w-8 animate-spin text-accent-500" />
+        <p className="text-sm">Caricamento sessione di studio...</p>
+      </div>
+    )
+  }
+
+  if (courseError || !course) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
+        <p className="text-neutral-600 dark:text-neutral-400">Impossibile avviare lo studio per il corso #{courseIdNum}.</p>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate("/corsi")}>Torna ai corsi</Button>
+          <Button onClick={() => refetchCourse()}>Riprova</Button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="h-[calc(100vh-140px)] flex flex-col">
@@ -410,6 +545,8 @@ export function Studio() {
                 onSetConfidence={setConfidence}
                 onReveal={handleReveal}
                 isLoading={answerMutation.isPending || revealMutation.isPending}
+                sessionId={sessionData.id}
+                onPhotoUpload={handlePhotoUpload}
               />
             )}
             {phase === "learn" && currentPhaseEntries.length > 0 && (
@@ -440,6 +577,8 @@ export function Studio() {
                 combo={combo}
                 questionsAnswered={questionsAnswered}
                 correctAnswers={correctAnswers}
+                sessionId={sessionData.id}
+                onPhotoUpload={handlePhotoUpload}
               />
             )}
             {phase === "boss" && currentPhaseEntries.length > 0 && (
@@ -449,6 +588,8 @@ export function Studio() {
                 onAnswer={handleAnswer}
                 onSetShowAnswer={setShowAnswer}
                 isLoading={answerMutation.isPending}
+                sessionId={sessionData.id}
+                onPhotoUpload={handlePhotoUpload}
               />
             )}
             {phase === "cooldown" && (

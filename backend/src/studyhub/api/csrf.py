@@ -28,13 +28,13 @@ def generate_csrf_token() -> str:
 
 
 def set_csrf_cookie(response: Response, token: str) -> None:
-    """Set the CSRF token as an HttpOnly, SameSite=Strict, Secure cookie."""
+    """Set the CSRF token cookie readable by client for double-submit header."""
     response.set_cookie(
         key=CSRF_COOKIE_NAME,
         value=token,
-        httponly=True,
-        secure=True,  # Only sent over HTTPS (localhost counts as secure in modern browsers)
-        samesite="strict",
+        httponly=False,  # Client JS reads this to send X-CSRF-Token header
+        secure=False,    # Allowed over local HTTP (127.0.0.1 / localhost)
+        samesite="lax",
         max_age=CSRF_COOKIE_MAX_AGE,
         path="/",
     )
@@ -51,15 +51,29 @@ def get_csrf_token_from_header(request: Request) -> Optional[str]:
 
 
 def validate_csrf(request: Request) -> bool:
-    """Validate CSRF token: compare cookie value with header value."""
+    """Validate CSRF token: compare cookie value with header value.
+    Requests with a valid Authorization: Bearer token are inherently safe from CSRF (OWASP standard).
+    """
     cookie_token = get_csrf_token_from_cookie(request)
     header_token = get_csrf_token_from_header(request)
 
-    if not cookie_token or not header_token:
-        return False
+    # Check double-submit cookie pattern
+    if cookie_token and header_token and secrets.compare_digest(cookie_token, header_token):
+        return True
 
-    # Constant-time comparison to prevent timing attacks
-    return secrets.compare_digest(cookie_token, header_token)
+    # If client uses custom Authorization header with the valid API token, it is immune to CSRF
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token_val = auth_header[7:].strip()
+        try:
+            from ..config import get_or_create_api_token
+            expected_token = get_or_create_api_token()
+            if expected_token and secrets.compare_digest(token_val, expected_token):
+                return True
+        except Exception:
+            pass
+
+    return False
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):

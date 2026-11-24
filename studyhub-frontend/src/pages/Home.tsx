@@ -1,34 +1,40 @@
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { Plus, Clock, Flame, Award, BookOpen, TrendingUp, AlertCircle, ChevronRight, Zap, Loader2, RefreshCw, Target } from "lucide-react"
-import { formatDistanceToNow, parseISO } from "date-fns"
-import { it } from "date-fns/locale"
+import { differenceInCalendarDays } from "date-fns"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { AIPanelWidget } from "@/components/home/AIPanelWidget"
 import { api } from "@/lib/api"
-import type { Course, Exam, PlanData, PlanTask, DueFlashcardsResponse, NotificationItem } from "@/types"
-import { cn } from "@/lib/utils"
-
-// TODO: collegare a API — il backend non espone streak/XP a livello globale
-// (sono disponibili solo per-corso dentro /api/study/{id} → mastery.overview()).
-// Se in futuro /api/plan li esporrà, sostituire questi mock con i dati reali.
-const MOCK_STREAK = 12
-const MOCK_LEVEL = 3
-const MOCK_LEVEL_LABEL = "Studente Costante"
-const MOCK_LEVEL_PROGRESS = 65
-const MOCK_LEVEL_XP = 1240
-const MOCK_BEST_STREAK = 28
-const MOCK_WEEK = "5/7"
+import type { Course, Exam, PlanData, PlanTask, DueFlashcardsResponse, NotificationItem, StudyCourseOverview, AIPanelData } from "@/types"
+import { cn, safeFormatDistance, safeDaysLeft } from "@/lib/utils"
 
 function courseReadiness(c: Course): number {
   // /api/courses espone `ready` (n. lezioni pronte) e `lectures` (n. totale): la
   // prontezza % si ricava dal rapporto. Quando non ci sono lezioni → 0.
   if (!c.lectures) return 0
   return Math.round((c.ready / c.lectures) * 100)
+}
+
+function getLevelInfo(totalXP: number) {
+  // Formula progressiva: 1 livello ogni 500 XP
+  const level = Math.floor(totalXP / 500) + 1
+  const xpInLevel = totalXP % 500
+  const progress = Math.round((xpInLevel / 500) * 100)
+
+  let label = "Matricola"
+  if (level === 2) label = "Apprendista"
+  else if (level === 3) label = "Costante"
+  else if (level === 4) label = "Esperto"
+  else if (level === 5) label = "Veterano"
+  else if (level >= 6) label = "Maestro"
+
+  return { level, progress, label, xpInLevel }
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -41,6 +47,7 @@ const KIND_LABEL: Record<string, string> = {
 
 export function Home() {
   const navigate = useNavigate()
+  const [today] = useState(() => new Date())
 
   const {
     data: courses = [],
@@ -50,9 +57,19 @@ export function Home() {
   } = useQuery<Course[]>({ queryKey: ["courses"], queryFn: api.getCourses })
 
   const {
+    data: studyCourses = [],
+    isPending: studyCoursesLoading,
+    refetch: refetchStudyCourses,
+  } = useQuery<StudyCourseOverview[]>({
+    queryKey: ["studyCourses"],
+    queryFn: api.getStudyCourses,
+  })
+
+  const {
     data: plan,
     isPending: planLoading,
     isError: planError,
+    refetch: refetchPlan,
   } = useQuery<PlanData>({ queryKey: ["plan"], queryFn: api.getPlan })
 
   const {
@@ -60,7 +77,7 @@ export function Home() {
     isPending: dueLoading,
   } = useQuery<DueFlashcardsResponse>({
     queryKey: ["flashcards-due"],
-    queryFn: api.getDueFlashcards,
+    queryFn: () => api.getDueFlashcards(),
   })
 
   const {
@@ -71,8 +88,32 @@ export function Home() {
     queryFn: api.getNotifications,
   })
 
-  const loading = coursesLoading || planLoading || dueLoading || notificationsLoading
+  const {
+    data: aiPanel,
+    isPending: aiPanelLoading,
+    isFetching: aiPanelFetching,
+    refetch: refetchAIPanel,
+  } = useQuery<AIPanelData>({
+    queryKey: ["aiPanel"],
+    queryFn: api.getAIPanel,
+    refetchInterval: 30_000,
+  })
+
+  const loading = coursesLoading || planLoading || dueLoading || notificationsLoading || studyCoursesLoading
   const hasError = coursesError || planError
+
+  // Metriche Gamification reali dai corsi attivi
+  const totalXP = studyCourses.reduce((sum, c) => sum + (c.xp_total || 0), 0)
+  const levelInfo = getLevelInfo(totalXP)
+  const currentStreak = studyCourses.length
+    ? Math.max(...studyCourses.map((c) => c.streak ?? 0), 0)
+    : 0
+  const bestStreak = studyCourses.length
+    ? Math.max(...studyCourses.map((c) => c.best_streak ?? c.streak ?? 0), currentStreak)
+    : 0
+  const weekProgress =
+    plan?.week_progress?.label ??
+    (plan?.week_progress ? `${plan.week_progress.completed}/${plan.week_progress.total}` : "0/7")
 
   // Corsi attivi (non passati e prioritari), ordinati per priorità.
   const activeCourses = courses
@@ -81,7 +122,7 @@ export function Home() {
 
   // Appelli in calendario reali: arrivano da /api/plan (upcoming_exams).
   const upcomingExams = (plan?.exams ?? [])
-    .filter((e: Exam) => e.date && new Date(e.date) > new Date())
+    .filter((e: Exam) => e.date && new Date(e.date) > today)
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
     .slice(0, 3)
   const nextExam = upcomingExams[0]
@@ -128,7 +169,7 @@ export function Home() {
             Il backend non risponde o è in errore. Controlla che il server StudyHub sia attivo, poi riprova.
           </p>
         </div>
-        <Button variant="outline" className="gap-2" onClick={() => { refetchCourses() }}>
+        <Button variant="outline" className="gap-2" onClick={() => { refetchCourses(); refetchStudyCourses(); refetchPlan(); refetchAIPanel(); }}>
           <RefreshCw className="h-4 w-4" />
           Riprova
         </Button>
@@ -236,11 +277,11 @@ export function Home() {
                   <div>
                     <p className="font-medium">{nextExam.course}</p>
                     <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                      {formatDistanceToNow(parseISO(nextExam.date), { addSuffix: true, locale: it })}
+                      {safeFormatDistance(nextExam.date)}
                     </p>
                   </div>
                   <Badge variant="accent">
-                    {nextExam.days_left != null ? nextExam.days_left : Math.ceil((new Date(nextExam.date).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} giorni
+                    {nextExam.days_left != null ? nextExam.days_left : (safeDaysLeft(nextExam.date) ?? "—")} giorni
                   </Badge>
                 </div>
                 <Button
@@ -261,25 +302,26 @@ export function Home() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2">
-              <Flame className="h-5 w-5 text-warning-500" />
+              <Flame className={cn("h-5 w-5", currentStreak > 0 ? "text-warning-500" : "text-neutral-400")} />
               Streak
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {/* TODO: collegare a API — il backend non espone ancora uno streak globale */}
             <div className="flex items-center justify-between">
-              <div className="text-center">
-                <p className="text-4xl font-bold text-neutral-950 dark:text-neutral-50">{MOCK_STREAK}</p>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400">giorni consecutivi</p>
+              <div>
+                <p className="text-4xl font-bold text-neutral-950 dark:text-neutral-50">{currentStreak}</p>
+                <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                  {currentStreak === 1 ? "giorno consecutivo" : "giorni consecutivi"}
+                </p>
               </div>
-              <div className="flex items-center gap-2 text-warning-500">
-                <Flame className="h-6 w-6" />
-                <Flame className="h-6 w-6" />
-                <Flame className="h-6 w-6" />
+              <div className="flex items-center gap-1.5 text-warning-500">
+                <Flame className={cn("h-6 w-6 transition-all", currentStreak >= 1 ? "text-warning-500" : "text-neutral-300 dark:text-neutral-700")} />
+                <Flame className={cn("h-6 w-6 transition-all", currentStreak >= 3 ? "text-warning-500" : "text-neutral-300 dark:text-neutral-700")} />
+                <Flame className={cn("h-6 w-6 transition-all", currentStreak >= 7 ? "text-warning-500 animate-pulse" : "text-neutral-300 dark:text-neutral-700")} />
               </div>
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2 text-center">
-              Miglior streak: {MOCK_BEST_STREAK} giorni · Questa settimana: {MOCK_WEEK}
+              Miglior streak: {bestStreak} {bestStreak === 1 ? "giorno" : "giorni"} · Questa settimana: {weekProgress}
             </p>
           </CardContent>
         </Card>
@@ -292,20 +334,29 @@ export function Home() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {/* TODO: collegare a API — il backend non espone ancora XP/livello a livello globale */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="font-medium">Livello {MOCK_LEVEL}</span>
-                <Badge variant="success">{MOCK_LEVEL_LABEL}</Badge>
+                <span className="font-medium">Livello {levelInfo.level}</span>
+                <Badge variant="success">
+                  {levelInfo.level === 1 && totalXP === 0 ? "Livello 1 - Matricola" : levelInfo.label}
+                </Badge>
               </div>
-              <Progress value={MOCK_LEVEL_PROGRESS} className="h-2" />
+              <Progress value={levelInfo.progress} className="h-2" />
               <p className="text-xs text-neutral-500 dark:text-neutral-400 text-center">
-                {MOCK_LEVEL_PROGRESS}% al Livello {MOCK_LEVEL + 1} · {MOCK_LEVEL_XP.toLocaleString("it-IT")} XP totali
+                {levelInfo.progress}% al Livello {levelInfo.level + 1} · {totalXP.toLocaleString("it-IT")} XP totali
               </p>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Coda AI & Turno di Notte Widget */}
+      <AIPanelWidget
+        data={aiPanel}
+        isLoading={aiPanelLoading}
+        isFetching={aiPanelFetching}
+        onRefresh={() => refetchAIPanel()}
+      />
 
       {/* Sessione consigliata (dal piano di oggi) */}
       {recommendedTask && (
@@ -393,7 +444,7 @@ export function Home() {
                       )}
                       <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-0.5">
                         {item.course ? `${item.course} · ` : ""}
-                        {formatDistanceToNow(parseISO(item.created_at), { addSuffix: true, locale: it })}
+                        {safeFormatDistance(item.created_at)}
                       </p>
                     </div>
                     <ChevronRight className="h-4 w-4 text-neutral-400 shrink-0" />
@@ -458,7 +509,7 @@ export function Home() {
                     <div className="flex items-center gap-2 mt-3 text-xs text-neutral-500 dark:text-neutral-400">
                       <TrendingUp className="h-3 w-3 shrink-0" />
                       <span className="truncate">
-                        {exam ? `Prossimo: ${exam.course} (${formatDistanceToNow(parseISO(exam.date), { addSuffix: true, locale: it })})` : "Nessun appello"}
+                        {exam ? `Prossimo: ${exam.course} (${safeFormatDistance(exam.date)})` : "Nessun appello"}
                       </span>
                     </div>
                   </div>

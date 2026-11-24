@@ -6,7 +6,7 @@ Claude sono contate a parte e limitate, perché con Pro la finestra di 5 ore è 
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from ..db import session
 from ..paths import uni_path
@@ -80,5 +80,33 @@ def today_plan() -> dict:
             ai_tasks += 1
         plan.append(t)
     overview.sort(key=lambda o: -o["urgency"])
-    return {"today": date.today().isoformat(), "exams": exams, "tasks": plan[:8], "courses": overview,
-            "flashcards": cards}
+
+    today_dt = date.today()
+    start_of_week = today_dt - timedelta(days=today_dt.weekday())
+    with session() as db:
+        active_days_week = db.execute(
+            """SELECT COUNT(DISTINCT substr(created_at,1,10)) FROM study_attempts WHERE created_at >= ?""",
+            (start_of_week.isoformat(),)
+        ).fetchone()[0]
+        completed_sessions = db.execute(
+            """SELECT COUNT(*) FROM study_sessions WHERE started_at >= ? AND ended_at IS NOT NULL""",
+            (start_of_week.isoformat(),)
+        ).fetchone()[0]
+        quiz_week = db.execute(
+            """SELECT COUNT(*) FROM quiz_attempts WHERE created_at >= ?""",
+            (start_of_week.isoformat(),)
+        ).fetchone()[0]
+
+    return {
+        "today": date.today().isoformat(),
+        "exams": exams,
+        "tasks": plan[:8],
+        "courses": overview,
+        "flashcards": cards,
+        "week_progress": {
+            "completed": active_days_week,
+            "total": 7,
+            "tasks_completed": completed_sessions + quiz_week,
+            "label": f"{active_days_week}/7",
+        },
+    }

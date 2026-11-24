@@ -99,6 +99,29 @@ def _streak(db) -> int:
     return n
 
 
+def _best_streak(db) -> int:
+    """Miglior sequenza storica di giorni consecutivi con almeno 10 risposte."""
+    rows = [r[0] for r in db.execute("""SELECT DISTINCT substr(created_at,1,10) d FROM study_attempts
+                                        GROUP BY d HAVING COUNT(*) >= 10 ORDER BY d""")]
+    if not rows:
+        return 0
+    best = cur = 0
+    prev = None
+    for ds in rows:
+        try:
+            cur_date = date.fromisoformat(ds)
+        except Exception:
+            continue
+        if prev and (cur_date - prev).days == 1:
+            cur += 1
+        else:
+            cur = 1
+        prev = cur_date
+        if cur > best:
+            best = cur
+    return best
+
+
 def estimated_grade(ready_exam: float, coverage: float) -> str | None:
     """Stima grezza, dichiarata come tale. Serve a dire "non ci sei ancora", non a promettere un voto."""
     if coverage < 0.5:
@@ -121,6 +144,7 @@ def overview(course_id: int) -> dict:
                WHERE t.course_id=? AND t.hidden=0 ORDER BY COALESCE(t.position, 1000000), t.day, t.id""", (course_id,))]
         items = item_states(db, course_id)
         streak = _streak(db)
+        best_streak = max(streak, _best_streak(db))
         xp_total = db.execute("SELECT COALESCE(SUM(xp),0) FROM study_sessions").fetchone()[0]
         xp_today = db.execute("SELECT COALESCE(SUM(xp),0) FROM study_sessions WHERE started_at >= date('now','localtime')").fetchone()[0]
         recent = db.execute("""SELECT a.score, a.confidence FROM study_attempts a JOIN study_items i ON i.id=a.item_id
@@ -153,7 +177,7 @@ def overview(course_id: int) -> dict:
         "horizon": exam["date"] if exam else (now + timedelta(days=HORIZON_DAYS)).date().isoformat(),
         "grade_estimate": estimated_grade(ready_exam, coverage), "best_sim": sims,
         "overconfidence": None if overconf is None else round(overconf, 2),
-        "streak": streak, "xp_total": xp_total, "xp_today": xp_today,
+        "streak": streak, "best_streak": best_streak, "xp_total": xp_total, "xp_today": xp_today,
         "verdict": verdict(topics, ready_exam, coverage, exam),
     }
 

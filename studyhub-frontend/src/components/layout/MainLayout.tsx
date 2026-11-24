@@ -13,9 +13,8 @@ export function MainLayout() {
       <Sidebar />
       <div
         className={cn(
-          "min-h-screen transition-all duration-200 lg:pl-64",
-          sidebarCollapsed ? "lg:pl-16" : "",
-          sidebarOpen ? "lg:pl-64" : ""
+          "min-h-screen transition-all duration-200",
+          sidebarCollapsed ? "lg:pl-16" : "lg:pl-64"
         )}
       >
         <Header />

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
+import { MathMarkdown } from "@/components/ui/math-markdown"
 import type { SessionEntry } from "./types"
 
 interface BossPhaseProps {
@@ -52,7 +53,9 @@ export function BossPhase({
             </Badge>
           </div>
 
-          <p className="text-lg font-medium text-neutral-950 dark:text-neutral-50 mb-6">{item.prompt_md}</p>
+          <p className="text-lg font-medium text-neutral-950 dark:text-neutral-50 mb-6">
+            <MathMarkdown content={item.prompt_md || ""} />
+          </p>
 
           {!showAnswer && (
             <div className="space-y-4">

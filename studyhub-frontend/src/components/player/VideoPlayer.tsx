@@ -7,10 +7,37 @@ import React, {
   useImperativeHandle,
   forwardRef,
 } from "react"
-import { X, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize2, MousePointer, Mic, FileText, Image, Settings } from "lucide-react"
+import {
+  X,
+  Play,
+  Pause,
+  SkipBack,
+  SkipForward,
+  Volume2,
+  VolumeX,
+  Maximize2,
+  Minimize2,
+  Mic,
+  FileText,
+  Image as ImageIcon,
+  Settings,
+  Video,
+  Film,
+  Presentation,
+  ExternalLink,
+  Bookmark,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Trash2,
+  Search,
+  Subtitles,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import type { Lecture } from "@/types"
@@ -18,6 +45,8 @@ import type { Lecture } from "@/types"
 // ============================================
 // Types
 // ============================================
+
+export type PlayerMode = "panopto" | "video" | "slides"
 
 export interface TranscriptSegment {
   t_start: number
@@ -41,7 +70,7 @@ export interface PlayerNote {
   id: string
   lectureId: number
   timestamp: number
-  type: "transcript" | "slide"
+  type: "transcript" | "slide" | "video" | "general"
   segmentIndex?: number
   slideIndex?: number
   text: string
@@ -51,9 +80,19 @@ export interface PlayerNote {
 export interface LectureMediaData {
   audio_path?: string
   slides_path?: string
+  media_url?: string
+  video_path?: string
+  videos?: string[]
+  panopto_embed_url?: string
+  viewer_url?: string
+  panopto_id?: string
   transcript_segments?: TranscriptSegment[]
   silence_intervals?: SilenceInterval[]
   slides?: SlideInfo[]
+  video_modes?: string[]
+  default_mode?: string
+  has_local_audio?: boolean
+  has_local_slides?: boolean
 }
 
 export interface VideoPlayerProps {
@@ -70,7 +109,10 @@ export interface VideoPlayerHandle {
   setRate: (rate: number) => void
   getCurrentTime: () => number
   getDuration: () => number
+  setMode?: (mode: PlayerMode) => void
 }
+
+const SPEED_PRESETS = [0.75, 1, 1.25, 1.5, 2]
 
 // ============================================
 // IndexedDB Cache for Offline-First
@@ -81,55 +123,68 @@ const DB_VERSION = 1
 const AUDIO_STORE = "audio"
 const SLIDES_STORE = "slides"
 
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
-    request.onerror = () => reject(request.error)
-    request.onsuccess = () => resolve(request.result)
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result
-      if (!db.objectStoreNames.contains(AUDIO_STORE)) {
-        db.createObjectStore(AUDIO_STORE)
+function openDB(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === "undefined") return Promise.resolve(null)
+  return new Promise((resolve) => {
+    try {
+      const request = indexedDB.open(DB_NAME, DB_VERSION)
+      request.onerror = () => resolve(null)
+      request.onsuccess = () => resolve(request.result)
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result
+        if (!db.objectStoreNames.contains(AUDIO_STORE)) {
+          db.createObjectStore(AUDIO_STORE)
+        }
+        if (!db.objectStoreNames.contains(SLIDES_STORE)) {
+          db.createObjectStore(SLIDES_STORE)
+        }
       }
-      if (!db.objectStoreNames.contains(SLIDES_STORE)) {
-        db.createObjectStore(SLIDES_STORE)
-      }
+    } catch {
+      resolve(null)
     }
   })
 }
 
 async function cacheBlob(storeName: string, key: string, blob: Blob): Promise<void> {
   const db = await openDB()
+  if (!db) return
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readwrite")
-    const store = tx.objectStore(storeName)
-    const request = store.put(blob, key)
-    request.onsuccess = () => resolve()
-    request.onerror = () => reject(request.error)
+    try {
+      const tx = db.transaction(storeName, "readwrite")
+      const store = tx.objectStore(storeName)
+      const request = store.put(blob, key)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    } catch (err) {
+      reject(err)
+    }
   })
 }
 
 async function getCachedBlob(storeName: string, key: string): Promise<Blob | null> {
   const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readonly")
-    const store = tx.objectStore(storeName)
-    const request = store.get(key)
-    request.onsuccess = () => resolve(request.result || null)
-    request.onerror = () => reject(request.error)
+  if (!db) return null
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, "readonly")
+      const store = tx.objectStore(storeName)
+      const request = store.get(key)
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => resolve(null)
+    } catch {
+      resolve(null)
+    }
   })
 }
 
 async function fetchWithCache(url: string, storeName: string, cacheKey: string): Promise<Blob> {
-  // Try cache first
   const cached = await getCachedBlob(storeName, cacheKey)
   if (cached) return cached
 
-  // Fetch and cache
   const response = await fetch(url)
   if (!response.ok) throw new Error(`Failed to fetch ${url}`)
   const blob = await response.blob()
-  await cacheBlob(storeName, cacheKey, blob)
+  await cacheBlob(storeName, cacheKey, blob).catch(() => {})
   return blob
 }
 
@@ -137,9 +192,15 @@ async function fetchWithCache(url: string, storeName: string, cacheKey: string):
 // Helper Functions
 // ============================================
 
-function formatTime(seconds: number): string {
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.floor(seconds % 60)
+export function formatTime(seconds: number): string {
+  if (isNaN(seconds) || seconds < 0) return "0:00"
+  const totalSecs = Math.floor(seconds)
+  const hours = Math.floor(totalSecs / 3600)
+  const mins = Math.floor((totalSecs % 3600) / 60)
+  const secs = totalSecs % 60
+  if (hours > 0) {
+    return `${hours}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
+  }
   return `${mins}:${secs.toString().padStart(2, "0")}`
 }
 
@@ -147,14 +208,12 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-// HTMLAudioElement doesn't natively expose Picture-in-Picture in TS lib types
-// but it is supported in modern browsers. Cast to access it safely.
-function requestAudioPip(audio: HTMLAudioElement | null) {
-  if (!audio) return
-  const el = audio as HTMLAudioElement & {
+function requestMediaPip(el: HTMLMediaElement | null) {
+  if (!el) return
+  const media = el as HTMLMediaElement & {
     requestPictureInPicture?: () => Promise<unknown>
   }
-  el.requestPictureInPicture?.().catch(() => {})
+  media.requestPictureInPicture?.().catch(() => {})
 }
 
 function loadNotes(lectureId: number): PlayerNote[] {
@@ -175,10 +234,486 @@ function saveNotes(lectureId: number, notes: PlayerNote[]): void {
 }
 
 // ============================================
-// Sub-component: Audio Player Controls
+// Sub-component: Panopto Player Iframe
 // ============================================
 
-interface AudioPlayerProps {
+interface PanoptoPlayerProps {
+  embedUrl: string
+  viewerUrl?: string
+  lectureTitle: string
+  currentTime: number
+  duration: number
+  onSeek: (time: number) => void
+  onAddNote: (timestamp: number) => void
+  iframeRef: React.RefObject<HTMLIFrameElement | null>
+}
+
+export function PanoptoPlayer({
+  embedUrl,
+  viewerUrl,
+  lectureTitle,
+  currentTime,
+  onSeek,
+  onAddNote,
+  iframeRef,
+}: PanoptoPlayerProps) {
+  return (
+    <div className="flex flex-col h-full w-full max-w-5xl mx-auto gap-3">
+      {/* 16:9 Responsive Iframe Container */}
+      <div className="relative w-full aspect-video bg-neutral-950 rounded-xl overflow-hidden shadow-2xl border border-neutral-800 flex items-center justify-center">
+        <iframe
+          ref={iframeRef}
+          src={embedUrl}
+          title={lectureTitle}
+          allow="autoplay; fullscreen"
+          allowFullScreen
+          className="w-full h-full border-0"
+        />
+      </div>
+
+      {/* Panopto Controls & Status Sub-bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 bg-neutral-100 dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 text-sm">
+        <div className="flex items-center gap-2">
+          <Badge variant="accent" className="flex items-center gap-1 font-semibold">
+            <Video className="h-3.5 w-3.5" />
+            Panopto UniVR
+          </Badge>
+          <span className="text-xs text-neutral-500 dark:text-neutral-400">
+            {currentTime > 0 ? (
+              <>Posizione sincronizzata: <strong className="font-mono text-neutral-900 dark:text-neutral-100">{formatTime(currentTime)}</strong></>
+            ) : (
+              "Trascrizione Whisper sincronizzata"
+            )}
+          </span>
+        </div>
+
+        {/* Quick jump & Note controls */}
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onSeek(Math.max(0, currentTime - 30))}
+            title="Salta indietro 30s"
+          >
+            <SkipBack className="h-4 w-4 mr-1" /> -30s
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onSeek(Math.max(0, currentTime - 5))}
+            title="Salta indietro 5s"
+          >
+            <SkipBack className="h-4 w-4 mr-1" /> -5s
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onSeek(currentTime + 5)}
+            title="Salta avanti 5s"
+          >
+            +5s <SkipForward className="h-4 w-4 ml-1" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onSeek(currentTime + 30)}
+            title="Salta avanti 30s"
+          >
+            +30s <SkipForward className="h-4 w-4 ml-1" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onAddNote(currentTime)}
+            className="ml-2 gap-1"
+          >
+            <Bookmark className="h-3.5 w-3.5 text-accent-500" />
+            <span>+ Nota ({formatTime(currentTime)})</span>
+          </Button>
+          {viewerUrl && (
+            <Button
+              variant="ghost"
+              size="sm"
+              asChild
+              className="text-xs ml-1 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            >
+              <a href={viewerUrl} target="_blank" rel="noopener noreferrer">
+                <span>Apri nel portale</span>
+                <ExternalLink className="h-3.5 w-3.5 ml-1" />
+              </a>
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// Sub-component: HTML5 Video Player
+// ============================================
+
+interface Html5VideoPlayerProps {
+  videoUrl: string
+  lectureTitle: string
+  currentTime: number
+  duration: number
+  playbackRate: number
+  volume: number
+  isMuted: boolean
+  isPlaying: boolean
+  silenceIntervals: SilenceInterval[]
+  skipSilences: boolean
+  activeSubtitle?: string
+  showSubtitles: boolean
+  onToggleSubtitles: () => void
+  onPlayPause: () => void
+  onSeek: (time: number) => void
+  onRateChange: (rate: number) => void
+  onVolumeChange: (volume: number) => void
+  onMuteToggle: () => void
+  onSkipSilencesToggle: () => void
+  onSeekBackward: (seconds: number) => void
+  onSeekForward: (seconds: number) => void
+  onAddNote: (timestamp: number) => void
+  videoRef: React.RefObject<HTMLVideoElement | null>
+  containerRef: React.RefObject<HTMLDivElement | null>
+}
+
+export function Html5VideoPlayer({
+  videoUrl,
+  lectureTitle,
+  currentTime,
+  duration,
+  playbackRate,
+  volume,
+  isMuted,
+  isPlaying,
+  silenceIntervals,
+  skipSilences,
+  activeSubtitle,
+  showSubtitles,
+  onToggleSubtitles,
+  onPlayPause,
+  onSeek,
+  onRateChange,
+  onVolumeChange,
+  onMuteToggle,
+  onSkipSilencesToggle,
+  onSeekBackward,
+  onSeekForward,
+  onAddNote,
+  videoRef,
+  containerRef,
+}: Html5VideoPlayerProps) {
+  const seekBarRef = useRef<HTMLDivElement>(null)
+  const isSeekingRef = useRef(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  const handleSeekMouseDown = useCallback((e: React.MouseEvent) => {
+    isSeekingRef.current = true
+    const handleMove = (moveEvent: MouseEvent) => {
+      if (!seekBarRef.current || duration <= 0) return
+      const rect = seekBarRef.current.getBoundingClientRect()
+      const percent = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / rect.width))
+      onSeek(percent * duration)
+    }
+    const handleUp = () => {
+      isSeekingRef.current = false
+      window.removeEventListener("mousemove", handleMove)
+      window.removeEventListener("mouseup", handleUp)
+    }
+    window.addEventListener("mousemove", handleMove)
+    window.addEventListener("mouseup", handleUp)
+    handleMove(e.nativeEvent)
+  }, [duration, onSeek])
+
+  const toggleFullscreen = useCallback(() => {
+    if (!containerRef.current) return
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {})
+    } else {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {})
+    }
+  }, [containerRef])
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement))
+    }
+    document.addEventListener("fullscreenchange", handleFsChange)
+    return () => document.removeEventListener("fullscreenchange", handleFsChange)
+  }, [])
+
+  return (
+    <div
+      ref={containerRef}
+      className="flex flex-col h-full w-full max-w-5xl mx-auto gap-3 select-none"
+    >
+      {/* 16:9 Video Canvas Wrapper */}
+      <div className="relative w-full aspect-video bg-neutral-950 rounded-xl overflow-hidden shadow-2xl border border-neutral-800 flex items-center justify-center group">
+        <video
+          ref={videoRef}
+          src={videoUrl}
+          playsInline
+          preload="metadata"
+          onClick={onPlayPause}
+          className="w-full h-full object-contain cursor-pointer"
+        />
+
+        {/* Large Play/Pause overlay icon on click/hover when paused */}
+        {!isPlaying && (
+          <button
+            type="button"
+            onClick={onPlayPause}
+            aria-label="Riproduci video"
+            className="absolute inset-0 flex items-center justify-center bg-black/30 hover:bg-black/40 transition-colors"
+          >
+            <div className="h-16 w-16 rounded-full bg-accent-500/90 text-white flex items-center justify-center shadow-lg transform hover:scale-110 transition-transform">
+              <Play className="h-8 w-8 ml-1" />
+            </div>
+          </button>
+        )}
+
+        {/* Subtitle / Live Whisper Overlay */}
+        {showSubtitles && activeSubtitle && (
+          <div className="absolute bottom-4 left-6 right-6 flex justify-center pointer-events-none">
+            <p className="bg-neutral-950/85 text-white text-sm font-medium px-4 py-2 rounded-lg max-w-[85%] text-center backdrop-blur-md shadow-lg border border-white/10 leading-relaxed">
+              {activeSubtitle}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Complete HTML5 Video Controls Bar */}
+      <div className="flex flex-col gap-2.5 p-3.5 bg-neutral-100 dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
+        {/* Seek Bar with Silence Markers */}
+        <div className="relative w-full">
+          <div
+            ref={seekBarRef}
+            className="relative h-2.5 bg-neutral-300 dark:bg-neutral-700 rounded-full cursor-pointer group"
+            onMouseDown={handleSeekMouseDown}
+            role="slider"
+            aria-label="Posizione riproduzione video"
+            aria-valuemin={0}
+            aria-valuemax={duration}
+            aria-valuenow={currentTime}
+            tabIndex={0}
+          >
+            {/* Silence intervals markers */}
+            {silenceIntervals.map((s, i) => (
+              <div
+                key={i}
+                className="absolute top-0 h-full bg-amber-500/40 rounded-full pointer-events-none"
+                style={{
+                  left: `${duration > 0 ? (s.start / duration) * 100 : 0}%`,
+                  width: `${duration > 0 ? ((s.end - s.start) / duration) * 100 : 0}%`,
+                }}
+                title={`Silenzio: ${formatTime(s.start)} - ${formatTime(s.end)}`}
+              />
+            ))}
+            {/* Progress track */}
+            <div
+              className="absolute top-0 h-full bg-accent-500 rounded-full transition-all duration-75"
+              style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+            />
+            {/* Scrubber thumb */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-accent-500 rounded-full shadow-md border-2 border-white dark:border-neutral-900 opacity-90 group-hover:scale-125 transition-transform pointer-events-none"
+              style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs font-mono text-neutral-500 dark:text-neutral-400 mt-1">
+            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(duration)}</span>
+          </div>
+        </div>
+
+        {/* Buttons Row */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Left: Playback & Seek */}
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSeekBackward(30)}
+              aria-label="Indietro 30s"
+              title="Indietro 30s (Shift+←)"
+            >
+              <SkipBack className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSeekBackward(5)}
+              aria-label="Indietro 5s"
+              title="Indietro 5s (←)"
+            >
+              <SkipBack className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="default"
+              size="icon"
+              onClick={onPlayPause}
+              aria-label={isPlaying ? "Pausa" : "Riproduci"}
+              title={isPlaying ? "Pausa (Spazio)" : "Riproduci (Spazio)"}
+              className="h-10 w-10 rounded-full"
+            >
+              {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSeekForward(5)}
+              aria-label="Avanti 5s"
+              title="Avanti 5s (→)"
+            >
+              <SkipForward className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSeekForward(30)}
+              aria-label="Avanti 30s"
+              title="Avanti 30s (Shift+→)"
+            >
+              <SkipForward className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Center: Speed Presets (0.75x, 1x, 1.25x, 1.5x, 2x) & Silence Skip */}
+          <div className="flex items-center gap-3">
+            {/* Speed Presets Pill Group */}
+            <div
+              className="flex items-center p-0.5 bg-neutral-200 dark:bg-neutral-800 rounded-lg text-xs font-medium"
+              role="group"
+              aria-label="Velocità riproduzione"
+            >
+              {SPEED_PRESETS.map((rate) => {
+                const isActive = Math.abs(playbackRate - rate) < 0.01
+                return (
+                  <button
+                    key={rate}
+                    type="button"
+                    onClick={() => onRateChange(rate)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md transition-all duration-150",
+                      isActive
+                        ? "bg-accent-500 text-white font-semibold shadow-sm"
+                        : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+                    )}
+                    aria-label={`Velocità ${rate}x`}
+                    aria-pressed={isActive}
+                  >
+                    {rate}×
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Skip Silences Switch */}
+            {silenceIntervals.length > 0 && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-neutral-200/50 dark:bg-neutral-800/50 text-xs">
+                <Mic className={cn("h-3.5 w-3.5", skipSilences ? "text-accent-500" : "text-neutral-400")} />
+                <Switch
+                  checked={skipSilences}
+                  onCheckedChange={onSkipSilencesToggle}
+                  aria-label="Salta silenzi"
+                  id="video-skip-silences"
+                />
+                <label htmlFor="video-skip-silences" className="cursor-pointer text-neutral-600 dark:text-neutral-300">
+                  Salta silenzi
+                </label>
+              </div>
+            )}
+          </div>
+
+          {/* Right: Volume, PiP, Subtitles, Fullscreen */}
+          <div className="flex items-center gap-2">
+            {/* Volume */}
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onMuteToggle}
+                aria-label={isMuted ? "Attiva audio" : "Disattiva audio"}
+                title={isMuted ? "Attiva audio (M)" : "Disattiva audio (M)"}
+                className="h-8 w-8"
+              >
+                {isMuted || volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              </Button>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={isMuted ? 0 : volume}
+                onChange={(e) => onVolumeChange(Number(e.target.value))}
+                className="w-20 h-1.5 appearance-none bg-neutral-300 dark:bg-neutral-700 rounded-full accent-accent-500 cursor-pointer"
+                aria-label="Volume"
+              />
+            </div>
+
+            {/* Subtitles toggle */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onToggleSubtitles}
+              aria-label={showSubtitles ? "Disattiva sottotitoli" : "Attiva sottotitoli"}
+              title={showSubtitles ? "Disattiva sottotitoli" : "Attiva sottotitoli"}
+              className={cn("h-8 w-8", showSubtitles && "text-accent-500 bg-accent-500/10")}
+            >
+              <Subtitles className="h-4 w-4" />
+            </Button>
+
+            {/* PiP */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => requestMediaPip(videoRef.current)}
+              aria-label="Picture-in-Picture"
+              title="Picture in Picture (F)"
+              className="h-8 w-8"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
+
+            {/* Fullscreen */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? "Esci da schermo intero" : "Schermo intero"}
+              title="Schermo intero"
+              className="h-8 w-8"
+            >
+              {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </Button>
+
+            {/* Add note */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onAddNote(currentTime)}
+              className="gap-1 text-xs h-8"
+            >
+              <Bookmark className="h-3.5 w-3.5 text-accent-500" />
+              <span>+ Nota</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// Sub-component: Slide & Audio Synchronized Player
+// ============================================
+
+interface SlideAudioPlayerProps {
+  slides: SlideInfo[]
+  activeSlideIndex: number
   audioRef: React.RefObject<HTMLAudioElement | null>
   currentTime: number
   duration: number
@@ -196,9 +731,14 @@ interface AudioPlayerProps {
   onSkipSilencesToggle: () => void
   onSeekBackward: (seconds: number) => void
   onSeekForward: (seconds: number) => void
+  onPrevSlide: () => void
+  onNextSlide: () => void
+  onAddNote: (timestamp: number, slideIndex?: number) => void
 }
 
-function AudioPlayer({
+export function SlideAudioPlayer({
+  slides,
+  activeSlideIndex,
   audioRef,
   currentTime,
   duration,
@@ -216,14 +756,19 @@ function AudioPlayer({
   onSkipSilencesToggle,
   onSeekBackward,
   onSeekForward,
-}: AudioPlayerProps) {
+  onPrevSlide,
+  onNextSlide,
+  onAddNote,
+}: SlideAudioPlayerProps) {
   const seekBarRef = useRef<HTMLDivElement>(null)
   const isSeekingRef = useRef(false)
+
+  const activeSlide = slides[activeSlideIndex] || slides[0]
 
   const handleSeekMouseDown = useCallback((e: React.MouseEvent) => {
     isSeekingRef.current = true
     const handleMove = (moveEvent: MouseEvent) => {
-      if (!seekBarRef.current) return
+      if (!seekBarRef.current || duration <= 0) return
       const rect = seekBarRef.current.getBoundingClientRect()
       const percent = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / rect.width))
       onSeek(percent * duration)
@@ -238,203 +783,255 @@ function AudioPlayer({
     handleMove(e.nativeEvent)
   }, [duration, onSeek])
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "ArrowLeft") {
-      e.preventDefault()
-      onSeek(Math.max(0, currentTime - 5))
-    } else if (e.key === "ArrowRight") {
-      e.preventDefault()
-      onSeek(Math.min(duration, currentTime + 5))
-    } else if (e.key === " " || e.key === "Space") {
-      e.preventDefault()
-      onPlayPause()
-    }
-  }, [currentTime, duration, onPlayPause, onSeek])
-
-  const silenceBeforeCurrent = useMemo(() => {
-    return silenceIntervals.find((s) => s.start <= currentTime && s.end > currentTime)
-  }, [silenceIntervals, currentTime])
-
-  const nextSilence = useMemo(() => {
-    return silenceIntervals.find((s) => s.start > currentTime)
-  }, [silenceIntervals, currentTime])
-
   return (
-    <div className="flex flex-col gap-3 w-full max-w-4xl mx-auto">
-      {/* Seek Bar with Silence Indicators */}
-      <div className="relative">
-        <div
-          ref={seekBarRef}
-          className="relative h-2 bg-neutral-200 dark:bg-neutral-700 rounded-full cursor-pointer group"
-          onMouseDown={handleSeekMouseDown}
-          onKeyDown={handleKeyDown}
-          tabIndex={0}
-          role="slider"
-          aria-label="Posizione riproduzione"
-          aria-valuemin={0}
-          aria-valuemax={duration}
-          aria-valuenow={currentTime}
-        >
-          {/* Silence intervals background */}
-          {silenceIntervals.map((s, i) => (
-            <div
-              key={i}
-              className="absolute top-0 h-full bg-warning-500/20 dark:bg-warning-500/10 rounded-full"
-              style={{
-                left: `${(s.start / duration) * 100}%`,
-                width: `${((s.end - s.start) / duration) * 100}%`,
-              }}
-              title={`Silenzio: ${formatTime(s.start)} - ${formatTime(s.end)}`}
-            />
-          ))}
-          {/* Progress */}
-          <div
-            className="absolute top-0 h-full bg-accent-500 rounded-full transition-all duration-75"
-            style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+    <div className="flex flex-col h-full w-full max-w-5xl mx-auto gap-3">
+      {/* Prominent Synchronized Slide Canvas / Stage */}
+      <div className="relative w-full aspect-video bg-neutral-950 rounded-xl overflow-hidden shadow-2xl border border-neutral-800 flex items-center justify-center group">
+        {activeSlide ? (
+          <img
+            src={activeSlide.url}
+            alt={`Slide ${activeSlide.index + 1}`}
+            className="w-full h-full object-contain"
+            onDoubleClick={() => onAddNote(activeSlide.timestamp, activeSlide.index)}
           />
-          {/* Current time indicator */}
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-accent-500 rounded-full shadow-lg border-2 border-white dark:border-neutral-900 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-            style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
-          />
-        </div>
-        <div className="flex justify-between text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-          <span>{formatTime(currentTime)}</span>
-          <span>{formatTime(duration)}</span>
-        </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center text-neutral-500 gap-2">
+            <Presentation className="h-12 w-12" />
+            <p>Nessuna slide sincronizzata disponibile per questo istante</p>
+          </div>
+        )}
+
+        {/* Slide navigation overlays */}
+        {slides.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={onPrevSlide}
+              disabled={activeSlideIndex <= 0}
+              className="absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/60 text-white hover:bg-black/80 disabled:opacity-30 disabled:pointer-events-none transition-all"
+              aria-label="Slide precedente"
+              title="Slide precedente"
+            >
+              <ChevronLeft className="h-6 w-6" />
+            </button>
+            <button
+              type="button"
+              onClick={onNextSlide}
+              disabled={activeSlideIndex >= slides.length - 1}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/60 text-white hover:bg-black/80 disabled:opacity-30 disabled:pointer-events-none transition-all"
+              aria-label="Slide successiva"
+              title="Slide successiva"
+            >
+              <ChevronRight className="h-6 w-6" />
+            </button>
+
+            {/* Slide Index Badge Overlay */}
+            <div className="absolute bottom-3 left-4 flex items-center gap-2">
+              <Badge variant="secondary" className="bg-black/75 text-white backdrop-blur-sm border-0 font-mono text-xs">
+                Slide {activeSlideIndex >= 0 ? activeSlideIndex + 1 : 1} / {slides.length}
+              </Badge>
+              {activeSlide && (
+                <Badge variant="outline" className="bg-black/50 text-neutral-200 border-white/20 text-xs">
+                  {formatTime(activeSlide.timestamp)}
+                </Badge>
+              )}
+            </div>
+
+            {/* Note prompt button on slide */}
+            <button
+              type="button"
+              onClick={() => onAddNote(currentTime, activeSlideIndex)}
+              className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 hover:bg-black/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1.5 backdrop-blur-sm"
+            >
+              <Bookmark className="h-3.5 w-3.5 text-accent-400" />
+              <span>Aggiungi nota</span>
+            </button>
+          </>
+        )}
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* Left: Playback controls */}
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => onSeekBackward(30)}
-            aria-label="Indietro 30s"
-            title="Indietro 30s (Shift+←)"
+      {/* Audio Controls Bar */}
+      <div className="flex flex-col gap-2.5 p-3.5 bg-neutral-100 dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
+        {/* Seek Bar */}
+        <div className="relative w-full">
+          <div
+            ref={seekBarRef}
+            className="relative h-2.5 bg-neutral-300 dark:bg-neutral-700 rounded-full cursor-pointer group"
+            onMouseDown={handleSeekMouseDown}
+            role="slider"
+            aria-label="Posizione riproduzione audio"
+            aria-valuemin={0}
+            aria-valuemax={duration}
+            aria-valuenow={currentTime}
+            tabIndex={0}
           >
-            <SkipBack className="h-5 w-5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => onSeekBackward(5)}
-            aria-label="Indietro 5s"
-            title="Indietro 5s (←)"
-          >
-            <SkipBack className="h-5 w-5" />
-          </Button>
-          <Button
-            variant="default"
-            size="lg"
-            onClick={onPlayPause}
-            aria-label={isPlaying ? "Pausa" : "Riproduci"}
-            title={isPlaying ? "Pausa (Spazio)" : "Riproduci (Spazio)"}
-            className="h-12 w-12"
-          >
-            {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => onSeekForward(5)}
-            aria-label="Avanti 5s"
-            title="Avanti 5s (→)"
-          >
-            <SkipForward className="h-5 w-5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => onSeekForward(30)}
-            aria-label="Avanti 30s"
-            title="Avanti 30s (Shift+→)"
-          >
-            <SkipForward className="h-5 w-5" />
-          </Button>
+            {silenceIntervals.map((s, i) => (
+              <div
+                key={i}
+                className="absolute top-0 h-full bg-amber-500/40 rounded-full pointer-events-none"
+                style={{
+                  left: `${duration > 0 ? (s.start / duration) * 100 : 0}%`,
+                  width: `${duration > 0 ? ((s.end - s.start) / duration) * 100 : 0}%`,
+                }}
+                title={`Silenzio: ${formatTime(s.start)} - ${formatTime(s.end)}`}
+              />
+            ))}
+            <div
+              className="absolute top-0 h-full bg-accent-500 rounded-full transition-all duration-75"
+              style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+            />
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-accent-500 rounded-full shadow-md border-2 border-white dark:border-neutral-900 opacity-90 group-hover:scale-125 transition-transform pointer-events-none"
+              style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs font-mono text-neutral-500 dark:text-neutral-400 mt-1">
+            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(duration)}</span>
+          </div>
         </div>
 
-        {/* Center: Time & Silence Skip */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 px-2 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800">
-            <Mic className={cn("h-4 w-4", skipSilences ? "text-accent-500" : "text-neutral-400")} />
-            <Switch
-              checked={skipSilences}
-              onCheckedChange={onSkipSilencesToggle}
-              aria-label="Salta silenzi"
-            />
-            <span className="text-sm text-neutral-600 dark:text-neutral-300">Salta silenzi</span>
-            {silenceBeforeCurrent && skipSilences && (
-              <span className="text-xs text-warning-600 dark:text-warning-400">
-                Saltando: {formatTime(silenceBeforeCurrent.start)} → {formatTime(silenceBeforeCurrent.end)}
-              </span>
+        {/* Buttons Row */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Left: Playback & Seek */}
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSeekBackward(30)}
+              aria-label="Indietro 30s"
+              title="Indietro 30s (Shift+←)"
+            >
+              <SkipBack className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSeekBackward(5)}
+              aria-label="Indietro 5s"
+              title="Indietro 5s (←)"
+            >
+              <SkipBack className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="default"
+              size="icon"
+              onClick={onPlayPause}
+              aria-label={isPlaying ? "Pausa" : "Riproduci"}
+              title={isPlaying ? "Pausa (Spazio)" : "Riproduci (Spazio)"}
+              className="h-10 w-10 rounded-full"
+            >
+              {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSeekForward(5)}
+              aria-label="Avanti 5s"
+              title="Avanti 5s (→)"
+            >
+              <SkipForward className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSeekForward(30)}
+              aria-label="Avanti 30s"
+              title="Avanti 30s (Shift+→)"
+            >
+              <SkipForward className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Center: Speed Presets & Silence Skip */}
+          <div className="flex items-center gap-3">
+            <div
+              className="flex items-center p-0.5 bg-neutral-200 dark:bg-neutral-800 rounded-lg text-xs font-medium"
+              role="group"
+              aria-label="Velocità riproduzione"
+            >
+              {SPEED_PRESETS.map((rate) => {
+                const isActive = Math.abs(playbackRate - rate) < 0.01
+                return (
+                  <button
+                    key={rate}
+                    type="button"
+                    onClick={() => onRateChange(rate)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md transition-all duration-150",
+                      isActive
+                        ? "bg-accent-500 text-white font-semibold shadow-sm"
+                        : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+                    )}
+                    aria-label={`Velocità ${rate}x`}
+                    aria-pressed={isActive}
+                  >
+                    {rate}×
+                  </button>
+                )
+              })}
+            </div>
+
+            {silenceIntervals.length > 0 && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-neutral-200/50 dark:bg-neutral-800/50 text-xs">
+                <Mic className={cn("h-3.5 w-3.5", skipSilences ? "text-accent-500" : "text-neutral-400")} />
+                <Switch
+                  checked={skipSilences}
+                  onCheckedChange={onSkipSilencesToggle}
+                  aria-label="Salta silenzi"
+                  id="slide-skip-silences"
+                />
+                <label htmlFor="slide-skip-silences" className="cursor-pointer text-neutral-600 dark:text-neutral-300">
+                  Salta silenzi
+                </label>
+              </div>
             )}
           </div>
-        </div>
 
-        {/* Right: Volume, Speed, PiP */}
-        <div className="flex items-center gap-2">
-          {/* Volume */}
+          {/* Right: Volume & PiP */}
           <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onMuteToggle}
+                aria-label={isMuted ? "Attiva audio" : "Disattiva audio"}
+                title={isMuted ? "Attiva audio (M)" : "Disattiva audio (M)"}
+                className="h-8 w-8"
+              >
+                {isMuted || volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              </Button>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={isMuted ? 0 : volume}
+                onChange={(e) => onVolumeChange(Number(e.target.value))}
+                className="w-20 h-1.5 appearance-none bg-neutral-300 dark:bg-neutral-700 rounded-full accent-accent-500 cursor-pointer"
+                aria-label="Volume"
+              />
+            </div>
             <Button
               variant="ghost"
               size="icon"
-              onClick={onMuteToggle}
-              aria-label={isMuted ? "Attiva audio" : "Disattiva audio"}
-              title={isMuted ? "Attiva audio (M)" : "Disattiva audio (M)"}
+              onClick={() => requestMediaPip(audioRef.current)}
+              aria-label="Picture-in-Picture"
+              title="Picture in Picture (F)"
+              className="h-8 w-8"
             >
-              {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+              <Maximize2 className="h-4 w-4" />
             </Button>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.1"
-              value={isMuted ? 0 : volume}
-              onChange={(e) => onVolumeChange(Number(e.target.value))}
-              className="w-24 h-1.5 appearance-none bg-neutral-200 dark:bg-neutral-700 rounded-full accent-accent-500"
-              aria-label="Volume"
-            />
-          </div>
-
-          {/* Playback Rate */}
-          <div className="flex items-center gap-2">
             <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onRateChange(Math.max(0.5, playbackRate - 0.25))}
-              aria-label="Rallenta"
-              title="Rallenta ([)"
+              variant="outline"
+              size="sm"
+              onClick={() => onAddNote(currentTime, activeSlideIndex)}
+              className="gap-1 text-xs h-8"
             >
-              <Settings className="h-4 w-4" />
-            </Button>
-            <span className="text-sm font-mono text-neutral-600 dark:text-neutral-300 w-14 text-center">
-              {playbackRate.toFixed(2)}×
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onRateChange(Math.min(3, playbackRate + 0.25))}
-              aria-label="Accelera"
-              title="Accelera (])"
-            >
-              <Settings className="h-4 w-4 rotate-180" />
+              <Bookmark className="h-3.5 w-3.5 text-accent-500" />
+              <span>+ Nota</span>
             </Button>
           </div>
-
-          {/* PiP */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => requestAudioPip(audioRef.current)}
-            aria-label="Picture in Picture"
-            title="Picture in Picture"
-            disabled={!document.pictureInPictureEnabled}
-          >
-            <Maximize2 className="h-5 w-5" />
-          </Button>
         </div>
       </div>
     </div>
@@ -442,7 +1039,7 @@ function AudioPlayer({
 }
 
 // ============================================
-// Sub-component: Transcript Panel
+// Sub-component: Transcript Panel with Whisper Clickable Segments
 // ============================================
 
 interface TranscriptPanelProps {
@@ -453,7 +1050,7 @@ interface TranscriptPanelProps {
   notes: PlayerNote[]
 }
 
-function TranscriptPanel({
+export function TranscriptPanel({
   segments,
   currentTime,
   onSegmentClick,
@@ -461,98 +1058,138 @@ function TranscriptPanel({
   notes,
 }: TranscriptPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const [searchFilter, setSearchFilter] = useState("")
+
   const activeIndex = useMemo(() => {
     return segments.findIndex((s) => s.t_start <= currentTime && s.t_end > currentTime)
   }, [segments, currentTime])
 
   // Auto-scroll to active segment
   useEffect(() => {
-    if (activeIndex >= 0 && containerRef.current) {
+    if (activeIndex >= 0 && containerRef.current && !searchFilter) {
       const element = containerRef.current.querySelector(`[data-segment-index="${activeIndex}"]`)
-      if (element) {
+      if (element && typeof element.scrollIntoView === "function") {
         element.scrollIntoView({ behavior: "smooth", block: "center" })
       }
     }
-  }, [activeIndex])
+  }, [activeIndex, searchFilter])
 
   const getNotesForSegment = (index: number) => {
     return notes.filter((n) => n.type === "transcript" && n.segmentIndex === index)
   }
 
+  const filteredSegments = useMemo(() => {
+    if (!searchFilter.trim()) {
+      return segments.map((segment, originalIndex) => ({ segment, originalIndex }))
+    }
+    const query = searchFilter.toLowerCase()
+    return segments
+      .map((segment, originalIndex) => ({ segment, originalIndex }))
+      .filter(({ segment }) => segment.text.toLowerCase().includes(query))
+  }, [segments, searchFilter])
+
   return (
-    <div className="flex-1 flex flex-col min-h-0">
-      <div className="flex items-center justify-between p-3 border-b border-neutral-200 dark:border-neutral-700">
-        <h3 className="font-medium text-neutral-950 dark:text-neutral-50 flex items-center gap-2">
-          <FileText className="h-5 w-5 text-accent-500" />
-          Trascrizione ({segments.length})
-        </h3>
-        <span className="text-xs text-neutral-500 dark:text-neutral-400">
-          {activeIndex >= 0 ? `Segmento ${activeIndex + 1}` : "—"}
-        </span>
+    <div className="flex-1 flex flex-col min-h-0 bg-neutral-50/50 dark:bg-neutral-900/30">
+      {/* Header and Search */}
+      <div className="p-3 border-b border-neutral-200 dark:border-neutral-800 space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-neutral-900 dark:text-neutral-100 flex items-center gap-2 text-sm">
+            <FileText className="h-4 w-4 text-accent-500" />
+            Trascrizione Whisper ({segments.length})
+          </h3>
+          <span className="text-xs font-mono text-neutral-500 dark:text-neutral-400">
+            {activeIndex >= 0 ? `Segm. ${activeIndex + 1}` : "—"}
+          </span>
+        </div>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400" />
+          <Input
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+            placeholder="Cerca nella trascrizione..."
+            className="pl-8 pr-8 h-8 text-xs bg-white dark:bg-neutral-950"
+          />
+          {searchFilter && (
+            <button
+              type="button"
+              onClick={() => setSearchFilter("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Segments List */}
       <ScrollArea className="flex-1">
         <div ref={containerRef} className="p-3 space-y-2">
-          {segments.length === 0 ? (
-            <p className="text-neutral-500 dark:text-neutral-400 text-center py-8">
-              Nessuna trascrizione disponibile
+          {filteredSegments.length === 0 ? (
+            <p className="text-neutral-500 dark:text-neutral-400 text-center py-8 text-sm">
+              {searchFilter ? "Nessun segmento trovato per la ricerca" : "Nessuna trascrizione disponibile"}
             </p>
           ) : (
-            segments.map((segment, index) => {
-              const isActive = index === activeIndex
-              const segmentNotes = getNotesForSegment(index)
+            filteredSegments.map(({ segment, originalIndex }) => {
+              const isActive = originalIndex === activeIndex
+              const segmentNotes = getNotesForSegment(originalIndex)
+
               return (
                 <div
-                  key={index}
-                  data-segment-index={index}
-                  className={cn(
-                    "relative group cursor-pointer transition-all duration-150 rounded-lg p-3",
-                    isActive
-                      ? "bg-accent-50 dark:bg-accent-900/20 border border-accent-200 dark:border-accent-800 shadow-sm"
-                      : "bg-transparent hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
-                  )}
-                  onClick={() => onSegmentClick(index)}
-                  onDoubleClick={() => onAddNote(index, segment.t_start)}
+                  key={originalIndex}
+                  data-segment-index={originalIndex}
+                  onClick={() => onSegmentClick(originalIndex)}
+                  onDoubleClick={() => onAddNote(originalIndex, segment.t_start)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault()
-                      onSegmentClick(index)
+                      onSegmentClick(originalIndex)
                     }
                   }}
+                  className={cn(
+                    "relative group cursor-pointer transition-all duration-150 rounded-lg p-2.5 border text-left",
+                    isActive
+                      ? "bg-accent-500/10 dark:bg-accent-500/15 border-accent-500 shadow-sm"
+                      : "bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-850"
+                  )}
                 >
-                  <div className="flex items-start gap-3">
-                    <div className="flex-shrink-0 w-20 text-right text-xs text-neutral-400 dark:text-neutral-500 font-mono">
+                  <div className="flex items-start gap-2.5">
+                    <span
+                      className={cn(
+                        "flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded",
+                        isActive
+                          ? "bg-accent-500 text-white font-semibold"
+                          : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 group-hover:text-accent-500"
+                      )}
+                    >
                       {formatTime(segment.t_start)}
-                    </div>
+                    </span>
                     <div className="flex-1 min-w-0">
-                      <p className={cn(
-                        "text-sm leading-relaxed break-words",
-                        isActive ? "text-neutral-950 dark:text-neutral-50 font-medium" : "text-neutral-700 dark:text-neutral-300"
-                      )}>
+                      <p
+                        className={cn(
+                          "text-xs leading-relaxed break-words",
+                          isActive
+                            ? "text-neutral-950 dark:text-neutral-50 font-medium"
+                            : "text-neutral-700 dark:text-neutral-300"
+                        )}
+                      >
                         {segment.text}
                       </p>
-                      {/* Notes for this segment */}
+                      {/* Notes attached to this segment */}
                       {segmentNotes.length > 0 && (
-                        <div className="mt-2 space-y-1">
+                        <div className="mt-1.5 space-y-1">
                           {segmentNotes.map((note) => (
                             <div
                               key={note.id}
-                              className="text-xs bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded p-1.5 text-yellow-800 dark:text-yellow-200"
+                              className="text-xs bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded p-1 text-amber-900 dark:text-amber-200"
                             >
                               📝 {note.text}
                             </div>
                           ))}
                         </div>
                       )}
-                      {/* Add note hint */}
-                      <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        Doppio click per aggiungere nota
-                      </p>
                     </div>
-                    {isActive && (
-                      <div className="flex-shrink-0 w-2 h-full bg-accent-500 rounded-r-lg" />
-                    )}
                   </div>
                 </div>
               )
@@ -565,7 +1202,7 @@ function TranscriptPanel({
 }
 
 // ============================================
-// Sub-component: Slides Strip
+// Sub-component: Slides Strip (Carousel / Thumbnails)
 // ============================================
 
 interface SlidesStripProps {
@@ -574,19 +1211,15 @@ interface SlidesStripProps {
   onSlideClick: (index: number) => void
   onAddNote: (slideIndex: number, timestamp: number) => void
   notes: PlayerNote[]
-  lectureId: number
 }
 
-function SlidesStrip({
+export function SlidesStrip({
   slides,
   currentTime,
   onSlideClick,
   onAddNote,
   notes,
-  lectureId,
 }: SlidesStripProps) {
-  const [previewSlide, setPreviewSlide] = useState<SlideInfo | null>(null)
-  const previewRectRef = useRef<DOMRect | null>(null)
   const activeSlideIndex = useMemo(() => {
     let idx = -1
     for (let i = 0; i < slides.length; i++) {
@@ -603,146 +1236,225 @@ function SlidesStrip({
     return notes.filter((n) => n.type === "slide" && n.slideIndex === index)
   }
 
-  const handleSlideHover = (slide: SlideInfo, e: React.MouseEvent<HTMLDivElement>) => {
-    setPreviewSlide(slide)
-    previewRectRef.current = e.currentTarget.getBoundingClientRect()
-  }
-
-  const handleSlideLeave = () => {
-    setPreviewSlide(null)
-  }
-
   if (slides.length === 0) return null
 
   return (
-    <>
-      <div className="border-t border-neutral-200 dark:border-neutral-700 p-3">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="font-medium text-neutral-950 dark:text-neutral-50 flex items-center gap-2">
-            <Image className="h-5 w-5 text-accent-500" />
-            Slide ({slides.length})
-          </h3>
-          <span className="text-xs text-neutral-500 dark:text-neutral-400">
-            Slide attiva: {activeSlideIndex >= 0 ? activeSlideIndex + 1 : "—"}
-          </span>
-        </div>
-        <div className="h-28 overflow-x-auto overflow-y-hidden">
-          <div className="flex gap-2 pb-2 w-max" role="list" aria-label="Slide della lezione">
-            {slides.map((slide, index) => {
-              const isActive = index === activeSlideIndex
-              const slideNotes = getNotesForSlide(index)
-              return (
-                <div
-                  key={index}
-                  className={cn(
-                    "relative group flex-shrink-0 cursor-pointer transition-all duration-150 rounded-lg overflow-hidden",
-                    isActive
-                      ? "ring-2 ring-accent-500 shadow-lg"
-                      : "ring-1 ring-neutral-200 dark:ring-neutral-700 hover:ring-accent-300 dark:hover:ring-accent-700"
-                  )}
-                  onClick={() => onSlideClick(index)}
-                  onDoubleClick={() => onAddNote(index, slide.timestamp)}
-                  onMouseEnter={(e) => handleSlideHover(slide, e)}
-                  onMouseLeave={handleSlideLeave}
-                  role="listitem"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault()
-                      onSlideClick(index)
-                    }
-                  }}
-                  aria-label={`Slide ${index + 1}, ${formatTime(slide.timestamp)}`}
-                  aria-current={isActive ? "true" : "false"}
-                >
-                  <img
-                    src={slide.thumbnailUrl}
-                    alt={`Slide ${index + 1}`}
-                    className="w-24 h-auto object-cover"
-                    loading="lazy"
-                  />
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-1.5 text-xs text-white">
-                    {formatTime(slide.timestamp)}
-                  </div>
-                  {isActive && (
-                    <div className="absolute inset-0 bg-accent-500/10 pointer-events-none" />
-                  )}
-                  {slideNotes.length > 0 && (
-                    <div className="absolute top-1 right-1 bg-yellow-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                      {slideNotes.length}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-        {activeSlideIndex >= 0 && getNotesForSlide(activeSlideIndex).length > 0 && (
-          <div className="mt-2 space-y-1">
-            {getNotesForSlide(activeSlideIndex).map((note) => (
-              <div
-                key={note.id}
-                className="text-xs bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded p-1.5 text-yellow-800 dark:text-yellow-200"
-              >
-                📝 Slide {note.slideIndex! + 1}: {note.text}
-              </div>
-            ))}
-          </div>
-        )}
+    <div className="border-t border-neutral-200 dark:border-neutral-800 p-3 bg-neutral-100/60 dark:bg-neutral-900/60">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-semibold text-neutral-900 dark:text-neutral-100 flex items-center gap-2 text-xs">
+          <ImageIcon className="h-4 w-4 text-accent-500" />
+          Slide sincronizzate ({slides.length})
+        </h3>
+        <span className="text-xs text-neutral-500 dark:text-neutral-400 font-mono">
+          Attiva: {activeSlideIndex >= 0 ? `${activeSlideIndex + 1}/${slides.length}` : "—"}
+        </span>
       </div>
-
-      {/* Preview Tooltip */}
-      {previewSlide && previewRectRef.current && (
-        <div
-          className="fixed z-50 pointer-events-none"
-          style={{
-            left: previewRectRef.current.left + window.scrollX,
-            top: previewRectRef.current.top + window.scrollY - 200,
-            transform: "translateX(-50%)",
-          }}
-        >
-          <div className="bg-neutral-950 dark:bg-neutral-50 rounded-lg shadow-xl p-2 border border-neutral-200 dark:border-neutral-700 max-w-xs">
-            <img
-              src={previewSlide.url}
-              alt={`Preview Slide ${previewSlide.index + 1}`}
-              className="w-full h-auto rounded-md"
-            />
-            <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1 text-center">
-              Slide {previewSlide.index + 1} · {formatTime(previewSlide.timestamp)}
-            </p>
-          </div>
+      <div className="h-24 overflow-x-auto overflow-y-hidden">
+        <div className="flex gap-2.5 pb-2 w-max" role="list" aria-label="Slide della lezione">
+          {slides.map((slide, index) => {
+            const isActive = index === activeSlideIndex
+            const slideNotes = getNotesForSlide(index)
+            return (
+              <div
+                key={index}
+                onClick={() => onSlideClick(index)}
+                onDoubleClick={() => onAddNote(index, slide.timestamp)}
+                role="listitem"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    onSlideClick(index)
+                  }
+                }}
+                className={cn(
+                  "relative group flex-shrink-0 cursor-pointer rounded-lg overflow-hidden transition-all duration-150 h-20 w-32 border",
+                  isActive
+                    ? "ring-2 ring-accent-500 border-transparent shadow-md scale-[1.02]"
+                    : "border-neutral-300 dark:border-neutral-700 hover:border-accent-400 opacity-80 hover:opacity-100"
+                )}
+                aria-label={`Slide ${index + 1}, ${formatTime(slide.timestamp)}`}
+                aria-current={isActive ? "true" : "false"}
+              >
+                <img
+                  src={slide.thumbnailUrl}
+                  alt={`Slide ${index + 1}`}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-1 text-[10px] text-white font-mono flex justify-between">
+                  <span>#{index + 1}</span>
+                  <span>{formatTime(slide.timestamp)}</span>
+                </div>
+                {slideNotes.length > 0 && (
+                  <div className="absolute top-1 right-1 bg-amber-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {slideNotes.length}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
-      )}
-    </>
+      </div>
+    </div>
   )
 }
 
 // ============================================
-// Main VideoPlayer Component
+// Sub-component: Notes Panel with Timestamp Sync
+// ============================================
+
+interface NotesPanelProps {
+  notes: PlayerNote[]
+  currentTime: number
+  onSeek: (timestamp: number) => void
+  onAddNote: (text: string, timestamp: number) => void
+  onDeleteNote: (id: string) => void
+}
+
+export function NotesPanel({
+  notes,
+  currentTime,
+  onSeek,
+  onAddNote,
+  onDeleteNote,
+}: NotesPanelProps) {
+  const [newNoteText, setNewNoteText] = useState("")
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newNoteText.trim()) return
+    onAddNote(newNoteText.trim(), currentTime)
+    setNewNoteText("")
+  }
+
+  const sortedNotes = useMemo(() => {
+    return [...notes].sort((a, b) => a.timestamp - b.timestamp)
+  }, [notes])
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 bg-neutral-50/50 dark:bg-neutral-900/30">
+      {/* Header and Quick Add Form */}
+      <div className="p-3 border-b border-neutral-200 dark:border-neutral-800 space-y-2">
+        <h3 className="font-semibold text-neutral-900 dark:text-neutral-100 flex items-center gap-2 text-sm">
+          <Bookmark className="h-4 w-4 text-accent-500" />
+          Note e Segnalibri ({notes.length})
+        </h3>
+        <form onSubmit={handleSubmit} className="flex gap-2">
+          <Input
+            value={newNoteText}
+            onChange={(e) => setNewNoteText(e.target.value)}
+            placeholder={`Nota a ${formatTime(currentTime)}...`}
+            className="h-8 text-xs bg-white dark:bg-neutral-950 flex-1"
+          />
+          <Button type="submit" size="sm" className="h-8 px-3 text-xs gap-1">
+            <Plus className="h-3.5 w-3.5" />
+            <span>Salva</span>
+          </Button>
+        </form>
+      </div>
+
+      {/* Notes List */}
+      <ScrollArea className="flex-1">
+        <div className="p-3 space-y-2.5">
+          {sortedNotes.length === 0 ? (
+            <div className="text-center py-8 text-neutral-500 dark:text-neutral-400 text-xs space-y-1">
+              <p>Nessuna nota salvata per questa lezione.</p>
+              <p>Scrivi una nota sopra o fai doppio click su un segmento o slide.</p>
+            </div>
+          ) : (
+            sortedNotes.map((note) => (
+              <div
+                key={note.id}
+                className="p-2.5 rounded-lg bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-sm space-y-1.5"
+              >
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => onSeek(note.timestamp)}
+                    className="flex items-center gap-1.5 text-xs font-mono font-semibold text-accent-600 dark:text-accent-400 hover:underline"
+                    title="Salta a questo momento"
+                  >
+                    <Play className="h-3 w-3 fill-current" />
+                    <span>{formatTime(note.timestamp)}</span>
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-neutral-400">
+                      {note.type === "transcript"
+                        ? "Trascrizione"
+                        : note.type === "slide"
+                        ? `Slide #${(note.slideIndex || 0) + 1}`
+                        : "Video"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteNote(note.id)}
+                      className="text-neutral-400 hover:text-red-500 p-0.5 rounded transition-colors"
+                      title="Elimina nota"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-neutral-800 dark:text-neutral-200 leading-relaxed whitespace-pre-wrap">
+                  {note.text}
+                </p>
+                <p className="text-[10px] text-neutral-400">
+                  {new Date(note.createdAt).toLocaleString("it-IT", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  )
+}
+
+// ============================================
+// Main VideoPlayer Component (Hybrid 3-Source)
 // ============================================
 
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   function VideoPlayer({ lectureId, lectureTitle, onClose, initialTime = 0 }, ref) {
-    // State
+    // Media & Loading State
     const [mediaData, setMediaData] = useState<LectureMediaData | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
 
+    // Player Mode State
+    const [playerMode, setPlayerMode] = useState<PlayerMode>("slides")
+    const [panoptoSrc, setPanoptoSrc] = useState<string>("")
+
+    // Playback State
     const [currentTime, setCurrentTime] = useState(initialTime)
+    const currentTimeRef = useRef(initialTime)
     const [duration, setDuration] = useState(0)
+    const durationRef = useRef(0)
     const [isPlaying, setIsPlaying] = useState(false)
     const [playbackRate, setPlaybackRate] = useState(1)
     const [volume, setVolume] = useState(1)
     const [isMuted, setIsMuted] = useState(false)
     const [skipSilences, setSkipSilences] = useState(false)
-    const [showTranscript, setShowTranscript] = useState(true)
-    const [showSlides, setShowSlides] = useState(true)
+    const [showSubtitles, setShowSubtitles] = useState(true)
+
+    // UI Panel State
+    const [showSidebar, setShowSidebar] = useState(true)
+    const [showSlidesStrip, setShowSlidesStrip] = useState(true)
+    const [activeTab, setActiveTab] = useState<"transcript" | "slides" | "notes">("transcript")
     const [notes, setNotes] = useState<PlayerNote[]>(() => loadNotes(lectureId))
-    const [activePanel, setActivePanel] = useState<"transcript" | "slides" | "notes">("transcript")
     const [slideObjectUrls, setSlideObjectUrls] = useState<Record<string, string>>({})
 
-    // Refs
-    const audioRef = useRef<HTMLAudioElement>(null)
+    // Media Element Refs
+    const videoRef = useRef<HTMLVideoElement | null>(null)
+    const audioRef = useRef<HTMLAudioElement | null>(null)
+    const panoptoIframeRef = useRef<HTMLIFrameElement | null>(null)
+    const videoContainerRef = useRef<HTMLDivElement | null>(null)
     const silenceCheckInterval = useRef<number | null>(null)
     const isSeekingRef = useRef(false)
     const lastSilenceSkipRef = useRef<number>(-1)
@@ -754,16 +1466,19 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       async function loadLectureData() {
         try {
           setIsLoading(true)
-          const data = (await api.getLecture(lectureId)) as Lecture & Partial<LectureMediaData>
+          const data = (await api.getLecture(lectureId)) as Lecture & Partial<LectureMediaData> & {
+            transcript?: { segments: TranscriptSegment[] }
+            silences?: SilenceInterval[]
+          }
 
-          // Build slide list. Prefer backend-provided `slides`; otherwise synthesize
-          // from transcript segments (one slide per segment boundary when slides exist).
+          // Normalize transcript segments
+          const segments: TranscriptSegment[] =
+            data.transcript_segments || data.transcript?.segments || []
+
+          // Build slide list
           let slides: SlideInfo[] | undefined = data.slides
-
-          if (!slides?.length && data.transcript_segments?.length) {
-            // If the backend doesn't give an explicit slide list, derive timestamps
-            // from the start of each transcript segment.
-            slides = data.transcript_segments.map((seg, i) => ({
+          if (!slides?.length && segments.length) {
+            slides = segments.map((seg, i) => ({
               index: i,
               timestamp: seg.t_start,
               url: `/media/${lectureId}/slides/${i + 1}.png`,
@@ -771,19 +1486,79 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             }))
           }
 
+          // Panopto embed URL normalization
+          let panoptoEmbed = data.panopto_embed_url
+          if (!panoptoEmbed && data.panopto_id) {
+            panoptoEmbed = `https://univr.cloud.panopto.eu/Panopto/Pages/Embed.aspx?id=${data.panopto_id}&autoplay=false&offerviewer=true&showtitle=true&showbrand=true&start=0&interactivity=all`
+          } else if (!panoptoEmbed && data.viewer_url && data.viewer_url.includes("id=")) {
+            try {
+              const url = new URL(data.viewer_url)
+              const id = url.searchParams.get("id")
+              if (id) {
+                panoptoEmbed = `https://univr.cloud.panopto.eu/Panopto/Pages/Embed.aspx?id=${id}&autoplay=false&offerviewer=true&showtitle=true&showbrand=true&start=0&interactivity=all`
+              }
+            } catch {}
+          }
+
+          // Video URL normalization
+          let resolvedMediaUrl = data.media_url
+          if (!resolvedMediaUrl && data.video_path) {
+            resolvedMediaUrl = data.video_path.startsWith("/") || data.video_path.startsWith("http")
+              ? data.video_path
+              : `/media/${lectureId}/${data.video_path}`
+          } else if (!resolvedMediaUrl && data.videos && data.videos.length > 0) {
+            resolvedMediaUrl = `/video/${lectureId}/${data.videos[0]}`
+          }
+
           if (!cancelled) {
-            setMediaData({
-              audio_path: data.audio_path,
+            const mediaPayload: LectureMediaData = {
+              audio_path: data.audio_path || `/media/${lectureId}/audio.opus`,
               slides_path: data.slides_path,
-              transcript_segments: data.transcript_segments,
-              silence_intervals: data.silence_intervals,
+              media_url: resolvedMediaUrl,
+              video_path: data.video_path,
+              videos: data.videos,
+              panopto_embed_url: panoptoEmbed,
+              viewer_url: data.viewer_url,
+              panopto_id: data.panopto_id || undefined,
+              transcript_segments: segments,
+              silence_intervals: data.silence_intervals || data.silences || [],
               slides,
-            })
+              video_modes: data.video_modes,
+              default_mode: data.default_mode,
+              has_local_audio: data.has_local_audio ?? Boolean(data.has_audio),
+              has_local_slides: data.has_local_slides ?? Boolean(slides && slides.length > 0),
+            }
+            setMediaData(mediaPayload)
+
+            // Determine default player mode
+            const hasPanopto = Boolean(panoptoEmbed || data.video_modes?.includes("panopto"))
+            const hasVideo = Boolean(resolvedMediaUrl || data.video_modes?.includes("moodle") || data.video_modes?.includes("drive"))
+            const hasSlides = Boolean(slides && slides.length > 0) || Boolean(mediaPayload.has_local_audio)
+
+            let chosenMode: PlayerMode = "slides"
+            if (data.default_mode === "panopto" && hasPanopto) {
+              chosenMode = "panopto"
+            } else if ((data.default_mode === "moodle" || data.default_mode === "drive") && hasVideo) {
+              chosenMode = "video"
+            } else if (data.default_mode === "slides" && hasSlides) {
+              chosenMode = "slides"
+            } else if (hasPanopto) {
+              chosenMode = "panopto"
+            } else if (hasVideo) {
+              chosenMode = "video"
+            } else {
+              chosenMode = "slides"
+            }
+
+            setPlayerMode(chosenMode)
+            if (panoptoEmbed) {
+              setPanoptoSrc(panoptoEmbed)
+            }
             setError(null)
           }
         } catch (err) {
           if (!cancelled) {
-            setError(err instanceof Error ? err.message : "Errore nel caricamento")
+            setError(err instanceof Error ? err.message : "Errore nel caricamento della lezione")
           }
         } finally {
           if (!cancelled) setIsLoading(false)
@@ -796,80 +1571,18 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       }
     }, [lectureId])
 
-    // Initialize audio when media data is ready
-    useEffect(() => {
-      if (!mediaData?.audio_path || audioRef.current) return
-
-      let disposed = false
-      const audio = new Audio()
-      audio.preload = "metadata"
-      audio.crossOrigin = "anonymous"
-      audioRef.current = audio
-
-      // Offline-first: try IndexedDB cache, fall back to network (and cache).
-      const audioUrl = `/media/${lectureId}/audio.opus`
-      fetchWithCache(audioUrl, AUDIO_STORE, `lecture-${lectureId}`)
-        .then((blob) => {
-          if (disposed) return
-          audio.src = URL.createObjectURL(blob)
-        })
-        .catch(() => {
-          if (!disposed) audio.src = audioUrl
-        })
-
-      audio.addEventListener("loadedmetadata", () => {
-        setDuration(audio.duration)
-        if (initialTime > 0) {
-          audio.currentTime = initialTime
-        }
-      })
-
-      audio.addEventListener("timeupdate", () => {
-        if (!isSeekingRef.current) {
-          setCurrentTime(audio.currentTime)
-        }
-      })
-
-      audio.addEventListener("ended", () => {
-        setIsPlaying(false)
-        setCurrentTime(0)
-      })
-
-      audio.addEventListener("play", () => setIsPlaying(true))
-      audio.addEventListener("pause", () => setIsPlaying(false))
-      audio.addEventListener("ratechange", () => setPlaybackRate(audio.playbackRate))
-      audio.addEventListener("volumechange", () => {
-        setVolume(audio.volume)
-        setIsMuted(audio.muted)
-      })
-
-      audio.addEventListener("error", (e) => {
-        console.error("Audio error:", e)
-        setError("Errore nella riproduzione audio")
-      })
-
-      return () => {
-        disposed = true
-        audio.pause()
-        audio.src = ""
-        audioRef.current = null
-      }
-    }, [mediaData?.audio_path, lectureId, initialTime])
-
-    // Offline-first: pre-cache slide blobs in IndexedDB
+    // Pre-cache slides in IndexedDB
     useEffect(() => {
       const slides = mediaData?.slides
       if (!slides?.length) return
 
       slides.forEach((slide, i) => {
         const cacheKey = `lecture-${lectureId}-slide-${i + 1}`
-        fetchWithCache(slide.url, SLIDES_STORE, cacheKey).catch(() => {
-          // Ignore slide cache failures (e.g. missing slide files)
-        })
+        fetchWithCache(slide.url, SLIDES_STORE, cacheKey).catch(() => {})
       })
     }, [mediaData?.slides, lectureId])
 
-    // Resolve slide object URLs from cache (offline-first) so <img> can use them
+    // Resolve cached slides URLs
     useEffect(() => {
       const slides = mediaData?.slides
       if (!slides?.length) return
@@ -891,18 +1604,121 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       }
     }, [mediaData?.slides, lectureId])
 
-const resolvedSlides = useMemo(() => {
-  if (!mediaData?.slides) return []
-  return mediaData.slides.map((s, i) => ({
-    ...s,
-    url: slideObjectUrls[i] || s.url,
-    thumbnailUrl: slideObjectUrls[i] || s.thumbnailUrl,
-  }))
-}, [mediaData?.slides, slideObjectUrls])
+    const resolvedSlides = useMemo(() => {
+      if (!mediaData?.slides) return []
+      return mediaData.slides.map((s, i) => ({
+        ...s,
+        url: slideObjectUrls[i] || s.url,
+        thumbnailUrl: slideObjectUrls[i] || s.thumbnailUrl,
+      }))
+    }, [mediaData?.slides, slideObjectUrls])
 
-    // Silence skipping logic
+    // Initialize Audio Element for Slides mode (Offline-first)
     useEffect(() => {
-      if (!skipSilences || !mediaData?.silence_intervals?.length || !audioRef.current) {
+      if (playerMode !== "slides" || audioRef.current) return
+
+      let disposed = false
+      const audio = new Audio()
+      audio.preload = "metadata"
+      audio.crossOrigin = "anonymous"
+      audioRef.current = audio
+
+      const audioUrl = mediaData?.audio_path || `/media/${lectureId}/audio.opus`
+      fetchWithCache(audioUrl, AUDIO_STORE, `lecture-${lectureId}`)
+        .then((blob) => {
+          if (disposed) return
+          audio.src = URL.createObjectURL(blob)
+        })
+        .catch(() => {
+          if (!disposed) audio.src = audioUrl
+        })
+
+      audio.addEventListener("loadedmetadata", () => {
+        durationRef.current = audio.duration
+        setDuration(audio.duration)
+        if (initialTime > 0) {
+          currentTimeRef.current = initialTime
+          audio.currentTime = initialTime
+        }
+      })
+      audio.addEventListener("timeupdate", () => {
+        if (!isSeekingRef.current) {
+          currentTimeRef.current = audio.currentTime
+          setCurrentTime(audio.currentTime)
+        }
+      })
+      audio.addEventListener("ended", () => {
+        setIsPlaying(false)
+        currentTimeRef.current = 0
+        setCurrentTime(0)
+      })
+      audio.addEventListener("play", () => setIsPlaying(true))
+      audio.addEventListener("pause", () => setIsPlaying(false))
+      audio.addEventListener("ratechange", () => setPlaybackRate(audio.playbackRate))
+      audio.addEventListener("volumechange", () => {
+        setVolume(audio.volume)
+        setIsMuted(audio.muted)
+      })
+
+      return () => {
+        disposed = true
+        audio.pause()
+        audio.src = ""
+        audioRef.current = null
+      }
+    }, [playerMode, mediaData?.audio_path, lectureId, initialTime])
+
+    // Initialize Video Element listeners when in video mode
+    useEffect(() => {
+      const video = videoRef.current
+      if (playerMode !== "video" || !video) return
+
+      const onLoaded = () => {
+        durationRef.current = video.duration
+        setDuration(video.duration)
+        if (currentTimeRef.current > 0) video.currentTime = currentTimeRef.current
+      }
+      const onTime = () => {
+        if (!isSeekingRef.current) {
+          currentTimeRef.current = video.currentTime
+          setCurrentTime(video.currentTime)
+        }
+      }
+      const onPlay = () => setIsPlaying(true)
+      const onPause = () => setIsPlaying(false)
+      const onEnded = () => {
+        setIsPlaying(false)
+        currentTimeRef.current = 0
+        setCurrentTime(0)
+      }
+      const onRate = () => setPlaybackRate(video.playbackRate)
+      const onVol = () => {
+        setVolume(video.volume)
+        setIsMuted(video.muted)
+      }
+
+      video.addEventListener("loadedmetadata", onLoaded)
+      video.addEventListener("timeupdate", onTime)
+      video.addEventListener("play", onPlay)
+      video.addEventListener("pause", onPause)
+      video.addEventListener("ended", onEnded)
+      video.addEventListener("ratechange", onRate)
+      video.addEventListener("volumechange", onVol)
+
+      return () => {
+        video.removeEventListener("loadedmetadata", onLoaded)
+        video.removeEventListener("timeupdate", onTime)
+        video.removeEventListener("play", onPlay)
+        video.removeEventListener("pause", onPause)
+        video.removeEventListener("ended", onEnded)
+        video.removeEventListener("ratechange", onRate)
+        video.removeEventListener("volumechange", onVol)
+      }
+    }, [playerMode, currentTime])
+
+    // Silence Skipping Engine
+    useEffect(() => {
+      if (!skipSilences || !mediaData?.silence_intervals?.length) {
         if (silenceCheckInterval.current) {
           clearInterval(silenceCheckInterval.current)
           silenceCheckInterval.current = null
@@ -911,16 +1727,16 @@ const resolvedSlides = useMemo(() => {
       }
 
       const checkSilences = () => {
-        const audio = audioRef.current
-        if (!audio || !isPlaying) return
+        const activeMedia = playerMode === "video" ? videoRef.current : audioRef.current
+        if (!activeMedia || !isPlaying) return
 
         const silence = mediaData.silence_intervals!.find(
-          (s) => s.start <= audio.currentTime && s.end > audio.currentTime
+          (s) => s.start <= activeMedia.currentTime && s.end > activeMedia.currentTime
         )
 
         if (silence && silence.start !== lastSilenceSkipRef.current) {
           lastSilenceSkipRef.current = silence.start
-          audio.currentTime = silence.end
+          activeMedia.currentTime = silence.end
         }
       }
 
@@ -931,78 +1747,183 @@ const resolvedSlides = useMemo(() => {
           silenceCheckInterval.current = null
         }
       }
-    }, [skipSilences, mediaData?.silence_intervals, isPlaying, currentTime])
+    }, [skipSilences, mediaData?.silence_intervals, isPlaying, playerMode])
 
-    // Sync audio properties
+    // Playback rate sync
     useEffect(() => {
-      const audio = audioRef.current
-      if (!audio) return
-      if (audio.playbackRate !== playbackRate) audio.playbackRate = playbackRate
-    }, [playbackRate])
+      if (playerMode === "video" && videoRef.current) {
+        if (videoRef.current.playbackRate !== playbackRate) {
+          videoRef.current.playbackRate = playbackRate
+        }
+      } else if (playerMode === "slides" && audioRef.current) {
+        if (audioRef.current.playbackRate !== playbackRate) {
+          audioRef.current.playbackRate = playbackRate
+        }
+      }
+    }, [playbackRate, playerMode])
 
+    // Volume & Mute sync
     useEffect(() => {
-      const audio = audioRef.current
-      if (!audio) return
-      if (audio.volume !== volume) audio.volume = volume
-    }, [volume])
+      const media = playerMode === "video" ? videoRef.current : audioRef.current
+      if (media) {
+        if (media.volume !== volume) media.volume = volume
+        if (media.muted !== isMuted) media.muted = isMuted
+      }
+    }, [volume, isMuted, playerMode])
 
-    useEffect(() => {
-      const audio = audioRef.current
-      if (!audio) return
-      if (audio.muted !== isMuted) audio.muted = isMuted
-    }, [isMuted])
+    // Seeking Logic across all 3 modes
+    const seekPanopto = useCallback((time: number) => {
+      // 1. Send postMessage to iframe
+      if (panoptoIframeRef.current?.contentWindow) {
+        try {
+          panoptoIframeRef.current.contentWindow.postMessage({ message: "seekTo", value: time }, "*")
+          panoptoIframeRef.current.contentWindow.postMessage({ action: "seek", time }, "*")
+          panoptoIframeRef.current.contentWindow.postMessage(JSON.stringify({ action: "seek", time }), "*")
+        } catch {}
+      }
 
-    // Keyboard shortcuts
+      // 2. Update iframe start parameter
+      setPanoptoSrc((prev) => {
+        if (!prev) return prev
+        try {
+          let newUrl = prev
+          if (/([?&])start=\d+/.test(newUrl)) {
+            newUrl = newUrl.replace(/([?&])start=\d+/, `$1start=${Math.floor(time)}`)
+          } else {
+            newUrl += (newUrl.includes("?") ? "&" : "?") + `start=${Math.floor(time)}`
+          }
+          if (newUrl.includes("autoplay=false")) {
+            newUrl = newUrl.replace("autoplay=false", "autoplay=true")
+          }
+          return newUrl
+        } catch {
+          return prev
+        }
+      })
+    }, [])
+
+    const handleSeek = useCallback(
+      (time: number) => {
+        const currentDur = durationRef.current || duration
+        const bounded = Math.max(0, currentDur > 0 ? Math.min(currentDur, time) : time)
+        currentTimeRef.current = bounded
+        setCurrentTime(bounded)
+
+        if (playerMode === "video" && videoRef.current) {
+          isSeekingRef.current = true
+          videoRef.current.currentTime = bounded
+          setTimeout(() => {
+            isSeekingRef.current = false
+          }, 100)
+        } else if (playerMode === "slides" && audioRef.current) {
+          isSeekingRef.current = true
+          audioRef.current.currentTime = bounded
+          setTimeout(() => {
+            isSeekingRef.current = false
+          }, 100)
+        } else if (playerMode === "panopto") {
+          seekPanopto(bounded)
+        }
+      },
+      [playerMode, duration, seekPanopto]
+    )
+
+    // Mode Switching
+    const handleModeChange = useCallback(
+      (newMode: PlayerMode) => {
+        if (newMode === playerMode) return
+
+        // Pause existing media
+        if (videoRef.current && !videoRef.current.paused) {
+          videoRef.current.pause()
+        }
+        if (audioRef.current && !audioRef.current.paused) {
+          audioRef.current.pause()
+        }
+        setIsPlaying(false)
+
+        setPlayerMode(newMode)
+
+        // Transfer current position
+        if (newMode === "panopto") {
+          seekPanopto(currentTime)
+        } else if (newMode === "video" && videoRef.current) {
+          videoRef.current.currentTime = currentTime
+        } else if (newMode === "slides" && audioRef.current) {
+          audioRef.current.currentTime = currentTime
+        }
+      },
+      [playerMode, currentTime, seekPanopto]
+    )
+
+    // Play/Pause toggle
+    const handlePlayPause = useCallback(() => {
+      if (playerMode === "video" && videoRef.current) {
+        if (videoRef.current.paused) {
+          videoRef.current.play().catch(() => {})
+        } else {
+          videoRef.current.pause()
+        }
+      } else if (playerMode === "slides" && audioRef.current) {
+        if (audioRef.current.paused) {
+          audioRef.current.play().catch(() => {})
+        } else {
+          audioRef.current.pause()
+        }
+      }
+    }, [playerMode])
+
+    // Keyboard Shortcuts
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-        // Ignore if typing in input
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-
-        const audio = audioRef.current
-        if (!audio) return
 
         switch (e.key) {
           case " ":
             e.preventDefault()
-            audio.paused ? audio.play().catch(() => {}) : audio.pause()
+            handlePlayPause()
             break
           case "ArrowLeft":
             e.preventDefault()
-            audio.currentTime = Math.max(0, audio.currentTime - (e.shiftKey ? 30 : 5))
+            handleSeek(Math.max(0, currentTime - (e.shiftKey ? 30 : 5)))
             break
           case "ArrowRight":
             e.preventDefault()
-            audio.currentTime = Math.min(audio.duration, audio.currentTime + (e.shiftKey ? 30 : 5))
+            handleSeek(duration > 0 ? Math.min(duration, currentTime + (e.shiftKey ? 30 : 5)) : currentTime + 5)
             break
           case "[":
             e.preventDefault()
-            audio.playbackRate = Math.max(0.5, audio.playbackRate - 0.25)
+            setPlaybackRate((r) => Math.max(0.5, r - 0.25))
             break
           case "]":
             e.preventDefault()
-            audio.playbackRate = Math.min(3, audio.playbackRate + 0.25)
+            setPlaybackRate((r) => Math.min(3, r + 0.25))
             break
           case "m":
           case "M":
             e.preventDefault()
-            audio.muted = !audio.muted
+            setIsMuted((prev) => !prev)
             break
           case "f":
           case "F":
             e.preventDefault()
-            requestAudioPip(audio)
+            if (playerMode === "video") {
+              requestMediaPip(videoRef.current)
+            } else if (playerMode === "slides") {
+              requestMediaPip(audioRef.current)
+            }
             break
         }
       }
 
       window.addEventListener("keydown", handleKeyDown)
       return () => window.removeEventListener("keydown", handleKeyDown)
-    }, [])
+    }, [handlePlayPause, handleSeek, currentTime, duration, playerMode])
 
-    // Note handling
+    // Notes Handlers
     const addNote = useCallback(
-      (timestamp: number, type: "transcript" | "slide", segmentIndex?: number, slideIndex?: number) => {
-        const text = prompt("Aggiungi nota:")
+      (timestamp: number, type: "transcript" | "slide" | "video" | "general" = "general", segmentIndex?: number, slideIndex?: number, initialText?: string) => {
+        const text = initialText !== undefined ? initialText : prompt("Aggiungi nota:")
         if (!text?.trim()) return
 
         const newNote: PlayerNote = {
@@ -1023,102 +1944,108 @@ const resolvedSlides = useMemo(() => {
       [lectureId, notes]
     )
 
-    // Handlers
-    const handlePlayPause = useCallback(() => {
-      const audio = audioRef.current
-      if (!audio) return
-      audio.paused ? audio.play().catch(() => {}) : audio.pause()
-    }, [])
+    const deleteNote = useCallback(
+      (id: string) => {
+        const updated = notes.filter((n) => n.id !== id)
+        setNotes(updated)
+        saveNotes(lectureId, updated)
+      },
+      [lectureId, notes]
+    )
 
-    const handleSeek = useCallback((time: number) => {
-      const audio = audioRef.current
-      if (!audio) return
-      isSeekingRef.current = true
-      audio.currentTime = Math.max(0, Math.min(audio.duration, time))
-      setCurrentTime(audio.currentTime)
-      // Reset seeking flag after a tick
-      requestAnimationFrame(() => {
-        isSeekingRef.current = false
-      })
-    }, [])
+    // Segment & Slide click handlers
+    const handleSegmentClick = useCallback(
+      (index: number) => {
+        const segment = mediaData?.transcript_segments?.[index]
+        if (segment) {
+          handleSeek(segment.t_start)
+        }
+      },
+      [mediaData?.transcript_segments, handleSeek]
+    )
 
-    const handleSeekBackward = useCallback((seconds: number) => {
-      const audio = audioRef.current
-      if (!audio) return
-      audio.currentTime = Math.max(0, audio.currentTime - seconds)
-    }, [])
+    const handleSlideClick = useCallback(
+      (index: number) => {
+        const slide = resolvedSlides[index]
+        if (slide) {
+          handleSeek(slide.timestamp)
+        }
+      },
+      [resolvedSlides, handleSeek]
+    )
 
-    const handleSeekForward = useCallback((seconds: number) => {
-      const audio = audioRef.current
-      if (!audio) return
-      audio.currentTime = Math.min(audio.duration, audio.currentTime + seconds)
-    }, [])
+    // Slide navigation index
+    const activeSlideIndex = useMemo(() => {
+      let idx = -1
+      for (let i = 0; i < resolvedSlides.length; i++) {
+        if (resolvedSlides[i].timestamp <= currentTime) {
+          idx = i
+        } else {
+          break
+        }
+      }
+      return idx
+    }, [resolvedSlides, currentTime])
 
-    const handleRateChange = useCallback((rate: number) => {
-      const audio = audioRef.current
-      if (!audio) return
-      audio.playbackRate = Math.max(0.5, Math.min(3, rate))
-    }, [])
+    // Active transcript subtitle text
+    const activeTranscriptText = useMemo(() => {
+      const seg = mediaData?.transcript_segments?.find(
+        (s) => s.t_start <= currentTime && s.t_end > currentTime
+      )
+      return seg?.text
+    }, [mediaData?.transcript_segments, currentTime])
 
-    const handleVolumeChange = useCallback((vol: number) => {
-      const audio = audioRef.current
-      if (!audio) return
-      audio.volume = Math.max(0, Math.min(1, vol))
-      if (vol > 0) audio.muted = false
-    }, [])
-
-    const handleMuteToggle = useCallback(() => {
-      const audio = audioRef.current
-      if (!audio) return
-      audio.muted = !audio.muted
-    }, [])
-
-    const handleSkipSilencesToggle = useCallback(() => {
-      setSkipSilences((prev) => !prev)
-      lastSilenceSkipRef.current = -1
-    }, [])
-
-    const handleSegmentClick = useCallback((index: number) => {
-      const segment = mediaData?.transcript_segments?.[index]
-      if (segment) handleSeek(segment.t_start)
-    }, [mediaData?.transcript_segments, handleSeek])
-
-    const handleSlideClick = useCallback((index: number) => {
-      const slide = mediaData?.slides?.[index]
-      if (slide) handleSeek(slide.timestamp)
-    }, [mediaData?.slides, handleSeek])
-
-    const handleTranscriptNote = useCallback((segmentIndex: number) => {
-      const segment = mediaData?.transcript_segments?.[segmentIndex]
-      if (segment) addNote(segment.t_start, "transcript", segmentIndex)
-    }, [mediaData?.transcript_segments, addNote])
-
-    const handleSlideNote = useCallback((slideIndex: number) => {
-      const slide = mediaData?.slides?.[slideIndex]
-      if (slide) addNote(slide.timestamp, "slide", undefined, slideIndex)
-    }, [mediaData?.slides, addNote])
-
-    // Imperative handle for ref
+    // Imperative handle
     useImperativeHandle(ref, () => ({
       play: () => {
-        audioRef.current?.play().catch(() => {})
+        if (playerMode === "video") videoRef.current?.play().catch(() => {})
+        else if (playerMode === "slides") audioRef.current?.play().catch(() => {})
       },
       pause: () => {
-        audioRef.current?.pause()
+        if (playerMode === "video") videoRef.current?.pause()
+        else if (playerMode === "slides") audioRef.current?.pause()
       },
       seek: handleSeek,
-      setRate: handleRateChange,
-      getCurrentTime: () => currentTime,
-      getDuration: () => duration,
+      setRate: (rate: number) => setPlaybackRate(rate),
+      getCurrentTime: () => currentTimeRef.current,
+      getDuration: () => durationRef.current || duration,
+      setMode: (mode: PlayerMode) => handleModeChange(mode),
     }))
 
-    // Render
+    // Source Availability checks
+    const isPanoptoAvailable = Boolean(
+      mediaData?.panopto_embed_url ||
+      mediaData?.panopto_id ||
+      (mediaData?.viewer_url && mediaData.viewer_url.toLowerCase().includes("panopto")) ||
+      mediaData?.video_modes?.includes("panopto")
+    )
+
+    const isVideoAvailable = Boolean(
+      mediaData?.media_url ||
+      mediaData?.video_path ||
+      (mediaData?.videos && mediaData.videos.length > 0) ||
+      mediaData?.video_modes?.includes("moodle") ||
+      mediaData?.video_modes?.includes("drive")
+    )
+
+    const isSlidesAvailable = Boolean(
+      mediaData?.has_local_audio ||
+      mediaData?.audio_path ||
+      mediaData?.has_local_slides ||
+      (resolvedSlides && resolvedSlides.length > 0) ||
+      mediaData?.video_modes?.includes("slides") ||
+      (!isPanoptoAvailable && !isVideoAvailable)
+    )
+
+    // Render loading & error
     if (isLoading) {
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/80 backdrop-blur-sm">
-          <div className="bg-neutral-50 dark:bg-neutral-900 rounded-xl p-8 flex flex-col items-center gap-4 min-w-[300px]">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl p-8 flex flex-col items-center gap-4 min-w-[320px] shadow-2xl border border-neutral-200 dark:border-neutral-800">
             <div className="w-10 h-10 border-3 border-accent-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-neutral-600 dark:text-neutral-300">Caricamento lezione...</p>
+            <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+              Caricamento player multimodale...
+            </p>
           </div>
         </div>
       )
@@ -1127,10 +2054,10 @@ const resolvedSlides = useMemo(() => {
     if (error) {
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/80 backdrop-blur-sm">
-          <div className="bg-neutral-50 dark:bg-neutral-900 rounded-xl p-8 max-w-md mx-4 text-center">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl p-8 max-w-md mx-4 text-center shadow-2xl border border-neutral-200 dark:border-neutral-800">
             <X className="h-12 w-12 text-error-500 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-neutral-950 dark:text-neutral-50 mb-2">Errore</h3>
-            <p className="text-neutral-600 dark:text-neutral-300 mb-6">{error}</p>
+            <h3 className="text-lg font-semibold text-neutral-950 dark:text-neutral-50 mb-2">Errore caricamento</h3>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300 mb-6">{error}</p>
             <Button onClick={onClose}>Chiudi</Button>
           </div>
         </div>
@@ -1139,256 +2066,349 @@ const resolvedSlides = useMemo(() => {
 
     return (
       <div
-        className="fixed inset-0 z-50 flex flex-col bg-neutral-50 dark:bg-neutral-950"
+        className="fixed inset-0 z-50 flex flex-col bg-neutral-950 text-neutral-100 select-none"
         role="dialog"
         aria-modal="true"
         aria-labelledby="player-title"
       >
-        {/* Header */}
-        <header className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/80 dark:bg-neutral-950/80 backdrop-blur-sm sticky top-0 z-10">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Chiudi player">
+        {/* Header Bar */}
+        <header className="flex items-center justify-between px-4 py-3 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-md sticky top-0 z-20">
+          {/* Left: Close & Title */}
+          <div className="flex items-center gap-3 min-w-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              aria-label="Chiudi player"
+              className="text-neutral-400 hover:text-white hover:bg-neutral-800"
+            >
               <X className="h-5 w-5" />
             </Button>
-            <div>
-              <h2 id="player-title" className="font-semibold text-neutral-950 dark:text-neutral-50 truncate max-w-md">
+            <div className="min-w-0">
+              <h2 id="player-title" className="font-semibold text-neutral-100 text-sm sm:text-base truncate max-w-xs sm:max-w-md md:max-w-lg">
                 {lectureTitle}
               </h2>
-              <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                {mediaData?.transcript_segments?.length || 0} segmenti ·{" "}
-                {mediaData?.slides?.length || 0} slide ·{" "}
-                {mediaData?.silence_intervals?.length || 0} intervalli silenzio
-              </p>
+              <div className="flex items-center gap-2 text-xs text-neutral-400 font-mono">
+                <span>{mediaData?.transcript_segments?.length || 0} segmenti Whisper</span>
+                <span>·</span>
+                <span>{resolvedSlides.length} slide</span>
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowTranscript(!showTranscript)}
-              aria-label={showTranscript ? "Nascondi trascrizione" : "Mostra trascrizione"}
-              aria-pressed={showTranscript}
-              className={cn(showTranscript && "text-accent-500")}
+
+          {/* Right: Pill Mode Selector & Toolbars */}
+          <div className="flex items-center gap-3">
+            {/* Elegant Mode Switcher Pill */}
+            <div
+              className="flex items-center p-1 bg-neutral-900 rounded-full border border-neutral-800 shadow-inner"
+              role="tablist"
+              aria-label="Modalità di riproduzione"
             >
-              <FileText className="h-5 w-5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowSlides(!showSlides)}
-              aria-label={showSlides ? "Nascondi slide" : "Mostra slide"}
-              aria-pressed={showSlides}
-              className={cn(showSlides && "text-accent-500")}
-            >
-              <Image className="h-5 w-5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => requestAudioPip(audioRef.current)}
-              aria-label="Picture in Picture"
-              disabled={!document.pictureInPictureEnabled}
-            >
-              <Maximize2 className="h-5 w-5" />
-            </Button>
+              {isPanoptoAvailable && (
+                <button
+                  type="button"
+                  onClick={() => handleModeChange("panopto")}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full transition-all duration-200",
+                    playerMode === "panopto"
+                      ? "bg-accent-500 text-white shadow-md scale-[1.02]"
+                      : "text-neutral-400 hover:text-neutral-200"
+                  )}
+                  aria-label="Modalità Panopto"
+                  aria-selected={playerMode === "panopto"}
+                  role="tab"
+                >
+                  <Video className="h-3.5 w-3.5" />
+                  <span>Panopto</span>
+                </button>
+              )}
+              {isVideoAvailable && (
+                <button
+                  type="button"
+                  onClick={() => handleModeChange("video")}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full transition-all duration-200",
+                    playerMode === "video"
+                      ? "bg-accent-500 text-white shadow-md scale-[1.02]"
+                      : "text-neutral-400 hover:text-neutral-200"
+                  )}
+                  aria-label="Modalità Video MP4"
+                  aria-selected={playerMode === "video"}
+                  role="tab"
+                >
+                  <Film className="h-3.5 w-3.5" />
+                  <span>Video MP4</span>
+                </button>
+              )}
+              {isSlidesAvailable && (
+                <button
+                  type="button"
+                  onClick={() => handleModeChange("slides")}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full transition-all duration-200",
+                    playerMode === "slides"
+                      ? "bg-accent-500 text-white shadow-md scale-[1.02]"
+                      : "text-neutral-400 hover:text-neutral-200"
+                  )}
+                  aria-label="Modalità Slide & Audio"
+                  aria-selected={playerMode === "slides"}
+                  role="tab"
+                >
+                  <Presentation className="h-3.5 w-3.5" />
+                  <span>Slide & Audio</span>
+                </button>
+              )}
+            </div>
+
+            {/* Sidebar toggle buttons */}
+            <div className="flex items-center gap-1 border-l border-neutral-800 pl-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowSidebar(!showSidebar)}
+                aria-label={showSidebar ? "Nascondi pannello laterale" : "Mostra pannello laterale"}
+                aria-pressed={showSidebar}
+                className={cn("h-8 w-8 text-neutral-400 hover:text-white", showSidebar && "text-accent-400 bg-accent-500/10")}
+                title="Pannello laterale (Trascrizione / Note)"
+              >
+                <FileText className="h-4 w-4" />
+              </Button>
+              {resolvedSlides.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowSlidesStrip(!showSlidesStrip)}
+                  aria-label={showSlidesStrip ? "Nascondi barra slide" : "Mostra barra slide"}
+                  aria-pressed={showSlidesStrip}
+                  className={cn("h-8 w-8 text-neutral-400 hover:text-white", showSlidesStrip && "text-accent-400 bg-accent-500/10")}
+                  title="Barra miniature slide"
+                >
+                  <ImageIcon className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           </div>
         </header>
 
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Audio Player (always visible at top on mobile, left on desktop) */}
-          <div className="w-full p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50">
-            <AudioPlayer
-              audioRef={audioRef}
-              currentTime={currentTime}
-              duration={duration}
-              playbackRate={playbackRate}
-              volume={volume}
-              isMuted={isMuted}
-              isPlaying={isPlaying}
-              silenceIntervals={mediaData?.silence_intervals || []}
-              skipSilences={skipSilences}
-              onPlayPause={handlePlayPause}
-              onSeek={handleSeek}
-              onRateChange={handleRateChange}
-              onVolumeChange={handleVolumeChange}
-              onMuteToggle={handleMuteToggle}
-              onSkipSilencesToggle={handleSkipSilencesToggle}
-              onSeekBackward={handleSeekBackward}
-              onSeekForward={handleSeekForward}
-            />
-          </div>
+        {/* Main Stage & Panels Layout */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Main Media Player Stage */}
+          <div className="flex-1 flex flex-col p-4 overflow-y-auto">
+            <div className="flex-1 flex flex-col justify-center min-h-0">
+              {playerMode === "panopto" && (
+                <PanoptoPlayer
+                  embedUrl={panoptoSrc || mediaData?.panopto_embed_url || ""}
+                  viewerUrl={mediaData?.viewer_url}
+                  lectureTitle={lectureTitle}
+                  currentTime={currentTime}
+                  duration={duration}
+                  onSeek={handleSeek}
+                  onAddNote={(t) => addNote(t, "video")}
+                  iframeRef={panoptoIframeRef}
+                />
+              )}
 
-          {/* Panels */}
-          <div className="flex-1 flex overflow-hidden">
-            {/* Left: Transcript / Slides */}
-            <div className={cn(
-              "flex-1 flex flex-col overflow-hidden transition-all duration-300",
-              showTranscript || showSlides ? "lg:w-2/3" : "lg:w-full"
-            )}>
-              <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Panel Tabs */}
-                <div className="flex border-b border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-900/50">
-                  {showTranscript && (
-                    <Button
-                      variant={activePanel === "transcript" ? "default" : "ghost"}
-                      size="sm"
-                      className="rounded-none border-0 border-b-2 border-transparent data-[state=on]:border-accent-500"
-                      onClick={() => setActivePanel("transcript")}
-                    >
-                      <FileText className="h-4 w-4 mr-1" />
-                      Trascrizione
-                    </Button>
-                  )}
-                  {showSlides && (
-                    <Button
-                      variant={activePanel === "slides" ? "default" : "ghost"}
-                      size="sm"
-                      className="rounded-none border-0 border-b-2 border-transparent data-[state=on]:border-accent-500"
-                      onClick={() => setActivePanel("slides")}
-                    >
-                      <Image className="h-4 w-4 mr-1" />
-                      Slide
-                    </Button>
-                  )}
-                  <Button
-                    variant={activePanel === "notes" ? "default" : "ghost"}
-                    size="sm"
-                    className="rounded-none border-0 border-b-2 border-transparent data-[state=on]:border-accent-500"
-                    onClick={() => setActivePanel("notes")}
-                  >
-                    <MousePointer className="h-4 w-4 mr-1" />
-                    Note ({notes.length})
-                  </Button>
-                </div>
+              {playerMode === "video" && (
+                <Html5VideoPlayer
+                  videoUrl={mediaData?.media_url || ""}
+                  lectureTitle={lectureTitle}
+                  currentTime={currentTime}
+                  duration={duration}
+                  playbackRate={playbackRate}
+                  volume={volume}
+                  isMuted={isMuted}
+                  isPlaying={isPlaying}
+                  silenceIntervals={mediaData?.silence_intervals || []}
+                  skipSilences={skipSilences}
+                  activeSubtitle={activeTranscriptText}
+                  showSubtitles={showSubtitles}
+                  onToggleSubtitles={() => setShowSubtitles((s) => !s)}
+                  onPlayPause={handlePlayPause}
+                  onSeek={handleSeek}
+                  onRateChange={(r) => setPlaybackRate(r)}
+                  onVolumeChange={(v) => {
+                    setVolume(v)
+                    if (v > 0) setIsMuted(false)
+                  }}
+                  onMuteToggle={() => setIsMuted((m) => !m)}
+                  onSkipSilencesToggle={() => {
+                    setSkipSilences((prev) => !prev)
+                    lastSilenceSkipRef.current = -1
+                  }}
+                  onSeekBackward={(s) => handleSeek(Math.max(0, currentTime - s))}
+                  onSeekForward={(s) => handleSeek(duration > 0 ? Math.min(duration, currentTime + s) : currentTime + s)}
+                  onAddNote={(t) => addNote(t, "video")}
+                  videoRef={videoRef}
+                  containerRef={videoContainerRef}
+                />
+              )}
 
-                {/* Panel Content */}
-                <div className="flex-1 overflow-hidden">
-                  {activePanel === "transcript" && showTranscript && (
-                    <TranscriptPanel
-                      segments={mediaData?.transcript_segments || []}
-                      currentTime={currentTime}
-                      onSegmentClick={handleSegmentClick}
-                      onAddNote={handleTranscriptNote}
-                      notes={notes}
-                    />
-                  )}
-                  {activePanel === "slides" && showSlides && (
-                    <SlidesStrip
-                      slides={resolvedSlides}
-                      currentTime={currentTime}
-                      onSlideClick={handleSlideClick}
-                      onAddNote={handleSlideNote}
-                      notes={notes}
-                      lectureId={lectureId}
-                    />
-                  )}
-                  {activePanel === "notes" && (
-                    <div className="flex-1 flex flex-col p-4 overflow-auto">
-                      <h3 className="font-medium text-neutral-950 dark:text-neutral-50 mb-4 flex items-center gap-2">
-                        <MousePointer className="h-5 w-5 text-accent-500" />
-                        Tutte le note ({notes.length})
-                      </h3>
-                      {notes.length === 0 ? (
-                        <p className="text-neutral-500 dark:text-neutral-400 text-center py-8">
-                          Nessuna nota. Doppio click su un segmento o slide per aggiungere.
-                        </p>
-                      ) : (
-                        <div className="space-y-3">
-                          {notes
-                            .slice()
-                            .sort((a, b) => a.timestamp - b.timestamp)
-                            .map((note) => (
-                              <div
-                                key={note.id}
-                                className="p-3 rounded-lg bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:border-accent-300 dark:hover:border-accent-700 transition-colors"
-                              >
-                                <div className="flex items-start justify-between gap-2 mb-1">
-                                  <span className="text-xs font-mono text-accent-500 bg-accent-50 dark:bg-accent-900/30 px-2 py-0.5 rounded">
-                                    {formatTime(note.timestamp)}
-                                  </span>
-                                  <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                                    {note.type === "transcript" ? "📝 Trascrizione" : "🖼️ Slide"}
-                                  </span>
-                                </div>
-                                <p className="text-sm text-neutral-950 dark:text-neutral-50 mb-2">{note.text}</p>
-                                <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-                                  <span>{new Date(note.createdAt).toLocaleString("it-IT")}</span>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 p-0"
-                                    onClick={() => {
-                                      const updated = notes.filter((n) => n.id !== note.id)
-                                      setNotes(updated)
-                                      saveNotes(lectureId, updated)
-                                    }}
-                                    aria-label="Elimina nota"
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </Button>
-                                </div>
-                              </div>
-                            ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {(!showTranscript && !showSlides && activePanel !== "notes") && (
-                    <div className="flex-1 flex items-center justify-center">
-                      <p className="text-neutral-500 dark:text-neutral-400">
-                        Attiva trascrizione o slide dalla toolbar
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
+              {playerMode === "slides" && (
+                <SlideAudioPlayer
+                  slides={resolvedSlides}
+                  activeSlideIndex={activeSlideIndex}
+                  audioRef={audioRef}
+                  currentTime={currentTime}
+                  duration={duration}
+                  playbackRate={playbackRate}
+                  volume={volume}
+                  isMuted={isMuted}
+                  isPlaying={isPlaying}
+                  silenceIntervals={mediaData?.silence_intervals || []}
+                  skipSilences={skipSilences}
+                  onPlayPause={handlePlayPause}
+                  onSeek={handleSeek}
+                  onRateChange={(r) => setPlaybackRate(r)}
+                  onVolumeChange={(v) => {
+                    setVolume(v)
+                    if (v > 0) setIsMuted(false)
+                  }}
+                  onMuteToggle={() => setIsMuted((m) => !m)}
+                  onSkipSilencesToggle={() => {
+                    setSkipSilences((prev) => !prev)
+                    lastSilenceSkipRef.current = -1
+                  }}
+                  onSeekBackward={(s) => handleSeek(Math.max(0, currentTime - s))}
+                  onSeekForward={(s) => handleSeek(duration > 0 ? Math.min(duration, currentTime + s) : currentTime + s)}
+                  onPrevSlide={() => {
+                    if (activeSlideIndex > 0) {
+                      handleSlideClick(activeSlideIndex - 1)
+                    }
+                  }}
+                  onNextSlide={() => {
+                    if (activeSlideIndex < resolvedSlides.length - 1) {
+                      handleSlideClick(activeSlideIndex + 1)
+                    }
+                  }}
+                  onAddNote={(t, sIdx) => addNote(t, "slide", undefined, sIdx)}
+                />
+              )}
             </div>
 
-            {/* Right: Slide Preview (optional, only on desktop) */}
-            {showSlides && resolvedSlides.length && (
-              <div className="hidden lg:block w-72 border-l border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50">
-                <div className="p-3 border-b border-neutral-200 dark:border-neutral-700">
-                  <h4 className="font-medium text-neutral-950 dark:text-neutral-50 flex items-center gap-2">
-                    <Image className="h-4 w-4 text-accent-500" />
-                    Slide corrente
-                  </h4>
-                </div>
-                <div className="flex-1 flex items-center justify-center p-4">
-                  {(() => {
-                    let idx = -1
-                    for (let i = 0; i < resolvedSlides.length; i++) {
-                      if (resolvedSlides[i].timestamp <= currentTime) {
-                        idx = i
-                      } else {
-                        break
-                      }
-                    }
-                    return idx >= 0 && resolvedSlides[idx] ? (
-                    <img
-                      src={resolvedSlides[idx].url}
-                      alt={`Slide ${idx + 1}`}
-                      className="max-w-full max-h-[400px] rounded-lg shadow-lg"
-                    />
-                    ) : (
-                    <p className="text-neutral-500 dark:text-neutral-400 text-center">Nessuna slide per questo momento</p>
-                    )
-                  })()}
-                </div>
+            {/* Bottom Horizontal Slides Strip (available in all modes when slides exist) */}
+            {showSlidesStrip && resolvedSlides.length > 0 && (
+              <div className="mt-3">
+                <SlidesStrip
+                  slides={resolvedSlides}
+                  currentTime={currentTime}
+                  onSlideClick={handleSlideClick}
+                  onAddNote={(sIdx, t) => addNote(t, "slide", undefined, sIdx)}
+                  notes={notes}
+                />
               </div>
             )}
           </div>
+
+          {/* Right Sidebar: Whisper Transcript & Notes */}
+          {showSidebar && (
+            <aside className="w-80 lg:w-96 border-l border-neutral-800 bg-neutral-900/90 flex flex-col">
+              {/* Tab navigation */}
+              <div className="flex border-b border-neutral-800 bg-neutral-950/60 p-1 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("transcript")}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-colors",
+                    activeTab === "transcript"
+                      ? "bg-neutral-800 text-white shadow-sm"
+                      : "text-neutral-400 hover:text-neutral-200"
+                  )}
+                >
+                  <FileText className="h-3.5 w-3.5 text-accent-500" />
+                  <span>Trascrizione</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("slides")}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-colors",
+                    activeTab === "slides"
+                      ? "bg-neutral-800 text-white shadow-sm"
+                      : "text-neutral-400 hover:text-neutral-200"
+                  )}
+                >
+                  <ImageIcon className="h-3.5 w-3.5 text-accent-500" />
+                  <span>Slide ({resolvedSlides.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("notes")}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-colors",
+                    activeTab === "notes"
+                      ? "bg-neutral-800 text-white shadow-sm"
+                      : "text-neutral-400 hover:text-neutral-200"
+                  )}
+                >
+                  <Bookmark className="h-3.5 w-3.5 text-accent-500" />
+                  <span>Note ({notes.length})</span>
+                </button>
+              </div>
+
+              {/* Tab Contents */}
+              <div className="flex-1 min-h-0 flex flex-col">
+                {activeTab === "transcript" && (
+                  <TranscriptPanel
+                    segments={mediaData?.transcript_segments || []}
+                    currentTime={currentTime}
+                    onSegmentClick={handleSegmentClick}
+                    onAddNote={(segIdx, t) => addNote(t, "transcript", segIdx)}
+                    notes={notes}
+                  />
+                )}
+
+                {activeTab === "slides" && (
+                  <ScrollArea className="flex-1 p-3">
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {resolvedSlides.map((slide, i) => (
+                        <div
+                          key={i}
+                          onClick={() => handleSlideClick(i)}
+                          className={cn(
+                            "cursor-pointer rounded-lg overflow-hidden border p-1 transition-all",
+                            i === activeSlideIndex
+                              ? "border-accent-500 bg-accent-500/10 shadow-md"
+                              : "border-neutral-800 hover:border-neutral-700 bg-neutral-950"
+                          )}
+                        >
+                          <img
+                            src={slide.thumbnailUrl}
+                            alt={`Slide ${i + 1}`}
+                            className="w-full h-auto rounded object-cover"
+                          />
+                          <div className="flex justify-between text-[10px] font-mono mt-1 text-neutral-400">
+                            <span>#{i + 1}</span>
+                            <span>{formatTime(slide.timestamp)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
+
+                {activeTab === "notes" && (
+                  <NotesPanel
+                    notes={notes}
+                    currentTime={currentTime}
+                    onSeek={handleSeek}
+                    onAddNote={(text, t) => addNote(t, "general", undefined, undefined, text)}
+                    onDeleteNote={deleteNote}
+                  />
+                )}
+              </div>
+            </aside>
+          )}
         </div>
 
-        {/* Keyboard shortcuts hint */}
-        <div className="hidden lg:flex px-4 py-2 border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50 text-xs text-neutral-500 dark:text-neutral-400 flex-wrap gap-4 justify-center">
-          <kbd className="px-2 py-0.5 bg-neutral-200 dark:bg-neutral-800 rounded">Spazio</kbd> Play/Pausa
-          <kbd className="px-2 py-0.5 bg-neutral-200 dark:bg-neutral-800 rounded">←/→</kbd> ±5s
-          <kbd className="px-2 py-0.5 bg-neutral-200 dark:bg-neutral-800 rounded">Shift+←/→</kbd> ±30s
-          <kbd className="px-2 py-0.5 bg-neutral-200 dark:bg-neutral-800 rounded">[ / ]</kbd> Velocità ∓0.25
-          <kbd className="px-2 py-0.5 bg-neutral-200 dark:bg-neutral-800 rounded">M</kbd> Muto
-          <kbd className="px-2 py-0.5 bg-neutral-200 dark:bg-neutral-800 rounded">F</kbd> PiP
-        </div>
+        {/* Footer Shortcut Bar */}
+        <footer className="hidden md:flex items-center justify-center gap-4 px-4 py-1.5 border-t border-neutral-900 bg-neutral-950 text-[11px] text-neutral-500">
+          <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">Spazio</kbd> Play/Pausa</span>
+          <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">←/→</kbd> ±5s</span>
+          <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">Shift+←/→</kbd> ±30s</span>
+          <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">[ / ]</kbd> Velocità ∓0.25</span>
+          <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">M</kbd> Muto</span>
+          <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">F</kbd> PiP</span>
+        </footer>
       </div>
     )
   }

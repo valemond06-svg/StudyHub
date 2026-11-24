@@ -69,5 +69,37 @@ def _notte() -> dict:
     return {"in_corso": in_corso, "ultimo": ultimo}
 
 
+def _cluster() -> dict:
+    from .llm import local_llm_healthy, get_local_llm_url
+    try:
+        url = get_local_llm_url()
+        healthy = bool(url and local_llm_healthy())
+    except Exception:
+        url, healthy = None, False
+
+    in_corso = False
+    try:
+        in_corso = turno.notte_attiva()
+    except Exception:
+        pass
+
+    try:
+        with session() as db:
+            local_running = db.execute("SELECT COUNT(*) FROM ai_jobs WHERE status='in_corso'").fetchone()[0] > 0
+    except Exception:
+        local_running = False
+
+    status = "offline"
+    if healthy:
+        status = "attivo" if (in_corso or local_running) else "in_attesa"
+
+    return {
+        "url": url or "http://10.10.10.1:8080",
+        "model": "Qwen3.6-35B",
+        "healthy": healthy,
+        "status": status,
+    }
+
+
 def dati() -> dict:
-    return {"coda": _coda(), "arretrati": _arretrati(), "finestra": _finestra(), "notte": _notte()}
+    return {"coda": _coda(), "arretrati": _arretrati(), "finestra": _finestra(), "notte": _notte(), "cluster": _cluster()}
