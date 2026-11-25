@@ -11,6 +11,14 @@ import type {
   StorageStatus,
 } from "@/types"
 import { toSearchResponse, type SearchResponse } from "@/lib/search"
+import {
+  normalizeSession,
+  type AnswerPayload,
+  type AnswerResult,
+  type FinishResult,
+  type PhotoPayload,
+  type RevealResult,
+} from "@/lib/study-session"
 
 const API_BASE = ""
 const CSRF_COOKIE_NAME = "csrf_token"
@@ -240,18 +248,6 @@ function enhanceCourse(course: any): Course {
   }
 }
 
-function enhanceSession(session: any): any {
-  if (!session) return session
-  return {
-    ...session,
-    entries: (session.entries || []).map((entry: any, index: number) => ({
-      ...entry,
-      id: entry.id ?? index,
-      idx: entry.idx ?? index,
-    })),
-  }
-}
-
 export const api = {
   // Courses
   getCourses: () => request<any[]>(`/api/courses`).then((courses) => courses.map(enhanceCourse)),
@@ -325,18 +321,27 @@ export const api = {
   prefetchStudyLessons: (courseId: number, n = 4) =>
     request<{ topics: number[] }>(`/api/study/${courseId}/lessons/prefetch${q({ n })}`, { method: "POST" }),
 
-  // Sessions
+  // Sessions (contratto: backend/src/studyhub/study/session.py)
   createSession: (course_id: number, minutes: number = 45, focus_topic?: number) =>
-    request<any>(`/api/study/${course_id}/sessions`, { method: "POST", body: JSON.stringify({ minutes, focus_topic }) }).then(enhanceSession),
-  getSession: (id: number) => request<any>(`/api/study/sessions/${id}`).then(enhanceSession),
-  answerSession: (id: number, answer: any) =>
-    request<any>(`/api/study/sessions/${id}/answer`, { method: "POST", body: JSON.stringify(answer) }),
-  photoSession: (id: number, photo: { idx: number; images: string[]; text?: string; confidence?: number; seconds?: number }) =>
-    request<any>(`/api/study/sessions/${id}/photo`, { method: "POST", body: JSON.stringify(photo) }),
+    request<any>(`/api/study/${course_id}/sessions`, { method: "POST", body: JSON.stringify({ minutes, focus_topic }) }).then(normalizeSession),
+  getSession: (id: number) => request<any>(`/api/study/sessions/${id}`).then(normalizeSession),
+  answerSession: (id: number, answer: AnswerPayload) =>
+    request<AnswerResult>(`/api/study/sessions/${id}/answer`, { method: "POST", body: JSON.stringify(answer) }),
+  photoSession: (id: number, photo: PhotoPayload) =>
+    request<AnswerResult>(`/api/study/sessions/${id}/photo`, { method: "POST", body: JSON.stringify(photo) }),
   revealSession: (id: number, idx: number) =>
-    request<any>(`/api/study/sessions/${id}/reveal/${idx}`, { method: "POST" }),
+    request<RevealResult>(`/api/study/sessions/${id}/reveal/${idx}`, { method: "POST" }),
   finishSession: (id: number) =>
-    request<any>(`/api/study/sessions/${id}/finish`, { method: "POST" }),
+    request<FinishResult>(`/api/study/sessions/${id}/finish`, { method: "POST" }),
+  /** Scheda letta: segna la lezione dell'argomento come completata (nessuna AI). */
+  completeTopicLesson: (topicId: number) =>
+    request<{ ok: boolean }>(`/api/study/topics/${topicId}/lesson/done`, { method: "POST" }),
+  /**
+   * Flashcard da una risposta sbagliata. Predisposto: l'endpoint è chiesto al backend
+   * (C:\Dev\sh-audit\f2-richieste-backend.md). Finché non c'è risponde 404/405 e la UI lo dice.
+   */
+  flashcardFromError: (attemptId: number) =>
+    request<{ id: number; created?: boolean }>(`/api/flashcards/from-error`, { method: "POST", body: JSON.stringify({ attempt_id: attemptId }) }),
 
   // Exams
   createExam: (data: { course_id: number; date: string; kind?: string; note?: string }) =>

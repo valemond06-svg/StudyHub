@@ -1,82 +1,29 @@
 import { useParams, useSearchParams, useNavigate, useLocation } from "react-router-dom"
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { ArrowLeft, RotateCcw, Flag, Target, Zap, Heart, Check, Loader2, Brain, Play } from "lucide-react"
+import { ArrowLeft, Loader2, Play, Square, Timer, Zap } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { api } from "@/lib/api"
+import { MathInline } from "@/components/ui/math-markdown"
+import { api, ApiError, describeError } from "@/lib/api"
 import { useSessionStore } from "@/store/session"
-import { cn } from "@/lib/utils"
+import { QuestionCard } from "@/components/studio/QuestionCard"
+import { SchedaCard } from "@/components/studio/SchedaCard"
+import { SessionSummary } from "@/components/studio/SessionSummary"
 import {
-  WarmupPhase,
-  LearnPhase,
-  PracticePhase,
-  BossPhase,
-  CooldownPhase,
-  CompletePhase,
-  type QuestionResult,
-  type SessionEntry,
-  type PhaseConfig,
-} from "@/components/studio/phases"
-import { RadioGroup, RadioGroupItem } from "@radix-ui/react-radio-group"
-
-type SessionPhase = "warmup" | "learn" | "practice" | "boss" | "cooldown" | "complete"
-
-interface SessionData {
-  id: number
-  course_id: number
-  minutes: number
-  started_at: string
-  ended_at?: string
-  xp: number
-  entries: SessionEntry[]
-  topics: Record<number, { name: string; summary_md: string }>
-  answered?: number
-  correct?: number
-  streak?: number
-}
-
-const PHASE_CONFIG: Record<SessionPhase, PhaseConfig> = {
-  warmup: { label: "Riscaldamento", icon: Zap, color: "text-warning-500", bg: "bg-warning-50 dark:bg-warning-900/20", duration: 2 },
-  learn: { label: "Impara", icon: Brain, color: "text-accent-500", bg: "bg-accent-50 dark:bg-accent-900/20", duration: 60 },
-  practice: { label: "Esercitati", icon: Target, color: "text-success-500", bg: "bg-success-50 dark:bg-success-900/20", duration: 30 },
-  boss: { label: "Boss Finale", icon: Flag, color: "text-error-500", bg: "bg-error-50 dark:bg-error-900/20", duration: 8 },
-  cooldown: { label: "Defaticamento", icon: Heart, color: "text-neutral-500", bg: "bg-neutral-50 dark:bg-neutral-900/20", duration: 2 },
-  complete: { label: "Completato", icon: Check, color: "text-success-500", bg: "bg-success-50 dark:bg-success-900/20", duration: 0 },
-}
-
-const PHASE_ORDER: SessionPhase[] = ["warmup", "learn", "practice", "boss", "cooldown", "complete"]
-
-interface AnswerPayload {
-  idx: number
-  choice?: number
-  text?: string
-  confidence: number
-  seconds: number
-}
-
-function groupSessionEntries(session: SessionData | null) {
-  const entries = (session?.entries ?? []).map((entry, idx) => ({ ...entry, idx }))
-  const questions = entries.filter((entry) => entry.t === "domanda")
-  const explicitBoss = questions.filter((entry) => entry.boss)
-  const regularQuestions = questions.filter((entry) => !entry.boss)
-  const recalls = regularQuestions.filter((entry) => entry.question?.kind === "richiamo")
-  const nonRecalls = regularQuestions.filter((entry) => entry.question?.kind !== "richiamo")
-  const fallbackBoss = nonRecalls.findLast(
-    (entry) => (entry.question?.difficulty ?? 0) >= 3 || entry.question?.kind === "aperta"
-  ) ?? nonRecalls.at(-1)
-  const boss = explicitBoss.length > 0 ? explicitBoss : fallbackBoss ? [fallbackBoss] : []
-  const bossIndices = new Set(boss.map((entry) => entry.idx))
-  const regular = regularQuestions.filter((entry) => !bossIndices.has(entry.idx))
-  const warmup = recalls.length > 0 ? recalls : regular.slice(0, 2)
-  const warmupIndices = new Set(warmup.map((entry) => entry.idx))
-  const practice = regular.filter((entry) => !warmupIndices.has(entry.idx))
-  const learn = entries.filter((entry) => entry.t === "scheda").map((entry) => {
-    const topic = entry.topic === undefined ? undefined : session?.topics?.[entry.topic]
-    return topic ? { ...entry, scheda: { ...entry.scheda, title: topic.name, content: topic.summary_md } } : entry
-  })
-
-  return { warmup, learn, practice, boss, cooldown: [], complete: [] }
-}
+  applyAnswer,
+  firstPending,
+  formatClock,
+  markRevealed,
+  phaseOf,
+  planPhases,
+  resumeIndex,
+  topicName,
+  type AnswerPayload,
+  type AnswerResult,
+  type FinishResult,
+  type PhotoPayload,
+  type StudySessionData,
+} from "@/lib/study-session"
 
 export function Studio() {
   // Ogni navigazione (anche «Nuova sessione» sulla stessa pagina) riparte dalla schermata d'avvio
@@ -94,7 +41,7 @@ function StudioPage() {
   const id = Number(courseId)
   const { currentSession } = useSessionStore()
 
-  // Una sessione già aperta per questo corso (stesso argomento) si riprende in sola lettura: nessuna creazione.
+  // Una sessione già aperta per questo corso (stesso argomento) si riprende dal server: nessuna creazione.
   const resumable = currentSession?.courseId === id && currentSession.backendId &&
     (initialTopic === undefined || currentSession.focusTopic === initialTopic)
   const [choice, setChoice] = useState<{ duration: number; focusTopic?: number; resume: boolean } | null>(
@@ -118,6 +65,7 @@ function StudioPage() {
       duration={choice.duration}
       focusTopic={choice.focusTopic}
       allowResume={choice.resume}
+      onAbandon={() => setChoice(null)}
     />
   )
 }
@@ -174,7 +122,7 @@ function StudioStart({ courseId, initialDuration, initialTopic, onStart }: {
         <h2 id="durata-label" className="font-medium">Durata</h2>
         <div className="grid grid-cols-3 gap-2">
           {[25, 45, 90].map((d) => (
-            <Button key={d} variant={duration === d ? "default" : "outline"} aria-pressed={duration === d} onClick={() => setDuration(d)}>
+            <Button key={d} className="min-h-11" variant={duration === d ? "default" : "outline"} aria-pressed={duration === d} onClick={() => setDuration(d)}>
               {d} min
             </Button>
           ))}
@@ -187,7 +135,7 @@ function StudioStart({ courseId, initialDuration, initialTopic, onStart }: {
           value={topicChoice}
           onChange={(e) => setTopicChoice(e.target.value)}
           aria-label="Argomento della sessione"
-          className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          className="w-full min-h-11 rounded-md border border-neutral-200 bg-white px-3 py-2 text-base dark:border-neutral-700 dark:bg-neutral-900"
         >
           <option value="auto">Scelgono le tue lacune (consigliato)</option>
           {!wantsTopic && <option value="pick">Voglio scegliere un argomento…</option>}
@@ -200,14 +148,19 @@ function StudioStart({ courseId, initialDuration, initialTopic, onStart }: {
         </select>
       </section>
 
-      <div className="rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900/50 p-4 text-sm text-neutral-600 dark:text-neutral-300">
-        Avviando, StudyHub crea la sessione con domande dalla banca del corso. Se per qualche argomento manca la scheda di studio,
-        la chiede all'AI in background. Le risposte aperte vengono corrette dall'AI solo quando le consegni.
+      <div className="rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900/50 p-4 text-sm text-neutral-600 dark:text-neutral-300 space-y-2">
+        <p>
+          Avviando, StudyHub crea la sessione con domande dalla banca del corso, nell'ordine del corso: ripasso, argomenti nuovi,
+          un esercizio finale. Le domande sbagliate tornano in fondo. Se per qualche argomento manca la scheda di studio,
+          la chiede all'AI in background. Le risposte scritte vengono corrette dall'AI solo quando le consegni; se svolgi sul
+          quaderno ti autovaluti sui criteri.
+        </p>
+        <p>Nessun limite di tempo per domanda: il timer è solo un riferimento. Tasti: 1-3 sicurezza o voto, Invio conferma, Spazio mostra la soluzione.</p>
       </div>
 
       <Button
         size="lg"
-        className="w-full gap-2"
+        className="w-full gap-2 min-h-12"
         disabled={topicChoice === "pick"}
         onClick={() => onStart(duration, /^\d+$/.test(topicChoice) ? Number(topicChoice) : undefined)}
       >
@@ -218,506 +171,301 @@ function StudioStart({ courseId, initialDuration, initialTopic, onStart }: {
   )
 }
 
-function StudioSession({ courseId, duration, focusTopic, allowResume }: { courseId: number; duration: number; focusTopic?: number; allowResume: boolean }) {
+type LoadState =
+  | { status: "loading" }
+  | { status: "error"; message: string; notFound: boolean }
+  | { status: "ready" }
 
+function StudioSession({ courseId, duration, focusTopic, allowResume, onAbandon }: {
+  courseId: number
+  duration: number
+  focusTopic?: number
+  allowResume: boolean
+  onAbandon: () => void
+}) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { currentSession, startSession, endSession, updateSessionProgress } = useSessionStore()
+  const { currentSession, startSession, endSession, cancelSession, markLocalDone } = useSessionStore()
 
-  useEffect(() => {
-    if (!courseId) navigate("/corsi", { replace: true })
-  }, [courseId, navigate])
-
-  const { data: course, isLoading: courseLoading, isError: courseError, refetch: refetchCourse } = useQuery({
+  const { data: course } = useQuery({
     queryKey: ["course", courseId],
     queryFn: () => api.getCourse(courseId),
-    enabled: !!courseId,
+    enabled: courseId > 0,
   })
-
-  const [phase, setPhase] = useState<SessionPhase>("warmup")
-  const [phaseProgress, setPhaseProgress] = useState(0)
-  const [currentEntryIndex, setCurrentEntryIndex] = useState(0)
-  const [schedaConfirmed, setSchedaConfirmed] = useState(false)
-  const [questionResults, setQuestionResults] = useState<Record<number, QuestionResult>>({})
-  const [confidence, setConfidence] = useState(2)
-  const [xpEarned, setXpEarned] = useState(0)
-  const [streak, setStreak] = useState(0)
-  const [combo, setCombo] = useState(0)
-  const [questionsAnswered, setQuestionsAnswered] = useState(0)
-  const [correctAnswers, setCorrectAnswers] = useState(0)
-  const [sessionData, setSessionData] = useState<SessionData | null>(null)
-  const creationRequested = useRef(false)
-  const finishRequested = useRef(false)
-
-  const currentPhaseConfig = PHASE_CONFIG[phase]
-  const totalPhases = PHASE_ORDER.length - 1
-  const currentPhaseIndex = PHASE_ORDER.indexOf(phase)
-  const phaseEntries = useMemo(() => groupSessionEntries(sessionData), [sessionData])
-  const currentPhaseEntries = phaseEntries[phase]
-  const currentEntry = currentPhaseEntries[currentEntryIndex]
-  const questionResult = currentEntry ? questionResults[currentEntry.idx] : undefined
-  const showAnswer = phase === "learn" ? schedaConfirmed : Boolean(questionResult)
 
   const resumeId = allowResume && currentSession?.courseId === courseId &&
     (focusTopic === undefined || currentSession.focusTopic === focusTopic)
     ? currentSession.backendId : undefined
-  const resumeQuery = useQuery<SessionData>({
-    queryKey: ["studioSession", resumeId],
-    queryFn: () => api.getSession(resumeId!),
-    enabled: Boolean(resumeId) && !sessionData,
-    staleTime: 0,
-  })
 
-  const openSession = useCallback((data: SessionData) => {
-    setSessionData(data)
-    setPhase(data.ended_at ? "cooldown" : groupSessionEntries(data).warmup.length > 0 ? "warmup" : "learn")
-  }, [])
+  const [load, setLoad] = useState<LoadState>({ status: "loading" })
+  const [session, setSession] = useState<StudySessionData | null>(null)
+  const [cursor, setCursor] = useState<number | null>(null)
+  const [results, setResults] = useState<Record<number, AnswerResult>>({})
+  const [finish, setFinish] = useState<FinishResult | null>(null)
+  const [finishing, setFinishing] = useState(false)
+  const [finishError, setFinishError] = useState<string | null>(null)
+  const [confirmStop, setConfirmStop] = useState(false)
+  const [mountedAt] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
+  const requested = useRef(false)
+  const finishBusy = useRef(false)
 
-  const { mutate: createSession, isPending: isCreating, isError: createFailed } = useMutation<SessionData>({
-    mutationFn: () => api.createSession(courseId, duration, focusTopic),
-  })
+  const localDoneList = currentSession?.backendId !== undefined && currentSession.backendId === session?.id ? currentSession.localDone : undefined
+  const localDone = useMemo(() => new Set<number>(localDoneList ?? []), [localDoneList])
 
-  const requestSession = useCallback(() => {
-    createSession(undefined, {
-      onSuccess: (data) => {
-        startSession(courseId, duration, data.id, data.entries, focusTopic)
-        openSession(data)
-      },
-    })
-  }, [createSession, startSession, courseId, duration, focusTopic, openSession])
-
-  useEffect(() => {
-    if (sessionData || !course || creationRequested.current) return
-    if (resumeId) {
-      const data = resumeQuery.data
-      if (data && !resumeQuery.isFetching && !resumeQuery.isError) {
-        openSession(data)
-        setXpEarned(data.xp ?? currentSession?.xpEarned ?? 0)
-        setStreak(data.streak ?? 0)
-        setQuestionsAnswered(data.answered ?? currentSession?.questionsAnswered ?? 0)
-        setCorrectAnswers(data.correct ?? currentSession?.correctAnswers ?? 0)
-      }
+  const open = useCallback((data: StudySessionData, isNew: boolean) => {
+    if (isNew) startSession(courseId, duration, data.id, undefined, focusTopic)
+    if (data.ended_at) {
+      // Sessione già chiusa altrove: non si riapre, si ricomincia dalla schermata d'avvio.
+      cancelSession()
+      setLoad({ status: "error", message: "Questa sessione è già conclusa.", notFound: true })
       return
     }
+    const done = new Set<number>(isNew ? [] : useSessionStore.getState().currentSession?.localDone ?? [])
+    setSession(data)
+    setCursor(resumeIndex(data, done))
+    setLoad({ status: "ready" })
+  }, [startSession, cancelSession, courseId, duration, focusTopic])
 
-    creationRequested.current = true
-    requestSession()
-  }, [sessionData, course, resumeId, resumeQuery.data, resumeQuery.isFetching, resumeQuery.isError, currentSession, openSession, requestSession])
-
-  const saveQuestionResult = (idx: number, result: QuestionResult) => {
-    setQuestionResults((previous) => ({ ...previous, [idx]: result }))
-  }
-
-  const answerMutation = useMutation({
-    mutationFn: ({ sid, payload, images }: { sid: number; payload: AnswerPayload; images?: string[] }) => {
-      if (images?.length) {
-        const { idx, text, confidence, seconds } = payload
-        return api.photoSession(sid, { idx, text, confidence, seconds, images })
-      }
-      return api.answerSession(sid, payload)
-    },
-    onSuccess: (result: QuestionResult, { sid, payload }) => {
-      saveQuestionResult(payload.idx, result)
-      const isCorrect = (result.score ?? 0) >= 0.7
-      const xp = xpEarned + (result.xp ?? (isCorrect ? 10 + Math.min(combo * 5, 50) : 0))
-      const answered = questionsAnswered + 1
-      const correct = correctAnswers + Number(isCorrect)
-      setXpEarned(xp)
-      setQuestionsAnswered(answered)
-      setCorrectAnswers(correct)
-      setStreak(isCorrect ? streak + 1 : 0)
-      setCombo(isCorrect ? combo + 1 : 0)
-      if (useSessionStore.getState().currentSession?.backendId === sid) {
-        updateSessionProgress({ xpEarned: xp, questionsAnswered: answered, correctAnswers: correct })
-      }
-    },
-  })
-
-  const revealMutation = useMutation({
-    mutationFn: ({ sid, idx }: { sid: number; idx: number }) => api.revealSession(sid, idx),
-    onSuccess: (result: QuestionResult, { idx }) => saveQuestionResult(idx, result),
-  })
-
-  const { mutate: finishSession, isPending: isFinishing, isError: finishFailed } = useMutation({
-    mutationFn: (sid: number) => api.finishSession(sid),
-    onSuccess: (result: Partial<SessionData>, sid) => {
-      const xp = result.xp ?? xpEarned
-      const answered = result.answered ?? questionsAnswered
-      const correct = result.correct ?? correctAnswers
-      setXpEarned(xp)
-      setStreak(result.streak ?? streak)
-      setQuestionsAnswered(answered)
-      setCorrectAnswers(correct)
-      setSessionData((previous) => previous ? { ...previous, ...result } : null)
-      if (useSessionStore.getState().currentSession?.backendId === sid) {
-        updateSessionProgress({ xpEarned: xp, questionsAnswered: answered, correctAnswers: correct })
-      }
-      setPhase("cooldown")
-      setPhaseProgress(0)
-      void queryClient.invalidateQueries({ queryKey: ["plan"] })
-      void queryClient.invalidateQueries({ queryKey: ["studioSession", sid] })
-    },
-    onError: () => { finishRequested.current = false },
-  })
-
-  const isQuestionPending = answerMutation.isPending || revealMutation.isPending
-  const isSessionBusy = isQuestionPending || isFinishing
-
-  const advancePhase = useCallback(() => {
-    if (!sessionData || isSessionBusy) return
-    const nextPhase = PHASE_ORDER[PHASE_ORDER.indexOf(phase) + 1]
-    if (nextPhase === "cooldown") {
-      if (finishRequested.current) return
-      finishRequested.current = true
-      finishSession(sessionData.id)
-    } else if (nextPhase && nextPhase !== "complete") {
-      setPhase(nextPhase)
-      setCurrentEntryIndex(0)
-      setSchedaConfirmed(false)
-      setConfidence(2)
-      setPhaseProgress(0)
-    }
-  }, [sessionData, isSessionBusy, phase, finishSession])
-
-  const sessionId = sessionData?.id
-  useEffect(() => {
-    if (!sessionId || phase === "cooldown" || phase === "complete") return
-    const startedAt = performance.now()
-    const durationMs = PHASE_CONFIG[phase].duration * 60_000
-    let frame: number
-    const tick = (now: number) => {
-      const progress = Math.min((now - startedAt) / durationMs * 100, 100)
-      setPhaseProgress(progress)
-      if (progress < 100) frame = requestAnimationFrame(tick)
-    }
-    frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
-  }, [phase, sessionId])
+  const loadSession = useCallback(() => {
+    const call = resumeId ? api.getSession(resumeId) : api.createSession(courseId, duration, focusTopic)
+    call
+      .then((data) => open(data, !resumeId))
+      .catch((err) => setLoad({
+        status: "error",
+        message: describeError(err, "Impossibile caricare la sessione di studio."),
+        notFound: err instanceof ApiError && err.status === 404,
+      }))
+  }, [resumeId, courseId, duration, focusTopic, open])
 
   useEffect(() => {
-    if (phaseProgress >= 100 && !finishFailed) advancePhase()
-  }, [phaseProgress, advancePhase, finishFailed])
+    if (requested.current || !(courseId > 0)) return
+    requested.current = true
+    loadSession()
+  }, [courseId, loadSession])
 
-  const handleAnswer = (
-    _isCorrect: boolean,
-    conf: number,
-    answerData?: { choice?: number; text?: string; photos?: string[] },
-  ) => {
-    if (!sessionData || !currentEntry || currentEntry.t !== "domanda" || showAnswer || isSessionBusy) return
+  // Orologio informativo (1 s): nessun avanzamento automatico.
+  const ticking = Boolean(session) && !finish
+  useEffect(() => {
+    if (!ticking) return
+    const t = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(t)
+  }, [ticking])
 
-    const payload: AnswerPayload = {
-      idx: currentEntry.idx,
-      confidence: conf,
-      seconds: 0,
-      choice: answerData?.choice,
-      text: answerData?.text,
-    }
-    answerMutation.mutate({ sid: sessionData.id, payload, images: answerData?.photos })
-  }
+  const sid = session?.id
+  const submitAnswer = useCallback((payload: AnswerPayload) => api.answerSession(sid!, payload), [sid])
+  const submitPhoto = useCallback((payload: PhotoPayload) => api.photoSession(sid!, payload), [sid])
+  const reveal = useCallback(() => {
+    const idx = cursor!
+    return api.revealSession(sid!, idx).then((r) => {
+      setSession((s) => (s ? markRevealed(s, idx) : s))
+      return r
+    })
+  }, [sid, cursor])
 
-  const handleNext = () => {
-    if (isSessionBusy) return
-    if (currentEntryIndex < currentPhaseEntries.length - 1) {
-      setCurrentEntryIndex((prev) => prev + 1)
-      setSchedaConfirmed(false)
-      setConfidence(2)
-    } else {
-      advancePhase()
-    }
-  }
+  const onSaved = useCallback((result: AnswerResult) => {
+    const idx = cursor!
+    setResults((r) => ({ ...r, [idx]: result }))
+    setSession((s) => (s ? applyAnswer(s, idx, result) : s))
+  }, [cursor])
 
-  const handleReveal = () => {
-    if (!sessionData || !currentEntry || currentEntry.t !== "domanda" || showAnswer || isSessionBusy) return
-    revealMutation.mutate({ sid: sessionData.id, idx: currentEntry.idx })
-  }
+  const doFinish = useCallback(() => {
+    if (!sid || finishBusy.current) return
+    finishBusy.current = true
+    setFinishing(true)
+    setFinishError(null)
+    api.finishSession(sid)
+      .then((r) => {
+        setFinish(r)
+        setConfirmStop(false)
+        endSession({ xpEarned: r.xp ?? 0, questionsAnswered: r.answered ?? 0, correctAnswers: r.correct ?? 0 })
+        void queryClient.invalidateQueries({ queryKey: ["plan"] })
+        void queryClient.invalidateQueries({ queryKey: ["study"] })
+      })
+      .catch((err) => setFinishError(describeError(err, "Impossibile salvare la fine della sessione.")))
+      .finally(() => { finishBusy.current = false; setFinishing(false) })
+  }, [sid, endSession, queryClient])
 
-  const handleCooldownComplete = () => {
-    setPhase("complete")
-    endSession({ xpEarned, questionsAnswered, correctAnswers })
-  }
+  const goNext = useCallback(() => {
+    if (!session || cursor === null) return
+    const next = firstPending(session.entries, localDone, cursor + 1) ?? firstPending(session.entries, localDone)
+    setCursor(next)
+    window.scrollTo?.({ top: 0 })
+    if (next === null) doFinish()
+  }, [session, cursor, localDone, doFinish])
 
-  if (courseLoading) {
+  const onSchedaDone = useCallback(async () => {
+    if (!session || cursor === null) return
+    const entry = session.entries.find((e) => e.idx === cursor)
+    if (entry?.topic) await api.completeTopicLesson(entry.topic)
+    markLocalDone(session.id, cursor)
+    const done = new Set(localDone).add(cursor)
+    const next = firstPending(session.entries, done, cursor + 1) ?? firstPending(session.entries, done)
+    setCursor(next)
+    window.scrollTo?.({ top: 0 })
+    if (next === null) doFinish()
+  }, [session, cursor, localDone, markLocalDone, doFinish])
+
+  // ---------------------------------------------------------------------------------------------
+
+  if (load.status === "loading") {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-3 text-neutral-500">
         <Loader2 className="h-8 w-8 animate-spin text-accent-500" />
-        <p className="text-sm">Caricamento sessione di studio...</p>
+        <p className="text-sm">{resumeId ? "Riprendo la sessione..." : "Creo la sessione..."}</p>
       </div>
     )
   }
-
-  if (courseError || !course) {
+  if (load.status === "error" || !session) {
+    const message = load.status === "error" ? load.message : "Sessione non disponibile."
+    const notFound = load.status === "error" && load.notFound
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
-        <p className="text-neutral-600 dark:text-neutral-400">Impossibile avviare lo studio per il corso #{courseId}.</p>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => navigate("/corsi")}>Torna ai corsi</Button>
-          <Button onClick={() => refetchCourse()}>Riprova</Button>
+      <div role="alert" className="max-w-md mx-auto text-center py-12 space-y-4">
+        <p>{message}</p>
+        <div className="flex flex-col sm:flex-row gap-2 justify-center">
+          {!notFound && <Button onClick={() => { setLoad({ status: "loading" }); loadSession() }}>Riprova</Button>}
+          <Button variant={notFound ? "default" : "outline"} onClick={() => { cancelSession(); onAbandon() }}>Nuova sessione</Button>
+          <Button variant="ghost" onClick={() => navigate(`/corsi/${courseId}`)}>Torna al corso</Button>
         </div>
       </div>
     )
   }
+
+  if (finish) {
+    const counts = new Map<number, number>()
+    for (const w of finish.wrong) {
+      const t = session.entries.find((e) => e.item === w.id)?.question?.topic_id
+      if (t) counts.set(t, (counts.get(t) ?? 0) + 1)
+    }
+    const worst = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+    return <SessionSummary result={finish} courseId={courseId} duration={duration} focusTopicForNext={worst} />
+  }
+
+  const entries = session.entries
+  const total = entries.length
+  const doneCount = entries.filter((e) => e.done || localDone.has(e.idx)).length
+  const entry = cursor === null ? undefined : entries.find((e) => e.idx === cursor)
+  const position = entry ? entries.indexOf(entry) + 1 : total
+  const phases = planPhases(entries, session.minutes || duration, localDone)
+  const currentPhase = entry ? phases.find((p) => p.key === phaseOf(entry)) : undefined
+  // Il tempo parte dall'avvio della sessione sul server (così una ricarica non lo azzera);
+  // se la sessione è di ore fa (ripresa il giorno dopo) si conta da quando l'hai riaperta.
+  const startedMs = Date.parse(session.started_at)
+  const timerBase = Number.isFinite(startedMs) && mountedAt - startedMs >= 0 && mountedAt - startedMs < 3 * 3600_000 ? startedMs : mountedAt
+  const elapsed = Math.round((now - timerBase) / 1000)
+  const plannedUntilPhaseEnd = currentPhase
+    ? phases.slice(0, phases.indexOf(currentPhase) + 1).reduce((s, p) => s + p.budget, 0)
+    : (session.minutes || duration) * 60
+  const isLast = firstPending(entries.filter((e) => e.idx !== cursor), localDone) === null
+  const answered = Object.values(results)
+  const xp = session.xp
 
   return (
-    <div className="h-[calc(100vh-140px)] flex flex-col">
-      {/* Top Bar */}
-      <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-700">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate(`/corsi/${courseId}`)}>
+    <div className="max-w-3xl mx-auto">
+      {/* Barra della sessione: compatta e fissa in alto, anche su telefono */}
+      <div className="sticky top-14 z-30 -mx-4 lg:mx-0 px-4 py-2 mb-4 bg-neutral-50/95 dark:bg-neutral-950/95 backdrop-blur border-b border-neutral-200 dark:border-neutral-800">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={() => navigate(`/corsi/${courseId}`)} aria-label="Torna al corso (la sessione resta aperta)">
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div>
-            <h1 className="font-semibold text-lg">{course.fullname}</h1>
-            <p className="text-sm text-neutral-500 dark:text-neutral-400">
-              Sessione {duration} min · Fase {currentPhaseIndex + 1}/{totalPhases}
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold truncate">{course?.fullname ?? "Sessione di studio"}</p>
+            <p className="text-xs text-neutral-500 truncate">
+              {currentPhase ? `${currentPhase.label} · ${currentPhase.done}/${currentPhase.total}` : "Coda completata"}
             </p>
           </div>
-        </div>
-
-        {/* Phase indicator */}
-        <div className="flex items-center gap-2">
-          {PHASE_ORDER.slice(0, -1).map((p, i) => {
-            const Icon = PHASE_CONFIG[p].icon
-            return (
-              <div key={p} className={cn(
-                "flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-all",
-                i < currentPhaseIndex ? "bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400" :
-                i === currentPhaseIndex ? `${currentPhaseConfig.bg} ${currentPhaseConfig.color}` :
-                "bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
-              )}>
-                {Icon && <Icon className="h-3 w-3" />}
-                {p !== "warmup" && <span>{PHASE_CONFIG[p].label}</span>}
-              </div>
-            )
-          })}
-        </div>
-
-        {/* XP & Streak */}
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800">
-            <Zap className="h-4 w-4 text-warning-500" />
-            <span className="font-mono font-semibold">{xpEarned} XP</span>
-          </div>
-          <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800">
-            <Heart className="h-4 w-4 text-error-500" />
-            <span className="font-mono font-semibold">{streak}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      <div className="h-2 bg-neutral-200 dark:bg-neutral-700 relative overflow-hidden">
-        <div
-          className="h-full bg-accent-500 transition-all duration-500 ease-out"
-          style={{ width: `${((currentPhaseIndex) / (totalPhases - 1) + (phaseProgress / 100) * (1 / (totalPhases - 1))) * 100}%` }}
-        />
-        {/* Phase markers */}
-        {PHASE_ORDER.slice(0, -1).map((p, i) => (
-          <div
-            key={p}
-            className="absolute top-0 bottom-0 w-0.5 bg-white/50"
-            style={{ left: `${(i / (totalPhases - 1)) * 100}%` }}
-          />
-        ))}
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {(isCreating || (resumeId && resumeQuery.isFetching && !sessionData)) && (
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-accent-500" />
-            <span className="ml-2 text-neutral-500">{resumeId ? "Caricamento sessione..." : "Creazione sessione..."}</span>
-          </div>
-        )}
-
-        {!sessionData && (createFailed || resumeQuery.isError) && (
-          <div role="alert" className="text-center py-12">
-            <p>Impossibile caricare la sessione di studio.</p>
-            <Button className="mt-4" onClick={() => resumeId ? resumeQuery.refetch() : requestSession()}>Riprova</Button>
-          </div>
-        )}
-
-        {sessionData && !isCreating && (
-          <>
-            {phase === "warmup" && currentPhaseEntries.length > 0 && (
-              <WarmupPhase
-                entries={currentPhaseEntries}
-                currentIndex={currentEntryIndex}
-                showAnswer={showAnswer}
-                confidence={confidence}
-                currentPhaseConfig={currentPhaseConfig}
-                onAnswer={handleAnswer}
-                onNext={handleNext}
-                onSetShowAnswer={setSchedaConfirmed}
-                onSetConfidence={setConfidence}
-                onReveal={handleReveal}
-                result={questionResult}
-                isLoading={isSessionBusy}
-                sessionId={sessionData.id}
-              />
-            )}
-            {phase === "learn" && currentPhaseEntries.length > 0 && (
-              <LearnPhase
-                entries={currentPhaseEntries}
-                currentIndex={currentEntryIndex}
-                showAnswer={showAnswer}
-                confidence={confidence}
-                onSetShowAnswer={setSchedaConfirmed}
-                onNext={handleNext}
-                isLoading={isSessionBusy}
-              />
-            )}
-            {phase === "practice" && currentPhaseEntries.length > 0 && (
-              <PracticePhase
-                entries={currentPhaseEntries}
-                currentIndex={currentEntryIndex}
-                showAnswer={showAnswer}
-                confidence={confidence}
-                onAnswer={handleAnswer}
-                onNext={handleNext}
-                onSetShowAnswer={setSchedaConfirmed}
-                onSetConfidence={setConfidence}
-                onReveal={handleReveal}
-                result={questionResult}
-                isLoading={isSessionBusy}
-                xpEarned={xpEarned}
-                streak={streak}
-                combo={combo}
-                questionsAnswered={questionsAnswered}
-                correctAnswers={correctAnswers}
-                sessionId={sessionData.id}
-              />
-            )}
-            {phase === "boss" && currentPhaseEntries.length > 0 && (
-              <BossPhase
-                entry={currentEntry}
-                showAnswer={showAnswer}
-                onAnswer={handleAnswer}
-                onSetShowAnswer={setSchedaConfirmed}
-                onNext={handleNext}
-                result={questionResult}
-                hasNext={currentEntryIndex < currentPhaseEntries.length - 1}
-                isLoading={isSessionBusy}
-                sessionId={sessionData.id}
-              />
-            )}
-            {phase === "cooldown" && (
-              <CooldownPhase
-                xpEarned={xpEarned}
-                streak={streak}
-                questionsAnswered={questionsAnswered}
-                correctAnswers={correctAnswers}
-                topicsUp={sessionData.topics ? Object.values(sessionData.topics).slice(0, 5) : []}
-                wrongItems={[]}
-              />
-            )}
-            {phase === "complete" && (
-              <CompletePhase
-                xpEarned={xpEarned}
-                streak={streak}
-                questionsAnswered={questionsAnswered}
-                correctAnswers={correctAnswers}
-                courseId={String(courseId)}
-                duration={duration}
-                verdict="Hai completato la sessione. I risultati sono stati salvati."
-                nextRecommendations={[]}
-              />
-            )}
-
-            {(answerMutation.isError || revealMutation.isError) && !showAnswer && (
-              <p role="alert" className="mt-4 text-center">Impossibile ottenere la correzione o la soluzione. Riprova.</p>
-            )}
-            {isFinishing && <p role="status" className="mt-4 text-center">Salvataggio della sessione...</p>}
-            {finishFailed && (
-              <div role="alert" className="mt-4 text-center">
-                <p>Impossibile salvare il completamento della sessione.</p>
-                <Button className="mt-2" onClick={advancePhase}>Riprova il salvataggio</Button>
-              </div>
-            )}
-
-            {/* Phase empty states */}
-            {phase === "learn" && currentPhaseEntries.length === 0 && (
-              <div className="text-center py-12">
-                <Brain className="h-12 w-12 mx-auto text-neutral-400 mb-4" />
-                <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100 mb-2">Nessuna lezione nuova</h3>
-                <p className="text-neutral-500">Tutti gli argomenti di questa sessione sono già stati studiati.</p>
-                <Button onClick={advancePhase} className="mt-4">Vai alla fase successiva</Button>
-              </div>
-            )}
-            {phase === "practice" && currentPhaseEntries.length === 0 && (
-              <div className="text-center py-12">
-                <Target className="h-12 w-12 mx-auto text-neutral-400 mb-4" />
-                <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100 mb-2">Nessuna domanda di esercizio</h3>
-                <p className="text-neutral-500">La sessione passa direttamente al Boss Finale.</p>
-                <Button onClick={advancePhase} className="mt-4">Vai al Boss Finale</Button>
-              </div>
-            )}
-            {phase === "boss" && currentPhaseEntries.length === 0 && (
-              <div className="text-center py-12">
-                <Flag className="h-12 w-12 mx-auto text-neutral-400 mb-4" />
-                <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100 mb-2">Nessun Boss Finale</h3>
-                <p className="text-neutral-500">Non ci sono esercizi d'esame per questa sessione.</p>
-                <Button onClick={advancePhase} disabled={isFinishing} className="mt-4">Vai al defaticamento</Button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Bottom Actions */}
-      <div className="p-4 border-t border-neutral-200 dark:border-neutral-700 bg-white/50 dark:bg-neutral-950/50 backdrop-blur-sm">
-        {phase !== "complete" && phase !== "cooldown" && (
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-neutral-500" id="conf-label">Quanto sei sicuro?</span>
-              <RadioGroup
-                value={String(confidence)}
-                onValueChange={(v) => setConfidence(Number(v))}
-                className="flex gap-1"
-                role="radiogroup"
-                aria-labelledby="conf-label"
-              >
-                {[{ v: 1, l: "Tiro a indovinare" }, { v: 2, l: "Credo" }, { v: 3, l: "Sicuro" }].map(({ v: c, l }) => (
-                  <RadioGroupItem
-                    key={c}
-                    value={String(c)}
-                    aria-label={l}
-                    className={cn(
-                      "px-3 h-8 rounded-full text-xs font-medium transition-all focus:outline-none focus:ring-2 focus:ring-accent-500",
-                      "data-[state=checked]:bg-accent-500 data-[state=checked]:text-white",
-                      "data-[state=unchecked]:bg-neutral-200 data-[state=unchecked]:text-neutral-500 data-[state=unchecked]:hover:bg-neutral-300 dark:data-[state=unchecked]:bg-neutral-700 dark:data-[state=unchecked]:text-neutral-400"
-                    )}
-                  >
-                    {l}
-                  </RadioGroupItem>
-                ))}
-              </RadioGroup>
-            </div>
-            {showAnswer && (
-              <Button size="lg" onClick={handleNext} disabled={isSessionBusy} className="min-w-[160px]">
-                {currentEntryIndex < currentPhaseEntries.length - 1 ? "Avanti" : "Fase successiva"}
-              </Button>
-            )}
-          </div>
-        )}
-
-        {phase === "cooldown" && (
-          <Button size="lg" className="w-full" onClick={handleCooldownComplete}>
-            Vedi risultati finali
+          <span className="inline-flex items-center gap-1 text-xs font-mono px-2 py-1 rounded-full bg-neutral-100 dark:bg-neutral-800" title="Tempo trascorso e durata scelta">
+            <Timer className="h-3.5 w-3.5" /> {formatClock(elapsed)}/{formatClock((session.minutes || duration) * 60)}
+          </span>
+          <span className="hidden sm:inline-flex items-center gap-1 text-xs font-mono px-2 py-1 rounded-full bg-neutral-100 dark:bg-neutral-800">
+            <Zap className="h-3.5 w-3.5 text-warning-500" /> {xp} XP
+          </span>
+          <Button variant="ghost" size="icon" onClick={() => setConfirmStop(true)} aria-label="Termina la sessione">
+            <Square className="h-4 w-4" />
           </Button>
-        )}
-
-        {phase === "complete" && (
-          <div className="flex gap-2">
-            <Button variant="outline" className="flex-1" onClick={() => navigate(`/corsi/${courseId}`)}>
-              Torna al corso
-            </Button>
-            <Button className="flex-1" onClick={() => navigate(`/studio/${courseId}?duration=${duration}`)}>
-              <RotateCcw className="h-4 w-4 mr-1" />
-              Nuova sessione
-            </Button>
-          </div>
+        </div>
+        <div
+          className="mt-2 h-1.5 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden"
+          role="progressbar"
+          aria-label="Avanzamento della sessione"
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={doneCount}
+        >
+          <div className="h-full bg-accent-500 transition-[width]" style={{ width: `${total ? (doneCount / total) * 100 : 0}%` }} />
+        </div>
+        {currentPhase && elapsed > plannedUntilPhaseEnd && (
+          <p className="mt-1 text-xs text-neutral-500">Sei oltre il tempo previsto per questa fase: nessuna fretta, nessuna domanda viene saltata.</p>
         )}
       </div>
+
+      {confirmStop && (
+        <div role="alertdialog" aria-label="Terminare la sessione?" className="mb-4 rounded-2xl border border-warning-300 bg-warning-50 dark:bg-warning-900/20 p-4 text-sm">
+          <p className="font-medium">Terminare adesso?</p>
+          <p className="mt-1 text-neutral-600 dark:text-neutral-400">
+            Quello che hai risposto resta salvato; le {total - doneCount} voci non fatte non contano.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <Button size="sm" onClick={doFinish} disabled={finishing}>{finishing ? "Salvo..." : "Termina e vedi il riepilogo"}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirmStop(false)} disabled={finishing}>Continua a studiare</Button>
+          </div>
+        </div>
+      )}
+
+      {entry?.t === "domanda" && (
+        <QuestionCard
+          key={`${session.id}:${entry.idx}`}
+          entry={entry}
+          courseId={courseId}
+          topicName={topicName(session, entry.question?.topic_id)}
+          position={position}
+          total={total}
+          savedResult={results[entry.idx]}
+          submitAnswer={submitAnswer}
+          submitPhoto={submitPhoto}
+          reveal={reveal}
+          onSaved={onSaved}
+          onNext={goNext}
+          isLast={isLast}
+        />
+      )}
+      {entry?.t === "scheda" && (
+        <SchedaCard
+          key={`${session.id}:${entry.idx}`}
+          topic={entry.topic !== undefined ? session.topics[String(entry.topic)] : undefined}
+          topicId={entry.topic}
+          courseId={courseId}
+          position={position}
+          total={total}
+          onDone={onSchedaDone}
+        />
+      )}
+      {entry && entry.t !== "domanda" && entry.t !== "scheda" && (
+        <div className="rounded-2xl border p-4 text-sm">
+          Voce di tipo sconosciuto ({entry.t}).
+          <Button size="sm" className="ml-2" onClick={() => { markLocalDone(session.id, entry.idx); goNext() }}>Salta</Button>
+        </div>
+      )}
+
+      {!entry && (
+        <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 text-center space-y-3">
+          <p className="font-semibold">Hai completato tutte le voci della sessione.</p>
+          {answered.length > 0 && <p className="text-sm text-neutral-500">{answered.filter((r) => r.score >= 0.7).length} giuste su {answered.length} in questa visita.</p>}
+          {finishing && <p role="status" className="text-sm">Salvataggio della sessione...</p>}
+          {!finishing && !finishError && <Button className="min-h-12" onClick={doFinish}>Concludi e vedi il riepilogo</Button>}
+        </div>
+      )}
+
+      {finishError && (
+        <div role="alert" className="mt-4 rounded-2xl border border-error-300 bg-error-50 dark:bg-error-900/20 p-4 text-sm">
+          <p>Impossibile salvare la fine della sessione: {finishError}</p>
+          <Button size="sm" className="mt-2" onClick={doFinish} disabled={finishing}>Riprova il salvataggio</Button>
+        </div>
+      )}
+
+      {focusTopic && session.topics[String(focusTopic)]?.name && (
+        <p className="mt-4 text-xs text-neutral-500">Sessione mirata su: <MathInline content={session.topics[String(focusTopic)].name} /></p>
+      )}
     </div>
   )
 }

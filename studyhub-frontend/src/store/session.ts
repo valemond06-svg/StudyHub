@@ -13,6 +13,8 @@ interface StudySession {
   questionsAnswered: number
   correctAnswers: number
   entries?: any[]               // session entries from backend
+  /** Schede lette in questa sessione: il backend le segna fatte solo se la lezione dell'argomento esiste. */
+  localDone?: number[]
 }
 
 interface SessionState {
@@ -21,6 +23,7 @@ interface SessionState {
   endSession: (results: { xpEarned: number; questionsAnswered: number; correctAnswers: number }) => void
   cancelSession: () => void
   updateSessionProgress: (progress: Partial<StudySession>) => void
+  markLocalDone: (backendId: number, idx: number) => void
   todaySessions: StudySession[]
   addToHistory: (session: StudySession) => void
 }
@@ -71,6 +74,13 @@ export const useSessionStore = create<SessionState>()(
             ? { ...state.currentSession, ...progress }
             : null,
         })),
+
+      markLocalDone: (backendId, idx) =>
+        set((state) => {
+          const s = state.currentSession
+          if (!s || s.backendId !== backendId || s.localDone?.includes(idx)) return state
+          return { currentSession: { ...s, localDone: [...(s.localDone ?? []), idx] } }
+        }),
 
       addToHistory: (session) =>
         set((s) => ({ todaySessions: [session, ...s.todaySessions].slice(0, 50) })),

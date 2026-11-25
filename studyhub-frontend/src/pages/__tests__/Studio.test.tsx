@@ -4,38 +4,60 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { Studio } from "../Studio"
-import { api } from "@/lib/api"
+import { api, ApiError } from "@/lib/api"
+import { normalizeSession, type AnswerResult, type FinishResult } from "@/lib/study-session"
 import { useSessionStore } from "@/store/session"
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    getCourse: vi.fn(),
-    getSession: vi.fn(),
-    createSession: vi.fn(),
-    answerSession: vi.fn(),
-    photoSession: vi.fn(),
-    revealSession: vi.fn(),
-    finishSession: vi.fn(),
-    getStudyCourseStats: vi.fn(),
-  },
-}))
+vi.mock("@/lib/api", async (orig) => {
+  const real = await orig<typeof import("@/lib/api")>()
+  return {
+    ...real,
+    api: {
+      getCourse: vi.fn(),
+      getSession: vi.fn(),
+      createSession: vi.fn(),
+      answerSession: vi.fn(),
+      photoSession: vi.fn(),
+      revealSession: vi.fn(),
+      finishSession: vi.fn(),
+      getStudyCourseStats: vi.fn(),
+      completeTopicLesson: vi.fn(),
+      flashcardFromError: vi.fn(),
+    },
+  }
+})
 
 const images = ["data:image/jpeg;base64,YQ==", "data:image/jpeg;base64,Yg=="]
-
 vi.mock("@/components/camera/PhotoUpload", () => ({
   PhotoUpload: ({ onPhotosChange }: { onPhotosChange: (photos: string[]) => void }) => (
     <button onClick={() => onPhotosChange(images)}>Allega due foto</button>
   ),
 }))
 
-const question = (id: number, prompt: string, kind = "aperta", boss = false) => ({
-  id, t: "domanda", boss, question: { prompt_md: prompt, kind },
+const q = (item: number, prompt: string, kind = "aperta", extra: Record<string, unknown> = {}) => ({
+  t: "domanda", item, done: false, ...extra,
+  question: {
+    id: item, kind, difficulty: 2, prompt_md: prompt, topic_id: 4, doc_id: null, page: null,
+    lecture_id: 9, t_start: 120, options: kind === "multipla" ? ["Uno", "Due", "Tre"] : null, n_criteria: 2,
+  },
+})
+const scheda = { t: "scheda", topic: 4, done: false }
+const topics = { "4": { id: 4, name: "Serie di Laurent", summary_md: "La serie di Laurent ha anche potenze negative." } }
+
+const session = (entries: object[], extra: Record<string, unknown> = {}) => normalizeSession({
+  id: 28, course_id: 7, minutes: 45, started_at: "2026-11-25T10:00:00", ended_at: null, xp: 0,
+  entries, topics, resume_index: entries.findIndex((e: any) => !e.done), phase: "domanda", errors: [], ...extra,
 })
 
-const scheda = { id: 50, t: "scheda", topic: 8 }
-const topics = { 8: { name: "Derivate", summary_md: "La derivata misura il tasso di variazione." } }
-const session = (entries: object[] = []) => ({
-  id: 28, course_id: 7, minutes: 45, xp: 0, entries, topics,
+const answer = (over: Partial<AnswerResult> = {}): AnswerResult => ({
+  attempt_id: 1, score: 1, correct: null, answer_md: "Soluzione ufficiale", rubric: [], criteria_ok: [],
+  feedback_md: null, graded_by: "auto", xp: 10, retry: false, requeued: null,
+  source: { lecture_id: 9, lecture: "Lezione 12", t_start: 120, doc_id: null, doc: null, page: null }, ...over,
+})
+
+const finished = (over: Partial<FinishResult> = {}): FinishResult => ({
+  answered: 1, correct: 1, xp: 10, ready_before: 0.1, ready_after: 0.15, topics_up: [], wrong: [], streak: 1,
+  verdict: { tone: "warn", title: "Non sei pronto", text: "Proiezione bassa." }, ...over,
 })
 
 function renderStudio(query = "") {
@@ -46,6 +68,7 @@ function renderStudio(query = "") {
         <MemoryRouter initialEntries={[`/studio/7${query}`]}>
           <Routes>
             <Route path="/studio/:courseId" element={<Studio />} />
+            <Route path="/corsi/:id" element={<p>Pagina corso</p>} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -54,210 +77,309 @@ function renderStudio(query = "") {
   return client
 }
 
-function click(name: string) {
-  fireEvent.click(screen.getByRole("button", { name }))
-}
-
-/** La pagina mostra la schermata d'avvio: la sessione parte solo dal pulsante. */
+const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }))
+const pick = (name: string) => fireEvent.click(screen.getByRole("radio", { name }))
 async function start() {
   fireEvent.click(await screen.findByRole("button", { name: "Avvia sessione" }))
 }
 
 beforeEach(() => {
   vi.resetAllMocks()
+  window.scrollTo = (() => {}) as typeof window.scrollTo // jsdom non lo implementa
   useSessionStore.setState({ currentSession: null, todaySessions: [] })
-  vi.mocked(api.getCourse).mockResolvedValue({
-    id: 7, fullname: "Analisi", year_of_study: 1, passed: false, active: 1,
-    priority: 0, folder: null, lectures: 0, ready: 0,
-  })
-  vi.mocked(api.createSession).mockResolvedValue(session())
-  vi.mocked(api.answerSession).mockResolvedValue({ score: 1, answer_md: "Soluzione scritta", feedback_md: "Correzione testuale" })
-  vi.mocked(api.revealSession).mockResolvedValue({ answer_md: "Soluzione rivelata" })
-  vi.mocked(api.finishSession).mockResolvedValue({ ended_at: "2026-11-24T12:00:00Z", xp: 0, answered: 0, correct: 0 })
+  vi.mocked(api.getCourse).mockResolvedValue({ id: 7, fullname: "Analisi", shortname: "Analisi" } as any)
+  vi.mocked(api.finishSession).mockResolvedValue(finished())
+  vi.mocked(api.completeTopicLesson).mockResolvedValue({ ok: true })
 })
-
 afterEach(() => vi.restoreAllMocks())
 
-describe("Studio", () => {
+describe("Studio: avvio e ripresa", () => {
   it("aprire la pagina non crea sessioni: serve il pulsante Avvia", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Prima domanda")]))
     renderStudio("?duration=90")
     expect(await screen.findByRole("button", { name: "Avvia sessione" })).toBeDefined()
     expect(screen.getByRole("button", { name: "90 min" }).getAttribute("aria-pressed")).toBe("true")
     expect(api.createSession).not.toHaveBeenCalled()
-    expect(api.getStudyCourseStats).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole("button", { name: "25 min" }))
     await start()
-    await screen.findByText("Nessuna lezione nuova")
+    await screen.findByText("Prima domanda")
     expect(api.createSession).toHaveBeenCalledExactlyOnceWith(7, 25, undefined)
+    expect(useSessionStore.getState().currentSession?.backendId).toBe(28)
   })
 
-  it("riprende le schede dal server e mostra titolo e contenuto del topic", async () => {
-    useSessionStore.getState().startSession(7, 45, 28, [scheda])
-    vi.mocked(api.getSession).mockResolvedValue(session([scheda]))
+  it("dopo la ricarica riprende dalla prima voce non fatta, senza rifare le fatte", async () => {
+    useSessionStore.getState().startSession(7, 45, 28)
+    vi.mocked(api.getSession).mockResolvedValue(session([
+      q(1, "Già fatta uno", "aperta", { done: true }), q(2, "Già fatta due", "aperta", { done: true }), q(3, "Terza da fare"),
+    ], { resume_index: 2 }))
     renderStudio()
-
-    expect(await screen.findByRole("heading", { name: "Derivate" })).toBeDefined()
-    expect(screen.getByText(topics[8].summary_md)).toBeDefined()
-    expect(api.getSession).toHaveBeenCalledWith(28)
+    expect(await screen.findByText("Terza da fare")).toBeDefined()
+    expect(screen.queryByText("Già fatta uno")).toBeNull()
     expect(api.createSession).not.toHaveBeenCalled()
-    click("Ho compreso")
-    click("Prossima scheda")
-    expect(screen.getByText("Nessuna domanda di esercizio")).toBeDefined()
+    expect(screen.getByText("3/3")).toBeDefined()
   })
 
-  it("usa il topic di StudyTok anche se esiste una sessione generica dello stesso corso", async () => {
-    useSessionStore.getState().startSession(7, 45, 42, [scheda])
-    renderStudio("?topic=8&duration=25")
-    await start()
-
-    await screen.findByText("Nessuna lezione nuova")
-    expect(api.createSession).toHaveBeenCalledExactlyOnceWith(7, 25, 8)
-    expect(api.getSession).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().currentSession?.focusTopic).toBe(8)
+  it("ripresa in fase 'rivelata': torna all'autovalutazione con la soluzione", async () => {
+    useSessionStore.getState().startSession(7, 45, 28)
+    vi.mocked(api.getSession).mockResolvedValue(session([q(1, "Rivelata prima", "aperta", { revealed: true })], { phase: "rivelata" }))
+    vi.mocked(api.revealSession).mockResolvedValue({ answer_md: "Passaggi corretti", rubric: ["Imposta", "Conclude"] })
+    renderStudio()
+    expect(await screen.findByText("Passaggi corretti")).toBeDefined()
+    expect(api.revealSession).toHaveBeenCalledWith(28, 0)
+    expect(screen.getByRole("checkbox", { name: "Imposta" })).toBeDefined()
+    // dopo la ricarica la sicurezza va richiesta di nuovo, altrimenti non si potrebbe salvare
+    expect(screen.getByRole("button", { name: "Salva l'autovalutazione" }).hasAttribute("disabled")).toBe(true)
+    expect(screen.getByText("Quanto eri sicuro prima di vedere la soluzione?", { exact: false })).toBeDefined()
+    vi.mocked(api.answerSession).mockResolvedValue(answer({ score: 0.5, graded_by: "io" }))
+    pick("Credo")
+    fireEvent.click(screen.getByRole("checkbox", { name: "Imposta" }))
+    click("Salva l'autovalutazione")
+    await screen.findByText("Parziale")
+    expect(vi.mocked(api.answerSession).mock.calls[0][1]).toMatchObject({ idx: 0, self_criteria: [true, false], confidence: 2 })
   })
 
-  it.each(["0", "-1", "2.5", "abc", "9007199254740992"])("ignora il topic non valido %s", async (topic) => {
-    renderStudio(`?topic=${topic}`)
-    await start()
-    await screen.findByText("Nessuna lezione nuova")
-    expect(api.createSession).toHaveBeenCalledExactlyOnceWith(7, 45, undefined)
-  })
-
-  it("mantiene le fasi disgiunte e usa gli indici della coda per correggere e rivelare", async () => {
-    vi.mocked(api.createSession).mockResolvedValue(session([
-      question(75, "Domanda boss", "aperta", true),
-      question(76, "Riscaldamento uno"),
-      question(77, "Riscaldamento due"),
-      question(78, "Domanda pratica"),
-    ]))
+  it("una scheda letta non si ripropone dopo la ricarica anche se il server non la segna", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([scheda, q(2, "Dopo la scheda")]))
     renderStudio()
     await start()
-
-    await screen.findByText("Riscaldamento uno")
-    click("Rivela risposta")
-    expect(await screen.findByText("Soluzione rivelata")).toBeDefined()
-    click("Prossima domanda")
-    expect(screen.queryByText("Soluzione rivelata")).toBeNull()
-
-    click("Conferma risposta")
-    expect(await screen.findByText("Soluzione scritta")).toBeDefined()
-    expect(screen.getByText("Correzione testuale")).toBeDefined()
-    fireEvent.click(screen.getAllByRole("button", { name: "Fase successiva" })[0])
-    click("Vai alla fase successiva")
-
-    expect(screen.getByText("Domanda pratica")).toBeDefined()
-    click("Verifica risposta")
-    await screen.findByText("Correzione testuale")
-    fireEvent.click(screen.getAllByRole("button", { name: "Fase successiva" })[0])
-    expect(screen.getByText("Domanda boss")).toBeDefined()
-    click("Affronta il Boss")
-    await screen.findByText("Soluzione scritta")
-
-    expect(vi.mocked(api.revealSession).mock.calls).toEqual([[28, 1]])
-    expect(vi.mocked(api.answerSession).mock.calls.map(([, payload]) => payload.idx)).toEqual([2, 3, 0])
+    expect(await screen.findByRole("heading", { name: "Serie di Laurent" })).toBeDefined()
+    click(/Ho letto/)
+    expect(await screen.findByText("Dopo la scheda")).toBeDefined()
+    expect(api.completeTopicLesson).toHaveBeenCalledWith(4)
+    expect(useSessionStore.getState().currentSession?.localDone).toEqual([0])
   })
+})
 
-  it("invia tutte le foto e il testo alla consegna e mostra la correzione ricevuta", async () => {
-    vi.mocked(api.createSession).mockResolvedValue(session([
-      scheda, question(61, "Esercizio sul quaderno", "richiamo"),
-    ]))
-    vi.mocked(api.photoSession).mockResolvedValue({ score: 1, xp: 12, answer_md: "Soluzione fotografata", feedback_md: "Passaggi verificati" })
+describe("Studio: risposte", () => {
+  it("mostra il nome dell'argomento, non 'Topic N'", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Domanda con argomento")]))
     renderStudio()
     await start()
+    await screen.findByText("Domanda con argomento")
+    expect(screen.getByText("Serie di Laurent")).toBeDefined()
+    expect(screen.queryByText(/Topic 4/)).toBeNull()
+  })
 
-    await screen.findByText("Esercizio sul quaderno")
-    fireEvent.change(screen.getByPlaceholderText("Inserisci la tua risposta o procedimento..."), { target: { value: "I miei passaggi" } })
-    click("Svolgi a mano sul quaderno e allega foto")
+  it("vero/falso ha i pulsanti e manda Vero=1", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "La serie converge?", "vero_falso")]))
+    vi.mocked(api.answerSession).mockResolvedValue(answer({ correct: 1 }))
+    renderStudio()
+    await start()
+    await screen.findByText("La serie converge?")
+    click("Vero")
+    pick("Sicuro")
+    click("Conferma")
+    await screen.findByText("Corretta")
+    expect(vi.mocked(api.answerSession).mock.calls[0][1]).toMatchObject({ idx: 0, choice: 1, confidence: 3 })
+  })
+
+  it("'svolto sul quaderno' rivela e salva l'autovalutazione sui criteri, mai come testo", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Calcola il residuo")]))
+    vi.mocked(api.revealSession).mockResolvedValue({ answer_md: "Il residuo vale 2", rubric: ["Polo semplice", "Limite corretto"] })
+    vi.mocked(api.answerSession).mockResolvedValue(answer({ score: 0.5, graded_by: "io" }))
+    renderStudio()
+    await start()
+    await screen.findByText("Calcola il residuo")
+    expect(screen.getByRole("button", { name: /Svolto sul quaderno/ }).hasAttribute("disabled")).toBe(true)
+    pick("Credo")
+    click(/Svolto sul quaderno/)
+    expect(await screen.findByText("Il residuo vale 2")).toBeDefined()
+    fireEvent.click(screen.getByRole("checkbox", { name: "Polo semplice" }))
+    click("Salva l'autovalutazione")
+    await screen.findByText("Parziale")
+    const payload = vi.mocked(api.answerSession).mock.calls[0][1]
+    expect(payload).toMatchObject({ idx: 0, self_criteria: [true, false], confidence: 2 })
+    expect(payload.text).toBeUndefined()
+  })
+
+  it("senza criteri: giudizio No/Parziale/Sì con i tasti 1-3", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Enuncia il teorema")]))
+    vi.mocked(api.revealSession).mockResolvedValue({ answer_md: "Enunciato", rubric: [] })
+    vi.mocked(api.answerSession).mockResolvedValue(answer({ score: 0.85, graded_by: "io" }))
+    renderStudio()
+    await start()
+    await screen.findByText("Enuncia il teorema")
+    fireEvent.keyDown(window, { key: "1" })
+    fireEvent.keyDown(window, { key: " " })
+    await screen.findByText("Enunciato")
+    fireEvent.keyDown(window, { key: "3" })
+    fireEvent.keyDown(window, { key: "Enter" })
+    await screen.findByText("Corretta")
+    expect(vi.mocked(api.answerSession).mock.calls[0][1]).toMatchObject({ self_score: 1, confidence: 1 })
+  })
+
+  it("scorciatoie: 1-3 sicurezza, lettera per l'opzione, Invio consegna e poi avanza", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Quale?", "multipla"), q(2, "Seconda")]))
+    vi.mocked(api.answerSession).mockResolvedValue(answer({ correct: 1 }))
+    renderStudio()
+    await start()
+    await screen.findByText("Quale?")
+    fireEvent.keyDown(window, { key: "3" })
+    fireEvent.keyDown(window, { key: "b" })
+    fireEvent.keyDown(window, { key: "Enter" })
+    await screen.findByText("Corretta")
+    expect(vi.mocked(api.answerSession).mock.calls[0][1]).toMatchObject({ choice: 1, confidence: 3 })
+    fireEvent.keyDown(window, { key: "Enter" })
+    expect(await screen.findByText("Seconda")).toBeDefined()
+  })
+
+  it("manda i secondi misurati davvero", async () => {
+    let t = 1_000_000
+    vi.spyOn(Date, "now").mockImplementation(() => t)
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Quanto tempo?", "multipla")]))
+    vi.mocked(api.answerSession).mockResolvedValue(answer())
+    renderStudio()
+    await start()
+    await screen.findByText("Quanto tempo?")
+    t += 42_000
+    click(/Due/)
+    pick("Credo")
+    click("Conferma")
+    await screen.findByText("Corretta")
+    expect(vi.mocked(api.answerSession).mock.calls[0][1].seconds).toBe(42)
+  })
+
+  it("la domanda sbagliata rimessa in coda dal server compare alla fine", async () => {
+    const s = session([q(1, "Domanda difficile", "multipla"), q(2, "Altra domanda", "multipla")])
+    vi.mocked(api.createSession).mockResolvedValue(s)
+    vi.mocked(api.answerSession)
+      .mockResolvedValueOnce(answer({ score: 0, correct: 2, requeued: { idx: 2, t: "domanda", item: 1, retry: true, done: false, question: s.entries[0].question } }))
+      .mockResolvedValueOnce(answer({ correct: 0 }))
+    renderStudio()
+    await start()
+    await screen.findByText("Domanda difficile")
+    click(/Uno/); pick("Sicuro"); click("Conferma")
+    expect(await screen.findByText(/La ritrovi in fondo/)).toBeDefined()
+    click("Avanti")
+    await screen.findByText("Altra domanda")
+    click(/Uno/); pick("Credo"); click("Conferma")
+    await screen.findByText("Corretta")
+    click("Avanti")
+    expect(await screen.findByText("Domanda difficile")).toBeDefined()
+    expect(screen.getByText(/L'avevi sbagliata/)).toBeDefined()
+    expect(screen.getByText("3/3")).toBeDefined()
+  })
+
+  it("nessun avanzamento a tempo: dopo due ore la domanda è ancora lì", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Resto qui"), q(2, "Non devo comparire")]))
+      renderStudio("?duration=25")
+      await start()
+      await screen.findByText("Resto qui")
+      await act(async () => { vi.advanceTimersByTime(2 * 3600_000) })
+      expect(screen.getByText("Resto qui")).toBeDefined()
+      expect(screen.queryByText("Non devo comparire")).toBeNull()
+      expect(api.answerSession).not.toHaveBeenCalled()
+      expect(api.finishSession).not.toHaveBeenCalled()
+      expect(screen.getByText(/oltre il tempo previsto/)).toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("se il salvataggio fallisce: errore, niente avanti, 'Riprova' rimanda la stessa richiesta", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Salvami", "multipla"), q(2, "Dopo")]))
+    vi.mocked(api.answerSession)
+      .mockRejectedValueOnce(new ApiError(502, "Il servizio AI non ha risposto correttamente."))
+      .mockResolvedValueOnce(answer())
+    renderStudio()
+    await start()
+    await screen.findByText("Salvami")
+    click(/Due/); pick("Sicuro"); click("Conferma")
+    expect((await screen.findByRole("alert")).textContent).toContain("Risposta non salvata")
+    expect(screen.queryByRole("button", { name: "Avanti" })).toBeNull()
+    expect(screen.getByRole("button", { name: "Conferma" }).hasAttribute("disabled")).toBe(true)
+    click("Riprova")
+    await screen.findByText("Corretta")
+    const [first, second] = vi.mocked(api.answerSession).mock.calls
+    expect(second).toEqual(first)
+  })
+
+  it("nessun doppio invio con doppio clic", async () => {
+    let resolve!: (r: AnswerResult) => void
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Un clic solo", "multipla")]))
+    vi.mocked(api.answerSession).mockImplementation(() => new Promise((r) => { resolve = r }))
+    renderStudio()
+    await start()
+    await screen.findByText("Un clic solo")
+    click(/Tre/); pick("Sicuro")
+    const btn = screen.getByRole("button", { name: "Conferma" })
+    fireEvent.click(btn); fireEvent.click(btn)
+    fireEvent.keyDown(window, { key: "Enter" })
+    await act(async () => resolve(answer()))
+    expect(api.answerSession).toHaveBeenCalledTimes(1)
+  })
+
+  it("le foto vanno al percorso foto con testo, sicurezza e secondi", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Esercizio a mano", "esercizio")]))
+    vi.mocked(api.photoSession).mockResolvedValue(answer({ graded_by: "ai", feedback_md: "Passaggi letti" }))
+    renderStudio()
+    await start()
+    await screen.findByText("Esercizio a mano")
+    fireEvent.change(screen.getByRole("textbox", { name: "La tua risposta" }), { target: { value: "I miei passaggi" } })
+    click(/Foto del quaderno/)
     click("Allega due foto")
-    expect(api.photoSession).not.toHaveBeenCalled()
-    click("Conferma risposta")
-
-    expect(await screen.findByText("Soluzione fotografata")).toBeDefined()
-    expect(screen.getByText("Passaggi verificati")).toBeDefined()
-    expect(api.photoSession).toHaveBeenCalledExactlyOnceWith(28, {
-      idx: 1, images, text: "I miei passaggi", confidence: 2, seconds: 0,
-    })
+    pick("Credo")
+    click("Invia le foto per la correzione")
+    expect(await screen.findByText("Passaggi letti")).toBeDefined()
+    expect(vi.mocked(api.photoSession).mock.calls[0][1]).toMatchObject({ idx: 0, images, text: "I miei passaggi", confidence: 2 })
     expect(api.answerSession).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().currentSession?.questionsAnswered).toBe(1)
   })
+})
 
-  it("salva al termine del boss, resta nella fase se fallisce e aspetta il salvataggio prima del defaticamento", async () => {
-    vi.mocked(api.createSession).mockResolvedValue(session([question(52, "Boss da concludere", "aperta", true)]))
-    let resolveFinish!: (result: { ended_at: string }) => void
-    vi.mocked(api.finishSession)
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveFinish = resolve }))
-    const client = renderStudio()
+describe("Studio: fine sessione", () => {
+  it("alla fine salva e mostra un riepilogo onesto con errori, argomenti e prossima sessione", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Ultima", "multipla")]))
+    vi.mocked(api.answerSession).mockResolvedValue(answer({ score: 0, correct: 0, attempt_id: 77 }))
+    vi.mocked(api.finishSession).mockResolvedValue(finished({
+      answered: 1, correct: 0,
+      wrong: [{ id: 1, attempt_id: 77, prompt_md: "Ultima", topic: "Serie di Laurent", lecture_id: 9, t_start: 120, doc_id: null, page: null }],
+    }))
+    vi.mocked(api.flashcardFromError).mockRejectedValue(new ApiError(404, "Elemento non trovato."))
+    renderStudio()
     await start()
-    const invalidate = vi.spyOn(client, "invalidateQueries")
-    await screen.findByText("Nessuna lezione nuova")
-    click("Vai alla fase successiva")
-    click("Vai al Boss Finale")
-    click("Affronta il Boss")
-    await screen.findByText("Soluzione scritta")
-    click("Termina sfida")
-
-    expect((await screen.findByRole("alert")).textContent).toContain("Impossibile salvare")
-    expect(screen.getByText("Boss da concludere")).toBeDefined()
-    expect(screen.queryByRole("button", { name: "Vedi risultati finali" })).toBeNull()
-    click("Riprova il salvataggio")
-    await waitFor(() => expect(api.finishSession).toHaveBeenCalledTimes(2))
-    expect(screen.queryByRole("button", { name: "Vedi risultati finali" })).toBeNull()
-    await act(async () => resolveFinish({ ended_at: "2026-11-24T12:00:00Z" }))
-    fireEvent.click(await screen.findByRole("button", { name: "Vedi risultati finali" }))
-
-    expect(screen.getByText("Sessione Completata!")).toBeDefined()
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["plan"] })
+    await screen.findByText("Ultima")
+    click(/Uno/); pick("Tiro a indovinare"); click("Conferma")
+    await screen.findByText("Da rivedere")
+    click("Vai al riepilogo")
+    expect(await screen.findByText("Sessione conclusa")).toBeDefined()
+    expect(api.finishSession).toHaveBeenCalledExactlyOnceWith(28)
+    expect(screen.getByText(/0 giuste su 1/)).toBeDefined()
+    expect(screen.getByText("Cosa hai sbagliato")).toBeDefined()
+    expect(screen.getByText("Argomenti da rivedere")).toBeDefined()
+    expect(screen.getByRole("button", { name: /25 min sugli errori/ })).toBeDefined()
+    click(/Crea flashcard/)
+    expect(await screen.findByText(/non è ancora disponibile/)).toBeDefined()
+    expect(api.flashcardFromError).toHaveBeenCalledWith(77)
+    expect(useSessionStore.getState().currentSession).toBeNull()
     expect(useSessionStore.getState().todaySessions).toHaveLength(1)
   })
 
-  it("salva prima del defaticamento anche quando il boss è vuoto", async () => {
+  it("se il salvataggio finale fallisce si può riprovare", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Fine", "multipla")]))
+    vi.mocked(api.answerSession).mockResolvedValue(answer())
+    vi.mocked(api.finishSession).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(finished())
     renderStudio()
     await start()
-    await screen.findByText("Nessuna lezione nuova")
-    click("Vai alla fase successiva")
-    click("Vai al Boss Finale")
-    click("Vai al defaticamento")
-    await screen.findByRole("button", { name: "Vedi risultati finali" })
-    expect(api.finishSession).toHaveBeenCalledExactlyOnceWith(28)
+    await screen.findByText("Fine")
+    click(/Uno/); pick("Sicuro"); click("Conferma")
+    await screen.findByText("Corretta")
+    click("Vai al riepilogo")
+    expect((await screen.findByRole("alert")).textContent).toContain("Impossibile salvare la fine")
+    click("Riprova il salvataggio")
+    expect(await screen.findByText("Sessione conclusa")).toBeDefined()
+    await waitFor(() => expect(api.finishSession).toHaveBeenCalledTimes(2))
   })
 
-  it("il timer avanza dalla fase corrente nelle quattro scadenze e salva alla fine", async () => {
-    vi.mocked(api.createSession).mockResolvedValue(session([
-      question(52, "Ripasso a tempo", "richiamo"),
-      scheda,
-      question(53, "Pratica a tempo"),
-      question(54, "Boss a tempo", "aperta", true),
-    ]))
-    let now = 0
-    let frameId = 0
-    const frames = new Map<number, FrameRequestCallback>()
-    vi.spyOn(performance, "now").mockImplementation(() => now)
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      frames.set(++frameId, callback)
-      return frameId
-    })
-    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => { frames.delete(id) })
-    const elapse = async (minutes: number) => {
-      await act(async () => {
-        now += minutes * 60_000
-        const pending = [...frames.values()]
-        frames.clear()
-        pending.forEach((callback) => callback(now))
-      })
-    }
-
+  it("'Termina' chiede conferma e poi chiude la sessione", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([q(1, "Una"), q(2, "Due")]))
     renderStudio()
     await start()
-    await screen.findByText("Ripasso a tempo")
-    await elapse(2)
-    expect(screen.getByRole("heading", { name: "Derivate" })).toBeDefined()
-    await elapse(60)
-    expect(screen.getByText("Pratica a tempo")).toBeDefined()
-    await elapse(30)
-    expect(screen.getByText("Boss a tempo")).toBeDefined()
-    await elapse(8)
-    await screen.findByRole("button", { name: "Vedi risultati finali" })
-    expect(api.finishSession).toHaveBeenCalledExactlyOnceWith(28)
+    await screen.findByText("Una")
+    click("Termina la sessione")
+    expect(api.finishSession).not.toHaveBeenCalled()
+    click("Termina e vedi il riepilogo")
+    expect(await screen.findByText("Sessione conclusa")).toBeDefined()
   })
 })
