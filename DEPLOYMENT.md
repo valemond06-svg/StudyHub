@@ -1,16 +1,19 @@
 # Deployment di StudyHub
 
-## Windows come client
+FastAPI serve l'interfaccia React alla radice `/` dalla build in `studyhub-frontend/dist`, con fallback a `index.html` per le rotte della SPA. La vecchia interfaccia statica viene ritirata. Il server Vite su porta 5173 è riservato allo sviluppo, come descritto nel [README](README.md).
 
-Apri l’interfaccia del PC fisso nel browser usando la connessione predisposta su rete privata. Il launcher `collega_al_fisso.bat` prova i collegamenti configurati via cavo, Wi-Fi e Tailscale sulla porta 8765. Per usare StudyHub sul solo PC Windows, `installa.ps1` prepara Python, il venv e Chromium. `start.bat` avvia l’interfaccia locale dopo l’installazione.
+## Windows
+
+Per un'installazione locale prepara Node.js con npm ed esegui `installa.ps1`. Lo script sincronizza il venv in `%USERPROFILE%\.studyhub\venv`, installa Chromium per Playwright, prepara la build React e crea o aggiorna `StudyHub.lnk` sul desktop. Il collegamento esegue `apri_studyhub.vbs`, che avvia `studyhub.bat serve --no-open` in background e apre `http://127.0.0.1:8765` in una finestra app. `start.bat` offre anche l'avvio nel browser. Usa `aggiorna.bat` per il pull e il setup, con una nuova build quando cambiano gli input del frontend o manca la build.
+
+Per usare il server del PC fisso dal client Windows, apri l'interfaccia tramite la connessione sulla rete privata. `collega_al_fisso.bat` prova i collegamenti configurati via cavo, Wi-Fi e Tailscale sulla porta 8765.
 
 ## PC fisso Linux come server
 
-1. Prepara il venv da `backend/` con `uv sync --locked --python 3.12`. Installa Chromium come indicato nel [README](README.md), completa `studyhub login` ed esegui `studyhub doctor` dal venv.
-2. Esegui il backend con un servizio utente systemd. Imposta la directory di lavoro e il percorso del venv. Per un server locale usa `.venv/bin/studyhub serve --no-open`, che ascolta su loopback alla porta 8765. Per l’accesso da un altro computer usa l’inoltro sulla rete privata predisposta per il server. Proteggi l’accesso a monte perché la pagina iniziale distribuisce il cookie applicativo.
-3. Per il sync periodico usa il timer di esempio `studyhub-sync.timer`. Per il turno di notte usa l’unità `studyhub-notte.service` o il timer del Brain, se già configurato. I file di esempio e i comandi systemd sono in [scripts/linux](scripts/linux/README.md).
-
-Il servizio FastAPI presenta l’interfaccia integrata. Per l’interfaccia React in sviluppo usa Vite sulla porta 5173 come descritto nel [README](README.md).
+1. Installa uv e Node.js con npm secondo i requisiti del [README](README.md). Dalla radice del repo esegui `./studyhub.sh setup` per preparare il venv, Chromium e la build React. Completa l'accesso con `./studyhub.sh login` ed esegui `./studyhub.sh doctor`.
+2. Configura un servizio utente systemd con la radice del repo come directory di lavoro e il percorso assoluto di `studyhub.sh serve --no-open` in `ExecStart`. Il server ascolta su loopback alla porta 8765. Per l'accesso remoto usa l'inoltro sulla rete privata predisposta per il server. Proteggi l'accesso a monte perché la pagina iniziale distribuisce il cookie applicativo.
+3. Per il sync periodico usa il timer di esempio `studyhub-sync.timer`. Per il turno di notte usa l'unità `studyhub-notte.service` o il timer del Brain, se già configurato. Nei file di esempio sostituisci il venv `backend/.venv` con `~/.studyhub/venv` se hai usato il percorso predefinito del setup. I file e i comandi systemd sono in [scripts/linux](scripts/linux/README.md).
+4. Per aggiornare il server, esegui `git pull --ff-only` e `./studyhub.sh setup` dalla radice del repo. Riavvia il servizio dopo che il setup è terminato con successo.
 
 ## Backup e ripristino con restic
 
@@ -18,7 +21,7 @@ Il DB attivo si trova per impostazione predefinita in `~/.studyhub/studyhub.db`.
 
 Il wrapper legge il file password dalla directory riservata sotto la directory locale di StudyHub e applica una retention di 14 copie giornaliere, 8 settimanali e 12 mensili. Tratta i backup come dati personali.
 
-1. Prima del backup, ferma i processi che scrivono sul DB e assicurati che le modifiche in WAL siano confluite nel file principale. Il wrapper esclude i file `.db-wal` e `.db-shm`.
+1. Per il backup del DB attivo, usa il wrapper `studyhub.backup`. Crea uno snapshot coerente tramite SQLite prima di passarlo a restic.
 2. Esegui il backup sul repository configurato e controlla esito, snapshot e integrità con `restic snapshots` e `restic check`.
 3. Per il ripristino, usa `restic restore latest --target <cartella-di-ripristino>`. Verifica il database ripristinato con `studyhub.backup.verify_restore` prima di sostituire quello attivo, a servizio fermo.
 

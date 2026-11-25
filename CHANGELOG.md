@@ -1,5 +1,13 @@
 # Changelog — StudyHub
 
+## 2026-11-25
+
+- Distribuita l'interfaccia React v3 tramite FastAPI con fallback per le rotte SPA e build in fase di installazione e aggiornamento. Ritirata la vecchia UI. Eliminati dati simulati e comandi senza azione, allineati player, ricerca ed errori alle API. Aggiunti KaTeX, supporto mobile e persistenza selettiva di tema e preferenze. (`c31c78a`, `b681e0c`, `eeae86e`, `226ffa0`, `7e623c3`)
+- Sessioni Studio collegate alle API reali, con salvataggio atomico e idempotente, ripresa per corso, gestione delle sessioni orfane, tempi e confidenza. Aggiunti autovalutazione con rubrica, vero/falso, correzione da foto, riprova e flashcard dagli errori. Migliorati tutor, quiz, simulazioni e flusso delle lezioni. (`f02e2f8`, `2c3b5a1`, `915cb30`, `226ffa0`, `83ccd9f`, `c31a241`)
+- Aggiunte le viste Oggi, Piano esami con ricalcolo, Quaderno, Flashcard e Focus persistente con orologio server. Aggiunti Impara a passi, il pannello lezione con appunti e quiz e lo stato effettivo di sistema e provider AI. Aggiornato lo schema SQLite alla migrazione 16. (`f821d40`, `adf5ca2`, `c31a241`)
+- Rafforzate privacy di appunti, consegne, OCR e trascrizioni, protezioni CORS e CSRF, validazione e redazione dei log. I GET non avviano elaborazioni AI. Rimossi i residui di FreeLLMAPI. Aggiunti snapshot SQLite per restic e corretti coda job, lock ed elaborazione della ricerca vettoriale. (`af09ac9`, `ea5e896`, `915cb30`, `340c53e`, `226ffa0`, `6fa7c95`, `c31a241`)
+- Abilitato TypeScript strict, estesa la suite Vitest e corretta una race nella gamification. Aggiornate documentazione e verifiche CI per backend e frontend. (`32310c9`, `32f0277`)
+
 ## Sprint 2-3 (24/11/2026)
 
 - Frontend React v3 con proxy Vite e sessioni Studio collegate alle API reali. Aggiornati piano, quiz, tutor e padronanza. Aggiunti feed StudyTok e interfaccia per le simulazioni. (`c31c78a`, `b681e0c`, `f02e2f8`, `2c3b5a1`)

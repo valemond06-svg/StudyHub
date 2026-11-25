@@ -13,8 +13,16 @@ if not exist "%STUDYHUB_PY%" (
 
 cd /d "%~dp0backend" || exit /b 1
 if "%~1"=="" (
+  call :check_frontend
   "%STUDYHUB_PY%" -m studyhub.cli serve
   exit /b
 )
+if /i "%~1"=="serve" call :check_frontend
 "%STUDYHUB_PY%" -m studyhub.cli %*
 exit /b %ERRORLEVEL%
+
+:check_frontend
+if not exist "%~dp0studyhub-frontend\dist\index.html" (
+  >&2 echo Build del frontend assente. Esegui installa.ps1.
+)
+exit /b 0

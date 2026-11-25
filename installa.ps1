@@ -16,6 +16,58 @@ $Py = Join-Path $Venv "Scripts\python.exe"
 function Passo($t) { Write-Host "`n== $t" -ForegroundColor Cyan }
 function Controlla($what) { if ($LASTEXITCODE -ne 0) { throw "$what non riuscito (codice $LASTEXITCODE)" } }
 
+function Aggiorna-Frontend {
+  Push-Location $Frontend
+  try {
+    $inputs = @(
+      Get-Item -LiteralPath "package-lock.json", "package.json", "index.html", "vite.config.ts"
+      Get-ChildItem -LiteralPath "." -Filter "tsconfig*.json" -File
+      Get-ChildItem -LiteralPath "src", "public" -Recurse -File -Force
+    )
+    $manifest = ($inputs | Sort-Object FullName | ForEach-Object {
+      $relative = $_.FullName.Substring($Frontend.Length + 1)
+      "$relative $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
+    }) -join "`n"
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      $fingerprint = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($manifest))).Replace("-", "")
+    } finally { $sha.Dispose() }
+    $index = "dist\index.html"
+    $marker = "dist\.studyhub-build"
+    if ((Test-Path -LiteralPath $index -PathType Leaf) -and
+        (Test-Path -LiteralPath $marker -PathType Leaf) -and
+        (([string](Get-Content -LiteralPath $marker -Raw)).Trim() -eq $fingerprint)) {
+      Write-Host "Frontend gia aggiornato."
+      return
+    }
+
+    Write-Host "Build del frontend assente o da aggiornare."
+    if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker }
+    & $npm ci --include=dev
+    Controlla "npm ci"
+    & $npm run build
+    Controlla "npm run build"
+    if (-not (Test-Path -LiteralPath $index -PathType Leaf)) { throw "Build incompleta: manca studyhub-frontend/dist/index.html." }
+    Set-Content -LiteralPath $marker -Value $fingerprint -Encoding ASCII
+    Write-Host "Frontend compilato in studyhub-frontend/dist."
+  } finally { Pop-Location }
+}
+
+Passo "Requisiti frontend (Node.js e npm)"
+$Frontend = Join-Path $App "studyhub-frontend"
+$node = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+$npm = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
+if (-not $node -or -not $npm) {
+  throw "Node.js o npm assente. Installa Node.js da https://nodejs.org/ e riapri PowerShell."
+}
+$nodeVersion = & $node --version
+Controlla "Verifica di Node.js"
+$version = [version]($nodeVersion.TrimStart("v"))
+if (($version.Major -ne 20 -or $version.Minor -lt 19) -and $version -lt [version]"22.12") {
+  throw "Node.js $nodeVersion non supportato da Vite. Serve Node.js 20.19+ della serie 20 oppure 22.12+. Scaricalo da https://nodejs.org/."
+}
+Write-Host "Node.js $nodeVersion"
+
 Passo "uv (installa e gestisce Python)"
 $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source
 if (-not $uv) {
@@ -38,6 +90,9 @@ try { & $uv sync; Controlla "uv sync" } finally { Pop-Location }
 Passo "Browser per il login UniVR (Chromium di Playwright)"
 & $Py -m playwright install chromium
 Controlla "Installazione di Chromium"
+
+Passo "Frontend React"
+Aggiorna-Frontend
 
 Passo "Impostazioni (config.yaml)"
 $cfg = @()
@@ -85,4 +140,9 @@ else { Write-Host "Ollama non installato: la ricerca funziona per parole. Per ag
 
 Passo "Controllo finale"
 & $Py -m studyhub.cli doctor
-Write-Host "`nFatto. Apri StudyHub dall'icona sul desktop: la sezione Studia ti guida nel login e nel primo download." -ForegroundColor Green
+Controlla "Diagnostica di StudyHub"
+if ($NoCollegamento) {
+  Write-Host "`nInstallazione aggiornata. Avvia StudyHub con start.bat." -ForegroundColor Green
+} else {
+  Write-Host "`nInstallazione aggiornata. Apri StudyHub dall'icona sul desktop." -ForegroundColor Green
+}

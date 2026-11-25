@@ -4,10 +4,32 @@ StudyHub è un’app per studiare i corsi UniVR. Sincronizza materiali e registr
 
 ## Requisiti
 
-- Python 3.12 o superiore e uv per il backend.
-- Node.js 22 (almeno 22.22.2 per la suite frontend) e npm.
+- Python 3.12 o superiore e uv per il backend. Su Windows `installa.ps1` installa uv se manca.
+- [Node.js](https://nodejs.org/) con npm. Per la build serve Node.js 20.19+ della serie 20 oppure 22.12+. Per sviluppo e test usa Node.js 22.22.2 o una versione successiva della serie 22.
 - Account UniVR e Chromium per la sincronizzazione con Moodle e Panopto.
 - Spazio per materiali, registrazioni e trascrizioni. Whisper può usare CPU o GPU NVIDIA. Ollama con `bge-m3` serve per gli embedding della ricerca semantica. Le funzioni generative richiedono un provider configurato.
+
+## Installazione e aggiornamento
+
+Su Windows, dalla radice del repo, esegui:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\installa.ps1 -Anno 2
+```
+
+Indica il tuo anno di corso con `-Anno`. Puoi impostare la cartella dei corsi con `-Cartella` e saltare la creazione del collegamento con `-NoCollegamento`. Per aggiornare il checkout e l'installazione usa `aggiorna.bat`.
+
+Su Linux, installa prima uv e Node.js con npm, poi esegui dalla radice:
+
+```sh
+./studyhub.sh setup
+```
+
+Per aggiornare su Linux, esegui `git pull --ff-only` e rilancia `./studyhub.sh setup`. Su entrambi i sistemi il setup sincronizza il venv in `~/.studyhub/venv`, prepara Chromium per Playwright e compila l'interfaccia React in `studyhub-frontend/dist` quando manca la build o cambiano gli input.
+
+## Uso quotidiano
+
+Su Windows apri il collegamento **StudyHub** sul desktop. Apre la finestra dell'app all'indirizzo `http://127.0.0.1:8765`. Puoi usare anche `start.bat` per avviare il server locale e aprire l'interfaccia nel browser. Su Linux usa `./studyhub.sh serve`. Per il primo accesso, segui il percorso di configurazione nell'app e accedi con l'account UniVR per sincronizzare i corsi.
 
 ## Avvio in sviluppo
 
@@ -17,10 +39,10 @@ Dal repo, prepara il backend e avvialo dal suo ambiente virtuale. Su Windows con
 cd backend
 uv sync --locked --python 3.12
 . .\.venv\Scripts\Activate.ps1
-studyhub serve
+studyhub serve --no-open
 ```
 
-Su Linux, dopo `uv sync`, attiva il venv con `source .venv/bin/activate`. Il backend apre l’interfaccia integrata su `http://localhost:8765`. Per usare la sincronizzazione, imposta `PLAYWRIGHT_BROWSERS_PATH` su `~/.studyhub/ms-playwright` (percorso predefinito di StudyHub), installa Chromium con `python -m playwright install chromium` e avvia `studyhub login` dal venv.
+Su Linux, dopo `uv sync`, attiva il venv con `source .venv/bin/activate` e avvia `studyhub serve --no-open`. Per usare la sincronizzazione, imposta `PLAYWRIGHT_BROWSERS_PATH` su `~/.studyhub/ms-playwright`, installa Chromium con `python -m playwright install chromium` e avvia `studyhub login` dal venv.
 
 In un secondo terminale, dalla radice del repo:
 
@@ -36,7 +58,7 @@ Apri `http://localhost:5173` per usare il frontend React. Vite inoltra `/api`, `
 
 | Cartella | Comandi |
 | --- | --- |
-| `backend/` (venv attivo) | `pytest` |
+| `backend/` (venv attivo) | `pytest` · `ruff check src tests` |
 | `studyhub-frontend/` | `npm test` · `npm run lint` · `npm run build` |
 
 ## Struttura
