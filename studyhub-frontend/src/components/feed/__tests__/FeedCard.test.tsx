@@ -76,14 +76,14 @@ describe("FeedCard Component", () => {
     expect(screen.queryByText("Tranello del Docente & Errori Tipici")).toBeNull()
   })
 
-  it("renders 'Studia argomento completo' button", () => {
+  it("renders 'Prepara una sessione' button", () => {
     render(
       <MemoryRouter>
         <FeedCard short={mockShort} index={0} total={10} isActive={true} />
       </MemoryRouter>
     )
 
-    const studyButton = screen.getByText("Studia argomento completo")
+    const studyButton = screen.getByText("Prepara una sessione")
     expect(studyButton).toBeDefined()
   })
 })

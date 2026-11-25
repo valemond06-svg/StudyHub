@@ -14,7 +14,6 @@ import {
   ChevronUp,
   FileText,
   Target,
-  ExternalLink,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -315,7 +314,8 @@ export function FeedCard({
           </div>
         </div>
 
-        {/* Tranello d'Esame (Flip / Espandi) */}
+        {/* Tranello d'Esame: solo se il backend lo conosce davvero (niente testo di ripiego generico) */}
+        {short.exam_trick && (
         <div className="space-y-2">
           <Button
             type="button"
@@ -352,16 +352,14 @@ export function FeedCard({
               </div>
               <div className="leading-relaxed text-rose-950 dark:text-rose-100">
                 <MathMarkdown
-                  content={
-                    short.exam_trick ||
-                    "Presta molta attenzione alle ipotesi fondamentali del teorema e ai casi limite (segni, condizioni al contorno, convergenza)."
-                  }
+                  content={short.exam_trick}
                   className="text-rose-950 dark:text-rose-100"
                 />
               </div>
             </div>
           )}
         </div>
+        )}
 
         {/* Footer: Pulsanti di Navigazione & "Studia argomento completo" */}
         <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800 flex items-center justify-between gap-3">
@@ -401,8 +399,7 @@ export function FeedCard({
             className="gap-1.5 text-xs font-semibold h-9 px-3.5 rounded-xl bg-accent-600 hover:bg-accent-700 text-white shadow-sm"
           >
             <BookOpen className="h-3.5 w-3.5" />
-            <span>Studia argomento completo</span>
-            <ExternalLink className="h-3 w-3 opacity-80" />
+            <span>Prepara una sessione</span>
           </Button>
         </div>
       </CardContent>

@@ -6,9 +6,8 @@ import {
   Flame,
   CheckCircle2,
   AlertCircle,
-  ArrowRight,
-  Volume2,
 } from "lucide-react"
+import * as Dialog from "@radix-ui/react-dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
@@ -230,9 +229,19 @@ export function FlashcardReviewModal({
     initialTotal > 0 ? Math.round((firstAttemptCorrect / initialTotal) * 100) : 100
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-white/95 dark:bg-neutral-950/95 backdrop-blur-md transition-all duration-200 select-none">
+    <Dialog.Root open>
+    <Dialog.Portal>
+    <Dialog.Content
+      aria-describedby={undefined}
+      // Esc e clic fuori li gestisce il ripasso (con conferma se restano carte)
+      onEscapeKeyDown={(e) => e.preventDefault()}
+      onPointerDownOutside={(e) => e.preventDefault()}
+      onInteractOutside={(e) => e.preventDefault()}
+      className="fixed inset-0 z-[500] flex flex-col bg-white dark:bg-neutral-950 transition-all duration-200 select-none outline-none"
+    >
+      <Dialog.Title className="sr-only">Ripasso flashcard</Dialog.Title>
       {/* Top Header Bar */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-neutral-200/80 dark:border-neutral-800/80">
+      <header className="flex items-center justify-between gap-3 px-3 sm:px-6 py-3 sm:py-4 border-b border-neutral-200/80 dark:border-neutral-800/80">
         <div className="flex items-center gap-3">
           <div className="flex items-center justify-center h-9 w-9 rounded-xl bg-accent-50 dark:bg-accent-950/40 text-accent-600 dark:text-accent-400 border border-accent-200/50 dark:border-accent-800/40">
             <Flame className="h-5 w-5" />
@@ -282,6 +291,7 @@ export function FlashcardReviewModal({
             }}
             className="rounded-full text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 h-9 w-9 p-0"
             title="Chiudi sessione (Esc)"
+            aria-label="Chiudi ripasso"
           >
             <X className="h-5 w-5" />
           </Button>
@@ -420,9 +430,9 @@ export function FlashcardReviewModal({
                     <span className="text-2xs uppercase tracking-wider font-semibold text-accent-600 dark:text-accent-400">
                       Risposta
                     </span>
-                    <Badge variant="outline" className="text-2xs font-mono text-neutral-400">
-                      EF: {((currentCard.ease_factor ?? 2500) > 100 ? (currentCard.ease_factor ?? 2500) / 1000 : (currentCard.ease_factor ?? 2.5)).toFixed(1)}
-                    </Badge>
+                    {currentCard.lecture_title && (
+                      <span className="text-2xs text-neutral-400 truncate max-w-[60%]">{currentCard.lecture_title}</span>
+                    )}
                   </div>
 
                   <div className="text-base sm:text-lg text-neutral-850 dark:text-neutral-100 leading-relaxed font-normal">
@@ -601,6 +611,8 @@ export function FlashcardReviewModal({
           </div>
         </div>
       )}
-    </div>
+    </Dialog.Content>
+    </Dialog.Portal>
+    </Dialog.Root>
   )
 }

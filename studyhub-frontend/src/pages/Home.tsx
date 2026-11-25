@@ -1,24 +1,20 @@
 import { useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
-import { Plus, Clock, Flame, Award, BookOpen, TrendingUp, AlertCircle, ChevronRight, Zap, Loader2, RefreshCw, Target } from "lucide-react"
+import { Clock, Flame, Award, BookOpen, TrendingUp, AlertCircle, ChevronRight, Zap, Loader2, RefreshCw, Target, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { AIPanelWidget } from "@/components/home/AIPanelWidget"
+import { AIAlerts } from "@/components/home/AIAlerts"
 import { api } from "@/lib/api"
-import type { Course, Exam, PlanData, PlanTask, DueFlashcardsResponse, NotificationItem, StudyCourseOverview, AIPanelData } from "@/types"
+import { summarizeAIProblems } from "@/lib/ai-health"
+import { averageReadiness, processedMaterial, readinessByCourse, readinessVariant, READY_THRESHOLD } from "@/lib/readiness"
+import { dedupeNotifications } from "@/lib/notifications"
+import type { AIStatusResponse, Course, Exam, PlanData, PlanTask, DueFlashcardsResponse, NotificationItem, StudyCourseOverview, AIPanelData } from "@/types"
 import { cn, safeFormatDistance, safeDaysLeft } from "@/lib/utils"
-
-function courseReadiness(c: Course): number {
-  // /api/courses espone `ready` (n. lezioni pronte) e `lectures` (n. totale): la
-  // prontezza % si ricava dal rapporto. Quando non ci sono lezioni → 0.
-  if (!c.lectures) return 0
-  return Math.round((c.ready / c.lectures) * 100)
-}
 
 function getLevelInfo(totalXP: number) {
   // Formula progressiva: 1 livello ogni 500 XP
@@ -46,6 +42,7 @@ const KIND_LABEL: Record<string, string> = {
 
 export function Home() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [today] = useState(() => new Date())
 
   const {
@@ -98,6 +95,18 @@ export function Home() {
     refetchInterval: 30_000,
   })
 
+  const { data: aiStatus } = useQuery<AIStatusResponse>({
+    queryKey: ["aiStatus"],
+    queryFn: api.getAIStatus,
+    refetchInterval: 60_000,
+  })
+  const aiProblems = summarizeAIProblems(aiStatus, aiPanel)
+
+  const markRead = useMutation({
+    mutationFn: api.markNotificationsRead,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  })
+
   const loading = coursesLoading || planLoading || dueLoading || notificationsLoading || studyCoursesLoading
   const hasError = coursesError || planError
 
@@ -114,10 +123,13 @@ export function Home() {
     plan?.week_progress?.label ??
     (plan?.week_progress ? `${plan.week_progress.completed}/${plan.week_progress.total}` : "0/7")
 
-  // Corsi attivi (non passati e prioritari), ordinati per priorità.
+  // Corsi attivi (stessa definizione della pagina Corsi), i prioritari in testa.
   const activeCourses = courses
-    .filter((c) => !c.passed && c.priority > 0)
+    .filter((c) => Boolean(c.active) && !c.passed)
     .sort((a, b) => b.priority - a.priority)
+  const priorityCount = activeCourses.filter((c) => c.priority > 0).length
+  // Prontezza reale: padronanza stimata all'esame (mastery) da /api/study
+  const readiness = readinessByCourse(studyCourses)
 
   // Appelli in calendario reali: arrivano da /api/plan (upcoming_exams).
   const upcomingExams = (plan?.exams ?? [])
@@ -126,11 +138,9 @@ export function Home() {
     .slice(0, 3)
   const nextExam = upcomingExams[0]
 
-  // Prontezza media: media delle prontezze dei corsi attivi.
-  const avgReadiness = activeCourses.length
-    ? Math.round(activeCourses.reduce((sum, c) => sum + courseReadiness(c), 0) / activeCourses.length)
-    : 0
-  const readyForExam = activeCourses.filter((c) => courseReadiness(c) >= 80).length
+  const knownReadiness = activeCourses.map((c) => readiness.get(c.id)).filter((v): v is number => v !== undefined)
+  const avgReadiness = averageReadiness(knownReadiness)
+  const readyForExam = knownReadiness.filter((v) => v >= READY_THRESHOLD).length
 
   // Sessione consigliata → primo compito del piano di oggi (/api/plan.tasks).
   const recommendedTask: PlanTask | undefined = plan?.tasks?.[0]
@@ -141,8 +151,10 @@ export function Home() {
   // Ripassi in scadenza reali: /api/flashcards/due → stats.da_ripassare.
   const dueCount = due?.stats?.da_ripassare ?? 0
 
-  // Novità Moodle reali: /api/notifications (non lette).
-  const newItems = notifications.slice(0, 5)
+  // Novità reali da /api/notifications, senza ripetizioni
+  const groupedNews = dedupeNotifications(notifications)
+  const unreadNews = groupedNews.filter((n) => !n.read)
+  const newItems = (unreadNews.length ? unreadNews : groupedNews).slice(0, 5)
 
   // Collega ogni corso attivo al suo appello (da plan.courses) per la griglia.
   const planCourseByCourseId = new Map((plan?.courses ?? []).map((pc) => [pc.course_id, pc]))
@@ -184,14 +196,10 @@ export function Home() {
             <h1 className="text-3xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">Oggi</h1>
             <p className="text-neutral-500 dark:text-neutral-400 mt-1">Nessun corso attivo</p>
           </div>
-          <Button onClick={() => navigate("/corsi")} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Nuovo corso
-          </Button>
         </div>
         <Card>
           <CardContent className="py-12 text-center text-neutral-500 dark:text-neutral-400">
-            Non hai ancora corsi attivi. Aggiungine uno per iniziare a studiare.
+            Nessun corso attivo nel catalogo. I corsi arrivano da Moodle: controlla il login in Impostazioni.
           </CardContent>
         </Card>
       </div>
@@ -207,14 +215,12 @@ export function Home() {
             Oggi
           </h1>
           <p className="text-neutral-500 dark:text-neutral-400 mt-1">
-            {activeCourses.length} corsi attivi · Prontezza media {avgReadiness}%
+            {activeCourses.length} corsi attivi{priorityCount ? ` (${priorityCount} prioritari)` : ""} · Prontezza media {avgReadiness === null ? "n.d." : `${avgReadiness}%`}
           </p>
         </div>
-        <Button onClick={() => navigate("/corsi")} className="gap-2">
-          <Plus className="h-4 w-4" />
-          Nuovo corso
-        </Button>
       </div>
+
+      <AIAlerts problems={aiProblems} />
 
       {/* Readiness + Next Exam + Streak + Level */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -241,7 +247,7 @@ export function Home() {
                     r="40"
                     stroke="currentColor"
                     strokeWidth="8"
-                    strokeDasharray={`${(avgReadiness / 100) * 251.2} 251.2`}
+                    strokeDasharray={`${((avgReadiness ?? 0) / 100) * 251.2} 251.2`}
                     strokeLinecap="round"
                     fill="none"
                     className="text-accent-500 transition-all duration-500"
@@ -249,12 +255,12 @@ export function Home() {
                   />
                 </svg>
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-3xl font-bold text-neutral-950 dark:text-neutral-50">{avgReadiness}%</span>
+                  <span className="text-2xl font-bold text-neutral-950 dark:text-neutral-50">{avgReadiness === null ? "n.d." : `${avgReadiness}%`}</span>
                 </div>
               </div>
               <div className="space-y-1">
-                <p className="text-sm text-neutral-500 dark:text-neutral-400">Corsi attivi</p>
-                <p className="text-xl font-semibold">{activeCourses.length}</p>
+                <p className="text-sm text-neutral-500 dark:text-neutral-400">Con dati di studio</p>
+                <p className="text-xl font-semibold">{knownReadiness.length}</p>
                 <p className="text-sm text-neutral-500 dark:text-neutral-400">Pronti per l'esame</p>
                 <p className="text-xl font-semibold text-success-600">{readyForExam}</p>
               </div>
@@ -419,25 +425,36 @@ export function Home() {
                 <BookOpen className="h-5 w-5" />
                 Novità
               </span>
-              <Badge variant="outline">{newItems.length} elementi</Badge>
+              <span className="flex items-center gap-2">
+                <Badge variant="outline">{unreadNews.length} da leggere</Badge>
+                {unreadNews.length > 0 && (
+                  <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" disabled={markRead.isPending} onClick={() => markRead.mutate()}>
+                    <CheckCheck className="h-3.5 w-3.5" />
+                    Segna come lette
+                  </Button>
+                )}
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="max-h-64">
-              <div className="space-y-3">
+            <div>
+              <div className="space-y-2">
                 {newItems.map((item) => (
-                  <div
+                  <button
+                    type="button"
                     key={item.id}
+                    disabled={!item.course_id}
+                    onClick={() => item.course_id && navigate(`/corsi/${item.course_id}`)}
                     className={cn(
-                      "flex items-start gap-3 p-3 rounded-lg transition-colors",
-                      "hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                      "w-full text-left flex items-start gap-3 p-3 rounded-lg transition-colors min-w-0",
+                      "hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:hover:bg-transparent disabled:cursor-default"
                     )}
                   >
                     <div className="p-2 rounded-lg bg-accent-100 dark:bg-accent-900/30 shrink-0">
                       <BookOpen className="h-5 w-5 text-accent-600 dark:text-accent-400" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{item.title}</p>
+                      <p className="font-medium truncate">{item.title}{item.count > 1 ? ` (${item.count})` : ""}</p>
                       {item.body && (
                         <p className="text-sm text-neutral-500 dark:text-neutral-400 line-clamp-2">{item.body}</p>
                       )}
@@ -446,11 +463,11 @@ export function Home() {
                         {safeFormatDistance(item.created_at)}
                       </p>
                     </div>
-                    <ChevronRight className="h-4 w-4 text-neutral-400 shrink-0" />
-                  </div>
+                    {item.course_id ? <ChevronRight className="h-4 w-4 text-neutral-400 shrink-0" /> : null}
+                  </button>
                 ))}
               </div>
-            </ScrollArea>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -472,14 +489,16 @@ export function Home() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {activeCourses.map((course) => {
-                const readiness = courseReadiness(course)
+                const pct = readiness.get(course.id) ?? null
+                const material = processedMaterial(course)
                 const exam = courseExamByCourseId.get(course.id)
                 const planCourse = planCourseByCourseId.get(course.id)
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={course.id}
                     className={cn(
-                      "p-4 rounded-lg border transition-all",
+                      "w-full min-w-0 text-left p-4 rounded-lg border transition-all",
                       "hover:border-accent-300 hover:shadow-md dark:hover:border-accent-700"
                     )}
                     onClick={() => navigate(`/corsi/${course.id}`)}
@@ -488,30 +507,30 @@ export function Home() {
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{course.fullname}</p>
                         <p className="text-sm text-neutral-500 dark:text-neutral-400 truncate">
-                          {course.year_of_study}° anno
+                          {course.year_of_study ? `${course.year_of_study}° anno` : "Anno n.d."}
                           {planCourse?.days_left != null && ` · appello tra ${planCourse.days_left} giorni`}
                         </p>
                       </div>
-                      <Badge variant={readiness >= 80 ? "success" : readiness >= 50 ? "warning" : "default"}>
-                        {readiness}%
+                      <Badge variant={readinessVariant(pct)} title="Prontezza all'esame (padronanza stimata)">
+                        {pct === null ? "n.d." : `${pct}%`}
                       </Badge>
                     </div>
                     <Separator className="my-3" />
                     <div className="flex items-center justify-between">
-                      <Progress value={readiness} className="flex-1 h-1.5" />
-                      {course.lectures > 0 && (
-                        <span className="ml-3 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
-                          {course.ready}/{course.lectures} pronte
+                      <Progress value={pct ?? 0} className="flex-1 h-1.5" />
+                      {material.total > 0 && (
+                        <span className="ml-3 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap" title="Lezioni con audio o trascrizione">
+                          materiale {material.done}/{material.total}
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-2 mt-3 text-xs text-neutral-500 dark:text-neutral-400">
                       <TrendingUp className="h-3 w-3 shrink-0" />
                       <span className="truncate">
-                        {exam ? `Prossimo: ${exam.course} (${safeFormatDistance(exam.date)})` : "Nessun appello"}
+                        {exam ? `Appello ${safeFormatDistance(exam.date)}` : "Nessun appello in calendario"}
                       </span>
                     </div>
-                  </div>
+                  </button>
                 )
               })}
             </div>

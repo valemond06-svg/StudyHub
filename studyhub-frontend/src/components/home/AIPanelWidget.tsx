@@ -1,4 +1,3 @@
-import { useState } from "react"
 import {
   Brain,
   Moon,
@@ -16,7 +15,6 @@ import { it } from "date-fns/locale"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { useToast } from "@/hooks/use-toast"
 import type { AIPanelData } from "@/types"
 import { cn } from "@/lib/utils"
 
@@ -28,14 +26,10 @@ interface AIPanelWidgetProps {
 }
 
 export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPanelWidgetProps) {
-  const { toast } = useToast()
-  const [schedulingNight, setSchedulingNight] = useState(false)
-
-  // Cluster local LLM status
+  // LLM locale: URL e stato reali dal backend (il nome del modello non è verificato dal backend, quindi non lo mostriamo)
   const cluster = data?.cluster
-  const clusterStatus = cluster?.status ?? (data?.coda?.in_corso?.length ? "attivo" : "in_attesa")
-  const clusterUrl = cluster?.url ?? "10.10.10.1:8080"
-  const clusterModel = cluster?.model ?? "Qwen3.6-35B"
+  const clusterStatus = cluster?.status ?? "offline"
+  const clusterUrl = cluster?.url ? cluster.url.replace(/^https?:\/\//, "") : null
 
   // Arretrati counts
   const daTrascrivere = data?.arretrati?.da_trascrivere ?? 0
@@ -46,7 +40,7 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
   const jobInCorso = data?.coda?.in_corso?.length ?? 0
 
   // Claude Pro window
-  const usoPct = data?.finestra?.uso_pct ?? 0
+  const usoPct = data?.finestra?.uso_pct ?? null
   const sogliaPct = data?.finestra?.soglia_pct ?? 70
   const arretratiInPausa = data?.finestra?.arretrati_in_pausa ?? false
   const resetAlle = data?.finestra?.reset_alle
@@ -55,17 +49,6 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
   const notte = data?.notte
   const ultimoTurno = notte?.ultimo
   const isNightRunning = Boolean(notte?.in_corso)
-
-  const handlePlanNightTurn = () => {
-    setSchedulingNight(true)
-    setTimeout(() => {
-      setSchedulingNight(false)
-      toast({
-        title: "Turno di notte pianificato",
-        description: "Il timer brain-notte.timer è attivo e partirà alle 22:30 con comando studyhub notte --solo-locale.",
-      })
-    }, 400)
-  }
 
   // Format Claude reset time
   let resetLabel: string | null = null
@@ -103,7 +86,7 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
                   Coda AI & Turno di Notte
                 </CardTitle>
                 <CardDescription className="text-xs text-neutral-500 dark:text-neutral-400">
-                  Cluster Dual-PC ({clusterUrl}) · Trascrizioni Whisper & Claude Pro
+                  {clusterUrl ? `LLM locale ${clusterUrl}` : "LLM locale non configurato"} · Whisper e Claude Pro
                 </CardDescription>
               </div>
             </div>
@@ -120,7 +103,7 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
                   ? "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
                   : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 border-neutral-200 dark:border-neutral-700"
               )}
-              title={`LLM Locale su ${clusterUrl}`}
+              title={clusterUrl ? `LLM locale su ${clusterUrl}` : "LLM locale"}
             >
               <span
                 className={cn(
@@ -132,24 +115,12 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
                     : "bg-neutral-400"
                 )}
               />
-              <span>{clusterModel}</span>
+              <span>LLM locale</span>
               <span className="opacity-60">·</span>
               <span className="capitalize">
                 {clusterStatus === "attivo" ? "Attivo" : clusterStatus === "in_attesa" ? "In attesa" : "Offline"}
               </span>
             </div>
-
-            {/* Quick Actions */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5 text-xs"
-              onClick={handlePlanNightTurn}
-              disabled={schedulingNight}
-            >
-              <Moon className="h-3.5 w-3.5 text-indigo-500" />
-              <span>Pianifica turno</span>
-            </Button>
 
             <Button
               variant="ghost"
@@ -157,6 +128,7 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
               className="h-8 w-8 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
               onClick={onRefresh}
               title="Aggiorna stato AI"
+              aria-label="Aggiorna stato AI"
             >
               <RefreshCw className={cn("h-4 w-4", (isFetching || isLoading) && "animate-spin text-accent-500")} />
             </Button>
@@ -201,7 +173,7 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
           <div className="p-3.5 rounded-xl border border-neutral-200/60 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/20 space-y-1">
             <div className="flex items-center gap-2 text-neutral-500 dark:text-neutral-400 text-xs font-medium">
               <Cpu className="h-3.5 w-3.5 text-emerald-500" />
-              <span>Unità 35B</span>
+              <span>Unità da analizzare</span>
             </div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-2xl font-bold text-neutral-900 dark:text-neutral-100">
@@ -209,7 +181,7 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
               </span>
               <span className="text-xs text-neutral-400">nuove</span>
             </div>
-            <p className="text-[11px] text-neutral-500 dark:text-neutral-400">Turno notturno</p>
+            <p className="text-[11px] text-neutral-500 dark:text-neutral-400">Materiale nuovo</p>
           </div>
 
           {/* Job in corso */}
@@ -242,7 +214,7 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
             </div>
             <div className="flex items-center gap-2 text-neutral-500 dark:text-neutral-400">
               <span className="font-semibold text-neutral-900 dark:text-neutral-100">
-                {usoPct}%
+                {usoPct === null ? "n.d." : `${usoPct}%`}
               </span>
               <span className="text-[11px]">(Stop automatico al {sogliaPct}%)</span>
             </div>
@@ -260,13 +232,13 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
             <div
               className={cn(
                 "h-full rounded-full transition-all duration-500",
-                usoPct >= sogliaPct
+                (usoPct ?? 0) >= sogliaPct
                   ? "bg-amber-500"
-                  : usoPct >= 50
+                  : (usoPct ?? 0) >= 50
                   ? "bg-amber-400 dark:bg-amber-500"
                   : "bg-accent-500"
               )}
-              style={{ width: `${Math.min(usoPct, 100)}%` }}
+              style={{ width: `${Math.min(usoPct ?? 0, 100)}%` }}
             />
           </div>
 
@@ -274,7 +246,9 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
             <span>
               {arretratiInPausa
                 ? "Soglia di sicurezza raggiunta: gli arretrati riprenderanno al prossimo reset"
-                : "Finestra disponibile per la stesura appunti con Sonnet"}
+                : usoPct === null
+                ? "Uso della finestra non ancora rilevato"
+                : "Sotto la soglia: gli arretrati possono usare Sonnet"}
             </span>
             {resetLabel && <span>{resetLabel}</span>}
           </div>
@@ -308,11 +282,11 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
                 ) : (
                   <AlertTriangle className="h-3 w-3" />
                 )}
-                <span>{ultimoTurno.esito === "ok" ? "Completato" : "LLM offline"}</span>
+                <span>{ultimoTurno.esito === "ok" ? "Completato" : ultimoTurno.esito === "llm_giu" ? "LLM offline" : (ultimoTurno.esito || "Esito sconosciuto")}</span>
               </Badge>
             ) : (
               <Badge variant="outline" className="text-xs">
-                In attesa (22:30)
+                Nessun dato
               </Badge>
             )}
           </div>
@@ -328,7 +302,7 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
               <div>
                 <span className="text-neutral-400 block text-[11px]">Unità elaborate</span>
                 <span className="font-medium text-neutral-800 dark:text-neutral-200">
-                  {ultimoTurno.unita_fatte ?? 0} unità (35B)
+                  {ultimoTurno.unita_fatte ?? 0} unità
                 </span>
               </div>
               <div>
@@ -346,7 +320,7 @@ export function AIPanelWidget({ data, isLoading, isFetching, onRefresh }: AIPane
             </div>
           ) : (
             <div className="pt-2 text-xs text-neutral-500 dark:text-neutral-400">
-              Nessun turno notturno ancora completato. Il Brain lancia la sequenza (Whisper → svuotamento Ollama → Qwen 35B) ogni notte alle 22:30.
+              Nessun turno notturno registrato su questo computer.
             </div>
           )}
         </div>

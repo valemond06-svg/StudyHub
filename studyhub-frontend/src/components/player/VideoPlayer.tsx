@@ -37,33 +37,26 @@ import { Switch } from "@/components/ui/switch"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import * as Dialog from "@radix-ui/react-dialog"
 import { cn } from "@/lib/utils"
-import { api } from "@/lib/api"
-import type { Lecture } from "@/types"
+import { api, describeError } from "@/lib/api"
+import {
+  toLectureMedia,
+  formatTime,
+  slideIndexAt,
+  silenceEndAt,
+  type PlayerMode,
+  type TranscriptSegment,
+  type SlideInfo,
+  type SilenceInterval,
+  type LectureMediaData,
+} from "@/lib/lecture-media"
 
 // ============================================
 // Types
 // ============================================
 
-export type PlayerMode = "panopto" | "video" | "slides"
-
-export interface TranscriptSegment {
-  t_start: number
-  t_end: number
-  text: string
-}
-
-export interface SlideInfo {
-  index: number
-  timestamp: number
-  url: string
-  thumbnailUrl: string
-}
-
-export interface SilenceInterval {
-  start: number
-  end: number
-}
+export type { PlayerMode, TranscriptSegment, SlideInfo, SilenceInterval, LectureMediaData }
 
 export interface PlayerNote {
   id: string
@@ -74,24 +67,6 @@ export interface PlayerNote {
   slideIndex?: number
   text: string
   createdAt: string
-}
-
-export interface LectureMediaData {
-  audio_path?: string
-  slides_path?: string
-  media_url?: string
-  video_path?: string
-  videos?: string[]
-  panopto_embed_url?: string
-  viewer_url?: string
-  panopto_id?: string
-  transcript_segments?: TranscriptSegment[]
-  silence_intervals?: SilenceInterval[]
-  slides?: SlideInfo[]
-  video_modes?: string[]
-  default_mode?: string
-  has_local_audio?: boolean
-  has_local_slides?: boolean
 }
 
 export interface VideoPlayerProps {
@@ -112,96 +87,13 @@ export interface VideoPlayerHandle {
 }
 
 const SPEED_PRESETS = [0.75, 1, 1.25, 1.5, 2]
-
-// ============================================
-// IndexedDB Cache for Offline-First
-// ============================================
-
-const DB_NAME = "studyhub-media-cache"
-const DB_VERSION = 1
-const AUDIO_STORE = "audio"
-const SLIDES_STORE = "slides"
-
-function openDB(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === "undefined") return Promise.resolve(null)
-  return new Promise((resolve) => {
-    try {
-      const request = indexedDB.open(DB_NAME, DB_VERSION)
-      request.onerror = () => resolve(null)
-      request.onsuccess = () => resolve(request.result)
-      request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result
-        if (!db.objectStoreNames.contains(AUDIO_STORE)) {
-          db.createObjectStore(AUDIO_STORE)
-        }
-        if (!db.objectStoreNames.contains(SLIDES_STORE)) {
-          db.createObjectStore(SLIDES_STORE)
-        }
-      }
-    } catch {
-      resolve(null)
-    }
-  })
-}
-
-async function cacheBlob(storeName: string, key: string, blob: Blob): Promise<void> {
-  const db = await openDB()
-  if (!db) return
-  return new Promise((resolve, reject) => {
-    try {
-      const tx = db.transaction(storeName, "readwrite")
-      const store = tx.objectStore(storeName)
-      const request = store.put(blob, key)
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error)
-    } catch (err) {
-      reject(err)
-    }
-  })
-}
-
-async function getCachedBlob(storeName: string, key: string): Promise<Blob | null> {
-  const db = await openDB()
-  if (!db) return null
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(storeName, "readonly")
-      const store = tx.objectStore(storeName)
-      const request = store.get(key)
-      request.onsuccess = () => resolve(request.result || null)
-      request.onerror = () => resolve(null)
-    } catch {
-      resolve(null)
-    }
-  })
-}
-
-async function fetchWithCache(url: string, storeName: string, cacheKey: string): Promise<Blob> {
-  const cached = await getCachedBlob(storeName, cacheKey)
-  if (cached) return cached
-
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`Failed to fetch ${url}`)
-  const blob = await response.blob()
-  await cacheBlob(storeName, cacheKey, blob).catch(() => {})
-  return blob
-}
+const NO_SLIDES: SlideInfo[] = []
+const NO_SEGMENTS: TranscriptSegment[] = []
+const NO_SILENCES: SilenceInterval[] = []
 
 // ============================================
 // Helper Functions
 // ============================================
-
-export function formatTime(seconds: number): string {
-  if (isNaN(seconds) || seconds < 0) return "0:00"
-  const totalSecs = Math.floor(seconds)
-  const hours = Math.floor(totalSecs / 3600)
-  const mins = Math.floor((totalSecs % 3600) / 60)
-  const secs = totalSecs % 60
-  if (hours > 0) {
-    return `${hours}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
-  }
-  return `${mins}:${secs.toString().padStart(2, "0")}`
-}
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
@@ -354,6 +246,8 @@ export function PanoptoPlayer({
 
 interface Html5VideoPlayerProps {
   videoUrl: string
+  /** Video su Moodle: il browser deve essere già autenticato su Moodle */
+  isRemote?: boolean
   lectureTitle: string
   currentTime: number
   duration: number
@@ -381,7 +275,7 @@ interface Html5VideoPlayerProps {
 
 export function Html5VideoPlayer({
   videoUrl,
-  lectureTitle,
+  isRemote = false,
   currentTime,
   duration,
   playbackRate,
@@ -449,6 +343,14 @@ export function Html5VideoPlayer({
       ref={containerRef}
       className="flex flex-col h-full w-full max-w-5xl mx-auto gap-3 select-none"
     >
+      {isRemote && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">
+          <span>Video ospitato su Moodle: se non parte, accedi a Moodle in questo browser.</span>
+          <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold underline underline-offset-2">
+            Apri su Moodle <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        </div>
+      )}
       {/* 16:9 Video Canvas Wrapper */}
       <div className="relative w-full aspect-video bg-neutral-950 rounded-xl overflow-hidden shadow-2xl border border-neutral-800 flex items-center justify-center group">
         <video
@@ -712,6 +614,7 @@ export function Html5VideoPlayer({
 
 interface SlideAudioPlayerProps {
   slides: SlideInfo[]
+  hasAudio?: boolean
   activeSlideIndex: number
   audioRef: React.RefObject<HTMLAudioElement | null>
   currentTime: number
@@ -737,6 +640,7 @@ interface SlideAudioPlayerProps {
 
 export function SlideAudioPlayer({
   slides,
+  hasAudio = true,
   activeSlideIndex,
   audioRef,
   currentTime,
@@ -849,6 +753,11 @@ export function SlideAudioPlayer({
         )}
       </div>
 
+      {!hasAudio && (
+        <p className="px-3 py-2 rounded-lg bg-neutral-900 border border-neutral-800 text-xs text-neutral-400">
+          Audio della lezione non ancora estratto: puoi sfogliare le slide, la riproduzione non è disponibile.
+        </p>
+      )}
       {/* Audio Controls Bar */}
       <div className="flex flex-col gap-2.5 p-3.5 bg-neutral-100 dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
         {/* Seek Bar */}
@@ -1447,7 +1356,6 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const [showSlidesStrip, setShowSlidesStrip] = useState(true)
     const [activeTab, setActiveTab] = useState<"transcript" | "slides" | "notes">("transcript")
     const [notes, setNotes] = useState<PlayerNote[]>(() => loadNotes(lectureId))
-    const [slideObjectUrls, setSlideObjectUrls] = useState<Record<string, string>>({})
 
     // Media Element Refs
     const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -1458,107 +1366,27 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const isSeekingRef = useRef(false)
     const lastSilenceSkipRef = useRef<number>(-1)
 
-    // Load lecture data
+    // Load lecture data (contratto reale del backend → lib/lecture-media.ts)
     useEffect(() => {
       let cancelled = false
 
       async function loadLectureData() {
         try {
           setIsLoading(true)
-          const data = (await api.getLecture(lectureId)) as Lecture & Partial<LectureMediaData> & {
-            transcript?: { segments: TranscriptSegment[] }
-            silences?: SilenceInterval[]
+          const media = toLectureMedia(await api.getLecture(lectureId), lectureId)
+          if (cancelled) return
+          setMediaData(media)
+          setPlayerMode(media.defaultMode ?? "slides")
+          if (media.panoptoEmbedUrl) {
+            const start = Math.max(0, Math.floor(initialTime))
+            const url = /([?&])start=\d+/.test(media.panoptoEmbedUrl)
+              ? media.panoptoEmbedUrl.replace(/([?&])start=\d+/, `$1start=${start}`)
+              : `${media.panoptoEmbedUrl}${media.panoptoEmbedUrl.includes("?") ? "&" : "?"}start=${start}`
+            setPanoptoSrc(url)
           }
-
-          // Normalize transcript segments
-          const segments: TranscriptSegment[] =
-            data.transcript_segments || data.transcript?.segments || []
-
-          // Build slide list
-          let slides: SlideInfo[] | undefined = data.slides
-          if (!slides?.length && segments.length) {
-            slides = segments.map((seg, i) => ({
-              index: i,
-              timestamp: seg.t_start,
-              url: `/media/${lectureId}/slides/${i + 1}.png`,
-              thumbnailUrl: `/media/${lectureId}/slides/${i + 1}.png`,
-            }))
-          }
-
-          // Panopto embed URL normalization
-          let panoptoEmbed = data.panopto_embed_url
-          if (!panoptoEmbed && data.panopto_id) {
-            panoptoEmbed = `https://univr.cloud.panopto.eu/Panopto/Pages/Embed.aspx?id=${data.panopto_id}&autoplay=false&offerviewer=true&showtitle=true&showbrand=true&start=0&interactivity=all`
-          } else if (!panoptoEmbed && data.viewer_url && data.viewer_url.includes("id=")) {
-            try {
-              const url = new URL(data.viewer_url)
-              const id = url.searchParams.get("id")
-              if (id) {
-                panoptoEmbed = `https://univr.cloud.panopto.eu/Panopto/Pages/Embed.aspx?id=${id}&autoplay=false&offerviewer=true&showtitle=true&showbrand=true&start=0&interactivity=all`
-              }
-            } catch {}
-          }
-
-          // Video URL normalization
-          let resolvedMediaUrl = data.media_url
-          if (!resolvedMediaUrl && data.video_path) {
-            resolvedMediaUrl = data.video_path.startsWith("/") || data.video_path.startsWith("http")
-              ? data.video_path
-              : `/media/${lectureId}/${data.video_path}`
-          } else if (!resolvedMediaUrl && data.videos && data.videos.length > 0) {
-            resolvedMediaUrl = `/video/${lectureId}/${data.videos[0]}`
-          }
-
-          if (!cancelled) {
-            const mediaPayload: LectureMediaData = {
-              audio_path: data.audio_path || `/media/${lectureId}/audio.opus`,
-              slides_path: data.slides_path,
-              media_url: resolvedMediaUrl,
-              video_path: data.video_path,
-              videos: data.videos,
-              panopto_embed_url: panoptoEmbed,
-              viewer_url: data.viewer_url,
-              panopto_id: data.panopto_id || undefined,
-              transcript_segments: segments,
-              silence_intervals: data.silence_intervals || data.silences || [],
-              slides,
-              video_modes: data.video_modes,
-              default_mode: data.default_mode,
-              has_local_audio: data.has_local_audio ?? Boolean(data.has_audio),
-              has_local_slides: data.has_local_slides ?? Boolean(slides && slides.length > 0),
-            }
-            setMediaData(mediaPayload)
-
-            // Determine default player mode
-            const hasPanopto = Boolean(panoptoEmbed || data.video_modes?.includes("panopto"))
-            const hasVideo = Boolean(resolvedMediaUrl || data.video_modes?.includes("moodle") || data.video_modes?.includes("drive"))
-            const hasSlides = Boolean(slides && slides.length > 0) || Boolean(mediaPayload.has_local_audio)
-
-            let chosenMode: PlayerMode = "slides"
-            if (data.default_mode === "panopto" && hasPanopto) {
-              chosenMode = "panopto"
-            } else if ((data.default_mode === "moodle" || data.default_mode === "drive") && hasVideo) {
-              chosenMode = "video"
-            } else if (data.default_mode === "slides" && hasSlides) {
-              chosenMode = "slides"
-            } else if (hasPanopto) {
-              chosenMode = "panopto"
-            } else if (hasVideo) {
-              chosenMode = "video"
-            } else {
-              chosenMode = "slides"
-            }
-
-            setPlayerMode(chosenMode)
-            if (panoptoEmbed) {
-              setPanoptoSrc(panoptoEmbed)
-            }
-            setError(null)
-          }
+          setError(null)
         } catch (err) {
-          if (!cancelled) {
-            setError(err instanceof Error ? err.message : "Errore nel caricamento della lezione")
-          }
+          if (!cancelled) setError(describeError(err, "Errore nel caricamento della lezione"))
         } finally {
           if (!cancelled) setIsLoading(false)
         }
@@ -1568,76 +1396,28 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       return () => {
         cancelled = true
       }
-    }, [lectureId])
+    }, [lectureId, initialTime])
 
-    // Pre-cache slides in IndexedDB
+    // Slide: solo quelle che esistono davvero (slides.json); nessun prefetch, il browser le carica quando servono.
+    const resolvedSlides: SlideInfo[] = mediaData?.slides ?? NO_SLIDES
+    const transcriptSegments: TranscriptSegment[] = mediaData?.transcript ?? NO_SEGMENTS
+    const silenceIntervals: SilenceInterval[] = mediaData?.silences ?? NO_SILENCES
+    const audioUrl = mediaData?.audioUrl ?? null
+
+    // Audio della modalità Slide: streaming diretto dal backend (niente copia intera in IndexedDB)
     useEffect(() => {
-      const slides = mediaData?.slides
-      if (!slides?.length) return
+      if (playerMode !== "slides" || !audioUrl || audioRef.current) return
 
-      slides.forEach((slide, i) => {
-        const cacheKey = `lecture-${lectureId}-slide-${i + 1}`
-        fetchWithCache(slide.url, SLIDES_STORE, cacheKey).catch(() => {})
-      })
-    }, [mediaData?.slides, lectureId])
-
-    // Resolve cached slides URLs
-    useEffect(() => {
-      const slides = mediaData?.slides
-      if (!slides?.length) return
-
-      let cancelled = false
-      const urls: Record<string, string> = {}
-      Promise.all(
-        slides.map(async (slide, i) => {
-          const cacheKey = `lecture-${lectureId}-slide-${i + 1}`
-          const blob = await getCachedBlob(SLIDES_STORE, cacheKey)
-          if (blob) urls[i] = URL.createObjectURL(blob)
-        })
-      ).then(() => {
-        if (!cancelled) setSlideObjectUrls((prev) => ({ ...prev, ...urls }))
-      })
-
-      return () => {
-        cancelled = true
-      }
-    }, [mediaData?.slides, lectureId])
-
-    const resolvedSlides = useMemo(() => {
-      if (!mediaData?.slides) return []
-      return mediaData.slides.map((s, i) => ({
-        ...s,
-        url: slideObjectUrls[i] || s.url,
-        thumbnailUrl: slideObjectUrls[i] || s.thumbnailUrl,
-      }))
-    }, [mediaData?.slides, slideObjectUrls])
-
-    // Initialize Audio Element for Slides mode (Offline-first)
-    useEffect(() => {
-      if (playerMode !== "slides" || audioRef.current) return
-
-      let disposed = false
       const audio = new Audio()
       audio.preload = "metadata"
-      audio.crossOrigin = "anonymous"
       audioRef.current = audio
-
-      const audioUrl = mediaData?.audio_path || `/media/${lectureId}/audio.opus`
-      fetchWithCache(audioUrl, AUDIO_STORE, `lecture-${lectureId}`)
-        .then((blob) => {
-          if (disposed) return
-          audio.src = URL.createObjectURL(blob)
-        })
-        .catch(() => {
-          if (!disposed) audio.src = audioUrl
-        })
+      audio.src = audioUrl
 
       audio.addEventListener("loadedmetadata", () => {
         durationRef.current = audio.duration
         setDuration(audio.duration)
-        if (initialTime > 0) {
-          currentTimeRef.current = initialTime
-          audio.currentTime = initialTime
+        if (currentTimeRef.current > 0) {
+          audio.currentTime = currentTimeRef.current
         }
       })
       audio.addEventListener("timeupdate", () => {
@@ -1648,8 +1428,6 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       })
       audio.addEventListener("ended", () => {
         setIsPlaying(false)
-        currentTimeRef.current = 0
-        setCurrentTime(0)
       })
       audio.addEventListener("play", () => setIsPlaying(true))
       audio.addEventListener("pause", () => setIsPlaying(false))
@@ -1660,12 +1438,12 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       })
 
       return () => {
-        disposed = true
         audio.pause()
-        audio.src = ""
+        audio.removeAttribute("src")
         audioRef.current = null
       }
-    }, [playerMode, mediaData?.audio_path, lectureId, initialTime])
+    }, [playerMode, audioUrl])
+
 
     // Initialize Video Element listeners when in video mode
     useEffect(() => {
@@ -1713,11 +1491,11 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         video.removeEventListener("ratechange", onRate)
         video.removeEventListener("volumechange", onVol)
       }
-    }, [playerMode, currentTime])
+    }, [playerMode, isLoading, mediaData])
 
     // Silence Skipping Engine
     useEffect(() => {
-      if (!skipSilences || !mediaData?.silence_intervals?.length) {
+      if (!skipSilences || !silenceIntervals.length) {
         if (silenceCheckInterval.current) {
           clearInterval(silenceCheckInterval.current)
           silenceCheckInterval.current = null
@@ -1729,13 +1507,10 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         const activeMedia = playerMode === "video" ? videoRef.current : audioRef.current
         if (!activeMedia || !isPlaying) return
 
-        const silence = mediaData.silence_intervals!.find(
-          (s) => s.start <= activeMedia.currentTime && s.end > activeMedia.currentTime
-        )
-
-        if (silence && silence.start !== lastSilenceSkipRef.current) {
-          lastSilenceSkipRef.current = silence.start
-          activeMedia.currentTime = silence.end
+        const end = silenceEndAt(silenceIntervals, activeMedia.currentTime)
+        if (end !== null && end !== lastSilenceSkipRef.current) {
+          lastSilenceSkipRef.current = end
+          activeMedia.currentTime = end
         }
       }
 
@@ -1746,7 +1521,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           silenceCheckInterval.current = null
         }
       }
-    }, [skipSilences, mediaData?.silence_intervals, isPlaying, playerMode])
+    }, [skipSilences, silenceIntervals, isPlaying, playerMode])
 
     // Playback rate sync
     useEffect(() => {
@@ -1955,12 +1730,12 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     // Segment & Slide click handlers
     const handleSegmentClick = useCallback(
       (index: number) => {
-        const segment = mediaData?.transcript_segments?.[index]
+        const segment = transcriptSegments[index]
         if (segment) {
           handleSeek(segment.t_start)
         }
       },
-      [mediaData?.transcript_segments, handleSeek]
+      [transcriptSegments, handleSeek]
     )
 
     const handleSlideClick = useCallback(
@@ -1974,25 +1749,15 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     )
 
     // Slide navigation index
-    const activeSlideIndex = useMemo(() => {
-      let idx = -1
-      for (let i = 0; i < resolvedSlides.length; i++) {
-        if (resolvedSlides[i].timestamp <= currentTime) {
-          idx = i
-        } else {
-          break
-        }
-      }
-      return idx
-    }, [resolvedSlides, currentTime])
+    const activeSlideIndex = useMemo(() => slideIndexAt(resolvedSlides, currentTime), [resolvedSlides, currentTime])
 
     // Active transcript subtitle text
     const activeTranscriptText = useMemo(() => {
-      const seg = mediaData?.transcript_segments?.find(
+      const seg = transcriptSegments.find(
         (s) => s.t_start <= currentTime && s.t_end > currentTime
       )
       return seg?.text
-    }, [mediaData?.transcript_segments, currentTime])
+    }, [transcriptSegments, currentTime])
 
     // Imperative handle
     useImperativeHandle(ref, () => ({
@@ -2011,67 +1776,84 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       setMode: (mode: PlayerMode) => handleModeChange(mode),
     }))
 
-    // Source Availability checks
-    const isPanoptoAvailable = Boolean(
-      mediaData?.panopto_embed_url ||
-      mediaData?.panopto_id ||
-      (mediaData?.viewer_url && mediaData.viewer_url.toLowerCase().includes("panopto")) ||
-      mediaData?.video_modes?.includes("panopto")
-    )
+    // Source availability: decisa dall'adapter in base ai dati reali
+    const modes = mediaData?.modes ?? []
+    const isPanoptoAvailable = modes.includes("panopto")
+    const isVideoAvailable = modes.includes("video")
+    const isSlidesAvailable = modes.includes("slides")
 
-    const isVideoAvailable = Boolean(
-      mediaData?.media_url ||
-      mediaData?.video_path ||
-      (mediaData?.videos && mediaData.videos.length > 0) ||
-      mediaData?.video_modes?.includes("moodle") ||
-      mediaData?.video_modes?.includes("drive")
-    )
-
-    const isSlidesAvailable = Boolean(
-      mediaData?.has_local_audio ||
-      mediaData?.audio_path ||
-      mediaData?.has_local_slides ||
-      (resolvedSlides && resolvedSlides.length > 0) ||
-      mediaData?.video_modes?.includes("slides") ||
-      (!isPanoptoAvailable && !isVideoAvailable)
+    // Overlay a tutto schermo in un portal (sopra header e sidebar), con focus trap ed Esc di Radix.
+    const shell = (content: React.ReactNode, label: string) => (
+      <Dialog.Root open onOpenChange={(open) => { if (!open) onClose() }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[500] bg-neutral-950/85" />
+          <Dialog.Content
+            aria-describedby={undefined}
+            className="fixed inset-0 z-[510] flex flex-col bg-neutral-950 text-neutral-100 outline-none"
+            onOpenAutoFocus={(e) => {
+              // Fuoco sul pulsante di chiusura: Spazio non deve finire in un campo di testo
+              e.preventDefault()
+              const target = e.currentTarget as HTMLElement | null
+              target?.querySelector<HTMLElement>("[data-player-close]")?.focus()
+            }}
+          >
+            <Dialog.Title className="sr-only">{label}</Dialog.Title>
+            {content}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     )
 
     // Render loading & error
     if (isLoading) {
-      return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/80 backdrop-blur-sm">
-          <div className="bg-white dark:bg-neutral-900 rounded-2xl p-8 flex flex-col items-center gap-4 min-w-[320px] shadow-2xl border border-neutral-200 dark:border-neutral-800">
+      return shell(
+        <div className="flex-1 flex items-center justify-center">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl p-8 flex flex-col items-center gap-4 min-w-[280px] shadow-2xl border border-neutral-200 dark:border-neutral-800">
             <div className="w-10 h-10 border-3 border-accent-500 border-t-transparent rounded-full animate-spin" />
             <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
               Caricamento player multimodale...
             </p>
+            <Button variant="outline" size="sm" onClick={onClose} data-player-close>Chiudi</Button>
           </div>
-        </div>
+        </div>,
+        `Caricamento: ${lectureTitle}`,
       )
     }
 
     if (error) {
-      return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/80 backdrop-blur-sm">
+      return shell(
+        <div className="flex-1 flex items-center justify-center">
           <div className="bg-white dark:bg-neutral-900 rounded-2xl p-8 max-w-md mx-4 text-center shadow-2xl border border-neutral-200 dark:border-neutral-800">
             <X className="h-12 w-12 text-error-500 mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-neutral-950 dark:text-neutral-50 mb-2">Errore caricamento</h3>
             <p className="text-sm text-neutral-600 dark:text-neutral-300 mb-6">{error}</p>
-            <Button onClick={onClose}>Chiudi</Button>
+            <Button onClick={onClose} data-player-close>Chiudi</Button>
           </div>
-        </div>
+        </div>,
+        `Errore: ${lectureTitle}`,
       )
     }
 
-    return (
-      <div
-        className="fixed inset-0 z-50 flex flex-col bg-neutral-950 text-neutral-100 select-none"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="player-title"
-      >
+    if (!modes.length) {
+      return shell(
+        <div className="flex-1 flex items-center justify-center">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl p-8 max-w-md mx-4 text-center shadow-2xl border border-neutral-200 dark:border-neutral-800">
+            <Video className="h-12 w-12 text-neutral-400 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-neutral-950 dark:text-neutral-50 mb-2">Nessuna sorgente disponibile</h3>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300 mb-6">
+              Questa lezione non ha ancora audio, slide, video Moodle o registrazione Panopto.
+            </p>
+            <Button onClick={onClose} data-player-close>Chiudi</Button>
+          </div>
+        </div>,
+        `Player: ${lectureTitle}`,
+      )
+    }
+
+    return shell(
+      <div className="flex-1 min-h-0 flex flex-col select-none">
         {/* Header Bar */}
-        <header className="flex items-center justify-between px-4 py-3 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-md sticky top-0 z-20">
+        <header className="flex flex-wrap items-center justify-between gap-2 px-2 sm:px-4 py-2 sm:py-3 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-md">
           {/* Left: Close & Title */}
           <div className="flex items-center gap-3 min-w-0">
             <Button
@@ -2079,16 +1861,18 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
               size="icon"
               onClick={onClose}
               aria-label="Chiudi player"
-              className="text-neutral-400 hover:text-white hover:bg-neutral-800"
+              title="Chiudi (Esc)"
+              data-player-close
+              className="shrink-0 text-neutral-400 hover:text-white hover:bg-neutral-800"
             >
               <X className="h-5 w-5" />
             </Button>
             <div className="min-w-0">
-              <h2 id="player-title" className="font-semibold text-neutral-100 text-sm sm:text-base truncate max-w-xs sm:max-w-md md:max-w-lg">
+              <h2 id="player-title" className="font-semibold text-neutral-100 text-sm sm:text-base truncate max-w-[60vw] sm:max-w-md md:max-w-lg">
                 {lectureTitle}
               </h2>
-              <div className="flex items-center gap-2 text-xs text-neutral-400 font-mono">
-                <span>{mediaData?.transcript_segments?.length || 0} segmenti Whisper</span>
+              <div className="hidden sm:flex items-center gap-2 text-xs text-neutral-400 font-mono">
+                <span>{transcriptSegments.length} segmenti di trascrizione</span>
                 <span>·</span>
                 <span>{resolvedSlides.length} slide</span>
               </div>
@@ -2096,7 +1880,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           </div>
 
           {/* Right: Pill Mode Selector & Toolbars */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Elegant Mode Switcher Pill */}
             <div
               className="flex items-center p-1 bg-neutral-900 rounded-full border border-neutral-800 shadow-inner"
@@ -2118,7 +1902,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                   role="tab"
                 >
                   <Video className="h-3.5 w-3.5" />
-                  <span>Panopto</span>
+                  <span className="hidden sm:inline">Panopto</span>
                 </button>
               )}
               {isVideoAvailable && (
@@ -2136,7 +1920,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                   role="tab"
                 >
                   <Film className="h-3.5 w-3.5" />
-                  <span>Video MP4</span>
+                  <span className="hidden sm:inline">Video MP4</span>
                 </button>
               )}
               {isSlidesAvailable && (
@@ -2154,7 +1938,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                   role="tab"
                 >
                   <Presentation className="h-3.5 w-3.5" />
-                  <span>Slide & Audio</span>
+                  <span className="hidden sm:inline">Slide & Audio</span>
                 </button>
               )}
             </div>
@@ -2190,14 +1974,14 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         </header>
 
         {/* Main Stage & Panels Layout */}
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
           {/* Main Media Player Stage */}
-          <div className="flex-1 flex flex-col p-4 overflow-y-auto">
-            <div className="flex-1 flex flex-col justify-center min-h-0">
+          <div className="shrink-0 lg:shrink lg:flex-1 min-w-0 flex flex-col p-2 sm:p-4 overflow-y-auto max-h-[60vh] lg:max-h-none">
+            <div className="lg:flex-1 flex flex-col justify-center min-h-0">
               {playerMode === "panopto" && (
                 <PanoptoPlayer
-                  embedUrl={panoptoSrc || mediaData?.panopto_embed_url || ""}
-                  viewerUrl={mediaData?.viewer_url}
+                  embedUrl={panoptoSrc || mediaData?.panoptoEmbedUrl || ""}
+                  viewerUrl={mediaData?.viewerUrl ?? undefined}
                   lectureTitle={lectureTitle}
                   currentTime={currentTime}
                   duration={duration}
@@ -2209,7 +1993,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
               {playerMode === "video" && (
                 <Html5VideoPlayer
-                  videoUrl={mediaData?.media_url || ""}
+                  videoUrl={mediaData?.videoUrl || ""}
+                  isRemote={Boolean(mediaData?.videoIsRemote)}
                   lectureTitle={lectureTitle}
                   currentTime={currentTime}
                   duration={duration}
@@ -2217,7 +2002,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                   volume={volume}
                   isMuted={isMuted}
                   isPlaying={isPlaying}
-                  silenceIntervals={mediaData?.silence_intervals || []}
+                  silenceIntervals={silenceIntervals}
                   skipSilences={skipSilences}
                   activeSubtitle={activeTranscriptText}
                   showSubtitles={showSubtitles}
@@ -2247,13 +2032,14 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                   slides={resolvedSlides}
                   activeSlideIndex={activeSlideIndex}
                   audioRef={audioRef}
+                  hasAudio={Boolean(audioUrl)}
                   currentTime={currentTime}
                   duration={duration}
                   playbackRate={playbackRate}
                   volume={volume}
                   isMuted={isMuted}
                   isPlaying={isPlaying}
-                  silenceIntervals={mediaData?.silence_intervals || []}
+                  silenceIntervals={silenceIntervals}
                   skipSilences={skipSilences}
                   onPlayPause={handlePlayPause}
                   onSeek={handleSeek}
@@ -2300,7 +2086,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
           {/* Right Sidebar: Whisper Transcript & Notes */}
           {showSidebar && (
-            <aside className="w-80 lg:w-96 border-l border-neutral-800 bg-neutral-900/90 flex flex-col">
+            <aside className="flex-1 min-h-0 w-full lg:flex-none lg:w-96 border-t lg:border-t-0 lg:border-l border-neutral-800 bg-neutral-900/90 flex flex-col">
               {/* Tab navigation */}
               <div className="flex border-b border-neutral-800 bg-neutral-950/60 p-1 gap-1">
                 <button
@@ -2348,7 +2134,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
               <div className="flex-1 min-h-0 flex flex-col">
                 {activeTab === "transcript" && (
                   <TranscriptPanel
-                    segments={mediaData?.transcript_segments || []}
+                    segments={transcriptSegments}
                     currentTime={currentTime}
                     onSegmentClick={handleSegmentClick}
                     onAddNote={(segIdx, t) => addNote(t, "transcript", segIdx)}
@@ -2407,8 +2193,10 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">[ / ]</kbd> Velocità ∓0.25</span>
           <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">M</kbd> Muto</span>
           <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">F</kbd> PiP</span>
+          <span><kbd className="px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-300">Esc</kbd> Chiudi</span>
         </footer>
-      </div>
+      </div>,
+      `Player: ${lectureTitle}`,
     )
   }
 )

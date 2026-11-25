@@ -253,13 +253,10 @@ export function WarmupPhase({
   currentIndex,
   showAnswer,
   confidence,
-  currentPhaseConfig,
   onAnswer,
   onNext,
-  onSetShowAnswer,
   onReveal,
   isLoading,
-  sessionId,
   result,
 }: WarmupPhaseProps) {
   const entry = entries[currentIndex]
@@ -726,15 +723,10 @@ export function PracticePhase({
   confidence,
   onAnswer,
   onNext,
-  onSetShowAnswer,
   onReveal,
   isLoading,
-  xpEarned = 0,
   streak = 0,
   combo = 0,
-  questionsAnswered = 0,
-  correctAnswers = 0,
-  sessionId,
   result,
 }: PracticePhaseProps) {
   const entry = entries[currentIndex]
@@ -1065,10 +1057,8 @@ export function BossPhase({
   hasNext,
   showAnswer,
   onAnswer,
-  onSetShowAnswer,
   isLoading,
   onNext,
-  sessionId,
   result,
 }: BossPhaseProps) {
   const [selectedChoice, setSelectedChoice] = useState<number | null>(null)
@@ -1087,7 +1077,7 @@ export function BossPhase({
 
   if (!entry) return null
 
-  const { prompt, choices, kind, explanation, hint, topicTitle, correctAnswer } = parseQuestionData(entry, result)
+  const { prompt, choices, kind, explanation, topicTitle, correctAnswer } = parseQuestionData(entry, result)
   const isMultiple = (kind === "multipla" || kind === "vero_falso" || choices.length > 0)
 
   const handleSubmit = (overrideCorrect?: boolean) => {

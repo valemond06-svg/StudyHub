@@ -1,16 +1,7 @@
 import React, { useMemo } from "react"
+import "katex/dist/katex.min.css"
 import { cn } from "@/lib/utils"
-
-declare global {
-  interface Window {
-    katex?: {
-      renderToString: (
-        tex: string,
-        options?: { displayMode?: boolean; throwOnError?: boolean }
-      ) => string
-    }
-  }
-}
+import { renderLatexToHtml } from "@/lib/latex"
 
 export interface MathMarkdownProps {
   content: string
@@ -138,36 +129,30 @@ function formatMathFallback(latex: string): string {
 }
 
 /**
- * Renders LaTeX formula using KaTeX if available, otherwise stylish fallback
+ * Renders LaTeX formula with KaTeX, otherwise typographic fallback
  */
 function renderFormula(latex: string, displayMode: boolean, key: string | number): React.ReactNode {
-  const hasKatex = typeof window !== "undefined" && typeof window.katex?.renderToString === "function"
+  const html = renderLatexToHtml(latex, displayMode)
 
-  if (hasKatex) {
-    try {
-      const html = window.katex!.renderToString(latex, {
-        displayMode,
-        throwOnError: false,
-      })
-      if (displayMode) {
-        return (
-          <span
-            key={key}
-            className="block my-3 py-2 px-3 overflow-x-auto text-center rounded-xl bg-neutral-50/70 dark:bg-neutral-900/60 border border-neutral-200/80 dark:border-neutral-800 select-text"
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
-        )
-      }
+  if (html !== null) {
+    if (displayMode) {
       return (
         <span
           key={key}
-          className="inline-block px-1 align-baseline select-text"
+          data-math="display"
+          className="block my-3 py-2 px-3 overflow-x-auto text-center rounded-xl bg-neutral-50/70 dark:bg-neutral-900/60 border border-neutral-200/80 dark:border-neutral-800 select-text"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       )
-    } catch {
-      // Ignore KaTeX error and fall back to typography renderer
     }
+    return (
+      <span
+        key={key}
+        data-math="inline"
+        className="inline-block max-w-full overflow-x-auto align-middle select-text"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    )
   }
 
   // Fallback typography
@@ -292,6 +277,12 @@ function parseInline(text: string, baseKey: string | number): React.ReactNode[] 
   return nodes
 }
 
+/** Testo breve su una riga (opzioni di quiz, titoli, voci di elenco): formule e grassetti, senza blocchi. */
+export function MathInline({ content, className }: MathMarkdownProps) {
+  const nodes = useMemo(() => (content ? parseInline(content.replace(/\r?\n/g, " "), "mi") : null), [content])
+  return <span className={cn("math-inline", className)}>{nodes}</span>
+}
+
 export function MathMarkdown({ content, className }: MathMarkdownProps) {
   const renderedContent = useMemo(() => {
     if (!content) return null
@@ -312,6 +303,23 @@ export function MathMarkdown({ content, className }: MathMarkdownProps) {
       if (line.trim() === "") {
         i++
         continue
+      }
+
+      // Ambiente LaTeX "nudo" (\begin{cases} … \end{cases}) senza $$: lo trattiamo come formula in display
+      const envMatch = line.trim().match(/^\\begin\{([a-zA-Z*]+)\}/)
+      if (envMatch) {
+        const endTag = `\\end{${envMatch[1]}}`
+        const envLines = [line]
+        let j = i
+        while (j < lines.length && !lines[j].includes(endTag)) {
+          j++
+          if (j < lines.length) envLines.push(lines[j])
+        }
+        if (j < lines.length) {
+          blocks.push(renderFormula(envLines.join("\n").trim(), true, `block-env-${blockIndex++}`))
+          i = j + 1
+          continue
+        }
       }
 
       // Display math $$ ... $$ on multiple lines or single line
@@ -488,6 +496,7 @@ export function MathMarkdown({ content, className }: MathMarkdownProps) {
         lines[i].trim() !== "" &&
         !lines[i].trim().startsWith("$$") &&
         !lines[i].trim().startsWith("\\[") &&
+        !lines[i].trim().startsWith("\\begin{") &&
         !lines[i].trim().startsWith("```") &&
         !lines[i].trim().startsWith("#") &&
         !lines[i].trim().startsWith(">") &&

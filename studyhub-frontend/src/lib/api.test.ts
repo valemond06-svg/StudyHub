@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { api, setCsrfToken } from "./api"
+import { api, setCsrfToken, ApiError, errorMessageFromBody, messageForStatus, describeError } from "./api"
 
 afterEach(() => {
   setCsrfToken(null)
@@ -52,5 +52,58 @@ describe("API flashcard", () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe("API: errori e contratti", () => {
+  it("mostra il detail di FastAPI (stringa) come messaggio", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ detail: "Limite della finestra Claude Pro raggiunto." }, { status: 429 })))
+    const err = await api.getPlan().catch((e) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err.status).toBe(429)
+    expect(err.message).toBe("Limite della finestra Claude Pro raggiunto.")
+  })
+
+  it("422 con detail a lista diventa un testo italiano leggibile", () => {
+    expect(errorMessageFromBody(422, { detail: [{ loc: ["body", "minutes"], msg: "Input should be a valid integer" }] }))
+      .toBe("Dati inviati non validi. minutes: Input should be a valid integer")
+  })
+
+  it("senza detail usa un messaggio italiano per codice (anche con corpo non JSON)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>oops</html>", { status: 502 })))
+    const err = await api.getPlan().catch((e) => e)
+    expect(err.message).toBe("Il servizio AI non ha risposto correttamente.")
+    expect(messageForStatus(418)).toBe("Richiesta non riuscita (HTTP 418).")
+    expect(describeError(new TypeError("Failed to fetch"))).toContain("non risponde")
+  })
+
+  it("la ricerca usa il formato {results, semantic}", async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ semantic: true, results: [
+      { id: 1, kind: "pdf", page: 2, t_start: null, t_end: null, heading: null, doc_id: 4, path: "x/a.pdf", title: "A", lecture_id: null, course: "C", course_id: 3, snippet: "s", score: 1 },
+    ] }))
+    vi.stubGlobal("fetch", fetch)
+    const res = await api.search("laplace transform", { courseId: 3 })
+    expect(fetch.mock.calls[0][0]).toBe("/api/search?q=laplace+transform&course_id=3&limit=20")
+    expect(res.semantic).toBe(true)
+    expect(res.results[0]).toMatchObject({ docId: 4, page: 2, group: "documenti" })
+  })
+
+  it("quiz, prefetch e coda AI mandano i parametri in query come vuole il backend", async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(Response.json({})))
+    vi.stubGlobal("fetch", fetch)
+    setCsrfToken("t")
+    await api.generateQuiz(5, 8)
+    await api.prefetchStudyLessons(7, 4)
+    await api.queueCourseNotes(7, 2)
+    expect(fetch.mock.calls.map((c) => [c[0], c[1].body])).toEqual([
+      ["/api/lectures/5/quiz?n=8", undefined],
+      ["/api/study/7/lessons/prefetch?n=4", undefined],
+      ["/api/ai/queue?course_id=7&limit=2", undefined],
+    ])
+  })
+
+  it("il download PDF non chiama res.json() e mostra il detail in caso di errore", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ detail: "Corso non trovato/a" }, { status: 404 })))
+    await expect(api.downloadCoursePdf(9)).rejects.toThrow("Corso non trovato/a")
   })
 })

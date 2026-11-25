@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react"
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import {
@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { FeedCard } from "@/components/feed/FeedCard"
 import { api } from "@/lib/api"
+import { diversifyFeed } from "@/lib/feed"
 import type { FeedShort, Course } from "@/types"
 import { cn } from "@/lib/utils"
 
@@ -51,7 +52,7 @@ export function StudyTok() {
     queryFn: () => api.getFeed(selectedCourseId, 40),
   })
 
-  const shorts = feedData?.shorts || []
+  const shorts = useMemo(() => diversifyFeed(feedData?.shorts ?? []), [feedData])
 
   // Check anti-doomscrolling speedbump whenever viewed count changes
   useEffect(() => {
@@ -311,7 +312,7 @@ export function StudyTok() {
                 className="w-full sm:w-auto flex-1 gap-2 h-11 rounded-xl bg-accent-600 hover:bg-accent-700 text-white font-semibold shadow-md"
               >
                 <BookOpen className="h-4 w-4" />
-                <span>Avvia Studio Attivo</span>
+                <span>Prepara una sessione di studio</span>
               </Button>
 
               <Button

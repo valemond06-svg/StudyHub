@@ -6,6 +6,7 @@ type Theme = "light" | "dark" | "oled" | "system"
 interface UIState {
   theme: Theme
   setTheme: (theme: Theme) => void
+  /** Solo menu a scomparsa su schermi piccoli: su desktop la barra è sempre visibile. Parte chiuso. */
   sidebarOpen: boolean
   setSidebarOpen: (open: boolean) => void
   sidebarCollapsed: boolean
@@ -19,7 +20,7 @@ export const useUIStore = create<UIState>()(
     (set) => ({
       theme: "system",
       setTheme: (theme) => set({ theme }),
-      sidebarOpen: true,
+      sidebarOpen: false,
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       sidebarCollapsed: false,
       toggleSidebarCollapsed: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
@@ -28,7 +29,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "studyhub-ui",
-      // Si ricordano solo le preferenze: palette comandi e sidebar mobile ripartono sempre chiuse/di default.
+      // Si ricordano solo le preferenze: palette comandi e menu mobile ripartono sempre chiusi.
       partialize: (s) => ({ theme: s.theme, sidebarCollapsed: s.sidebarCollapsed }),
     }
   )

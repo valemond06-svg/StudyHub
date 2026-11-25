@@ -16,6 +16,7 @@ vi.mock("@/lib/api", () => ({
     photoSession: vi.fn(),
     revealSession: vi.fn(),
     finishSession: vi.fn(),
+    getStudyCourseStats: vi.fn(),
   },
 }))
 
@@ -57,6 +58,11 @@ function click(name: string) {
   fireEvent.click(screen.getByRole("button", { name }))
 }
 
+/** La pagina mostra la schermata d'avvio: la sessione parte solo dal pulsante. */
+async function start() {
+  fireEvent.click(await screen.findByRole("button", { name: "Avvia sessione" }))
+}
+
 beforeEach(() => {
   vi.resetAllMocks()
   useSessionStore.setState({ currentSession: null, todaySessions: [] })
@@ -73,6 +79,18 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe("Studio", () => {
+  it("aprire la pagina non crea sessioni: serve il pulsante Avvia", async () => {
+    renderStudio("?duration=90")
+    expect(await screen.findByRole("button", { name: "Avvia sessione" })).toBeDefined()
+    expect(screen.getByRole("button", { name: "90 min" }).getAttribute("aria-pressed")).toBe("true")
+    expect(api.createSession).not.toHaveBeenCalled()
+    expect(api.getStudyCourseStats).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "25 min" }))
+    await start()
+    await screen.findByText("Nessuna lezione nuova")
+    expect(api.createSession).toHaveBeenCalledExactlyOnceWith(7, 25, undefined)
+  })
+
   it("riprende le schede dal server e mostra titolo e contenuto del topic", async () => {
     useSessionStore.getState().startSession(7, 45, 28, [scheda])
     vi.mocked(api.getSession).mockResolvedValue(session([scheda]))
@@ -90,6 +108,7 @@ describe("Studio", () => {
   it("usa il topic di StudyTok anche se esiste una sessione generica dello stesso corso", async () => {
     useSessionStore.getState().startSession(7, 45, 42, [scheda])
     renderStudio("?topic=8&duration=25")
+    await start()
 
     await screen.findByText("Nessuna lezione nuova")
     expect(api.createSession).toHaveBeenCalledExactlyOnceWith(7, 25, 8)
@@ -99,6 +118,7 @@ describe("Studio", () => {
 
   it.each(["0", "-1", "2.5", "abc", "9007199254740992"])("ignora il topic non valido %s", async (topic) => {
     renderStudio(`?topic=${topic}`)
+    await start()
     await screen.findByText("Nessuna lezione nuova")
     expect(api.createSession).toHaveBeenCalledExactlyOnceWith(7, 45, undefined)
   })
@@ -111,6 +131,7 @@ describe("Studio", () => {
       question(78, "Domanda pratica"),
     ]))
     renderStudio()
+    await start()
 
     await screen.findByText("Riscaldamento uno")
     click("Rivela risposta")
@@ -142,6 +163,7 @@ describe("Studio", () => {
     ]))
     vi.mocked(api.photoSession).mockResolvedValue({ score: 1, xp: 12, answer_md: "Soluzione fotografata", feedback_md: "Passaggi verificati" })
     renderStudio()
+    await start()
 
     await screen.findByText("Esercizio sul quaderno")
     fireEvent.change(screen.getByPlaceholderText("Inserisci la tua risposta o procedimento..."), { target: { value: "I miei passaggi" } })
@@ -153,7 +175,7 @@ describe("Studio", () => {
     expect(await screen.findByText("Soluzione fotografata")).toBeDefined()
     expect(screen.getByText("Passaggi verificati")).toBeDefined()
     expect(api.photoSession).toHaveBeenCalledExactlyOnceWith(28, {
-      idx: 1, images, text: "I miei passaggi", confidence: 3, seconds: 0,
+      idx: 1, images, text: "I miei passaggi", confidence: 2, seconds: 0,
     })
     expect(api.answerSession).not.toHaveBeenCalled()
     expect(useSessionStore.getState().currentSession?.questionsAnswered).toBe(1)
@@ -166,6 +188,7 @@ describe("Studio", () => {
       .mockRejectedValueOnce(new Error("offline"))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveFinish = resolve }))
     const client = renderStudio()
+    await start()
     const invalidate = vi.spyOn(client, "invalidateQueries")
     await screen.findByText("Nessuna lezione nuova")
     click("Vai alla fase successiva")
@@ -190,6 +213,7 @@ describe("Studio", () => {
 
   it("salva prima del defaticamento anche quando il boss è vuoto", async () => {
     renderStudio()
+    await start()
     await screen.findByText("Nessuna lezione nuova")
     click("Vai alla fase successiva")
     click("Vai al Boss Finale")
@@ -224,6 +248,7 @@ describe("Studio", () => {
     }
 
     renderStudio()
+    await start()
     await screen.findByText("Ripasso a tempo")
     await elapse(2)
     expect(screen.getByRole("heading", { name: "Derivate" })).toBeDefined()

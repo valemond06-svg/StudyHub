@@ -1,7 +1,7 @@
-import { useParams, useSearchParams, useNavigate } from "react-router-dom"
+import { useParams, useSearchParams, useNavigate, useLocation } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { ArrowLeft, RotateCcw, Flag, Target, Zap, Heart, Check, Loader2, Brain } from "lucide-react"
+import { ArrowLeft, RotateCcw, Flag, Target, Zap, Heart, Check, Loader2, Brain, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 import { useSessionStore } from "@/store/session"
@@ -79,17 +79,147 @@ function groupSessionEntries(session: SessionData | null) {
 }
 
 export function Studio() {
-  const { courseId } = useParams()
-  const [searchParams] = useSearchParams()
-  const duration = Number(searchParams.get("duration")) || 45
-  const topic = searchParams.get("topic") ?? ""
-  const topicId = Number(topic)
-  const focusTopic = /^\d+$/.test(topic) && Number.isSafeInteger(topicId) && topicId > 0 ? topicId : undefined
-
-  return <StudioSession key={`${courseId}:${duration}:${focusTopic}`} courseId={Number(courseId)} duration={duration} focusTopic={focusTopic} />
+  // Ogni navigazione (anche «Nuova sessione» sulla stessa pagina) riparte dalla schermata d'avvio
+  const location = useLocation()
+  return <StudioPage key={location.key} />
 }
 
-function StudioSession({ courseId, duration, focusTopic }: { courseId: number; duration: number; focusTopic?: number }) {
+function StudioPage() {
+  const { courseId } = useParams()
+  const [searchParams] = useSearchParams()
+  const initialDuration = [25, 45, 90].includes(Number(searchParams.get("duration"))) ? Number(searchParams.get("duration")) : 45
+  const topic = searchParams.get("topic") ?? ""
+  const topicId = Number(topic)
+  const initialTopic = /^\d+$/.test(topic) && Number.isSafeInteger(topicId) && topicId > 0 ? topicId : undefined
+  const id = Number(courseId)
+  const { currentSession } = useSessionStore()
+
+  // Una sessione già aperta per questo corso (stesso argomento) si riprende in sola lettura: nessuna creazione.
+  const resumable = currentSession?.courseId === id && currentSession.backendId &&
+    (initialTopic === undefined || currentSession.focusTopic === initialTopic)
+  const [choice, setChoice] = useState<{ duration: number; focusTopic?: number; resume: boolean } | null>(
+    resumable ? { duration: currentSession!.duration ?? initialDuration, focusTopic: currentSession!.focusTopic, resume: true } : null,
+  )
+
+  if (!choice) {
+    return (
+      <StudioStart
+        courseId={id}
+        initialDuration={initialDuration}
+        initialTopic={initialTopic}
+        onStart={(duration, focusTopic) => setChoice({ duration, focusTopic, resume: false })}
+      />
+    )
+  }
+  return (
+    <StudioSession
+      key={`${id}:${choice.duration}:${choice.focusTopic}:${choice.resume}`}
+      courseId={id}
+      duration={choice.duration}
+      focusTopic={choice.focusTopic}
+      allowResume={choice.resume}
+    />
+  )
+}
+
+/** Schermata d'avvio: aprire la pagina non crea sessioni né avvia generazioni AI; lo fa solo «Avvia sessione». */
+function StudioStart({ courseId, initialDuration, initialTopic, onStart }: {
+  courseId: number
+  initialDuration: number
+  initialTopic?: number
+  onStart: (duration: number, focusTopic?: number) => void
+}) {
+  const navigate = useNavigate()
+  const [duration, setDuration] = useState(initialDuration)
+  const [topicChoice, setTopicChoice] = useState<string>(initialTopic ? String(initialTopic) : "auto")
+  const { data: course, isLoading, isError } = useQuery({
+    queryKey: ["course", courseId],
+    queryFn: () => api.getCourse(courseId),
+    enabled: Number.isSafeInteger(courseId) && courseId > 0,
+  })
+  // Gli argomenti si caricano solo se scegli di indicarne uno (o se arrivi con ?topic=)
+  const wantsTopic = topicChoice !== "auto"
+  const { data: study } = useQuery<any>({
+    queryKey: ["study", courseId],
+    queryFn: () => api.getStudyCourseStats(courseId),
+    enabled: wantsTopic,
+  })
+  const topics: Array<{ id: number; name: string; chapter: string | null }> = study?.topics ?? []
+
+  if (isLoading) {
+    return <div className="flex justify-center h-64 items-center"><Loader2 className="h-8 w-8 animate-spin text-accent-500" /></div>
+  }
+  if (isError || !course) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
+        <p className="text-neutral-600 dark:text-neutral-400">Impossibile caricare il corso.</p>
+        <Button variant="outline" onClick={() => navigate("/corsi")}>Torna ai corsi</Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      <div className="flex items-start gap-3">
+        <Button variant="ghost" size="icon" onClick={() => navigate(`/corsi/${courseId}`)} aria-label="Torna al corso">
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold break-words">Nuova sessione di studio</h1>
+          <p className="text-neutral-500 dark:text-neutral-400 break-words">{course.fullname}</p>
+        </div>
+      </div>
+
+      <section className="space-y-2" aria-labelledby="durata-label">
+        <h2 id="durata-label" className="font-medium">Durata</h2>
+        <div className="grid grid-cols-3 gap-2">
+          {[25, 45, 90].map((d) => (
+            <Button key={d} variant={duration === d ? "default" : "outline"} aria-pressed={duration === d} onClick={() => setDuration(d)}>
+              {d} min
+            </Button>
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="font-medium">Argomento</h2>
+        <select
+          value={topicChoice}
+          onChange={(e) => setTopicChoice(e.target.value)}
+          aria-label="Argomento della sessione"
+          className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+        >
+          <option value="auto">Scelgono le tue lacune (consigliato)</option>
+          {!wantsTopic && <option value="pick">Voglio scegliere un argomento…</option>}
+          {topicChoice !== "auto" && topicChoice !== "pick" && !topics.some((t) => String(t.id) === topicChoice) && (
+            <option value={topicChoice}>Argomento #{topicChoice}</option>
+          )}
+          {topics.map((t) => (
+            <option key={t.id} value={String(t.id)}>{t.chapter ? `${t.chapter} · ` : ""}{t.name}</option>
+          ))}
+        </select>
+      </section>
+
+      <div className="rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900/50 p-4 text-sm text-neutral-600 dark:text-neutral-300">
+        Avviando, StudyHub crea la sessione con domande dalla banca del corso. Se per qualche argomento manca la scheda di studio,
+        la chiede all'AI in background. Le risposte aperte vengono corrette dall'AI solo quando le consegni.
+      </div>
+
+      <Button
+        size="lg"
+        className="w-full gap-2"
+        disabled={topicChoice === "pick"}
+        onClick={() => onStart(duration, /^\d+$/.test(topicChoice) ? Number(topicChoice) : undefined)}
+      >
+        <Play className="h-4 w-4" />
+        Avvia sessione
+      </Button>
+    </div>
+  )
+}
+
+function StudioSession({ courseId, duration, focusTopic, allowResume }: { courseId: number; duration: number; focusTopic?: number; allowResume: boolean }) {
+
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { currentSession, startSession, endSession, updateSessionProgress } = useSessionStore()
@@ -109,7 +239,7 @@ function StudioSession({ courseId, duration, focusTopic }: { courseId: number; d
   const [currentEntryIndex, setCurrentEntryIndex] = useState(0)
   const [schedaConfirmed, setSchedaConfirmed] = useState(false)
   const [questionResults, setQuestionResults] = useState<Record<number, QuestionResult>>({})
-  const [confidence, setConfidence] = useState(3)
+  const [confidence, setConfidence] = useState(2)
   const [xpEarned, setXpEarned] = useState(0)
   const [streak, setStreak] = useState(0)
   const [combo, setCombo] = useState(0)
@@ -128,7 +258,7 @@ function StudioSession({ courseId, duration, focusTopic }: { courseId: number; d
   const questionResult = currentEntry ? questionResults[currentEntry.idx] : undefined
   const showAnswer = phase === "learn" ? schedaConfirmed : Boolean(questionResult)
 
-  const resumeId = currentSession?.courseId === courseId &&
+  const resumeId = allowResume && currentSession?.courseId === courseId &&
     (focusTopic === undefined || currentSession.focusTopic === focusTopic)
     ? currentSession.backendId : undefined
   const resumeQuery = useQuery<SessionData>({
@@ -244,7 +374,7 @@ function StudioSession({ courseId, duration, focusTopic }: { courseId: number; d
       setPhase(nextPhase)
       setCurrentEntryIndex(0)
       setSchedaConfirmed(false)
-      setConfidence(3)
+      setConfidence(2)
       setPhaseProgress(0)
     }
   }, [sessionData, isSessionBusy, phase, finishSession])
@@ -290,7 +420,7 @@ function StudioSession({ courseId, duration, focusTopic }: { courseId: number; d
     if (currentEntryIndex < currentPhaseEntries.length - 1) {
       setCurrentEntryIndex((prev) => prev + 1)
       setSchedaConfirmed(false)
-      setConfidence(3)
+      setConfidence(2)
     } else {
       advancePhase()
     }
@@ -538,25 +668,26 @@ function StudioSession({ courseId, duration, focusTopic }: { courseId: number; d
         {phase !== "complete" && phase !== "cooldown" && (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-neutral-500">Sicurezza:</span>
+              <span className="text-sm text-neutral-500" id="conf-label">Quanto sei sicuro?</span>
               <RadioGroup
                 value={String(confidence)}
                 onValueChange={(v) => setConfidence(Number(v))}
                 className="flex gap-1"
                 role="radiogroup"
-                aria-label="Quanto sei sicuro della tua risposta?"
+                aria-labelledby="conf-label"
               >
-                {[1, 2, 3, 4, 5].map((c) => (
+                {[{ v: 1, l: "Tiro a indovinare" }, { v: 2, l: "Credo" }, { v: 3, l: "Sicuro" }].map(({ v: c, l }) => (
                   <RadioGroupItem
                     key={c}
                     value={String(c)}
+                    aria-label={l}
                     className={cn(
-                      "w-8 h-8 rounded-full text-xs font-medium transition-all focus:outline-none focus:ring-2 focus:ring-accent-500",
+                      "px-3 h-8 rounded-full text-xs font-medium transition-all focus:outline-none focus:ring-2 focus:ring-accent-500",
                       "data-[state=checked]:bg-accent-500 data-[state=checked]:text-white",
                       "data-[state=unchecked]:bg-neutral-200 data-[state=unchecked]:text-neutral-500 data-[state=unchecked]:hover:bg-neutral-300 dark:data-[state=unchecked]:bg-neutral-700 dark:data-[state=unchecked]:text-neutral-400"
                     )}
                   >
-                    {c}
+                    {l}
                   </RadioGroupItem>
                 ))}
               </RadioGroup>

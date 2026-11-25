@@ -1,14 +1,13 @@
-import { Component, type ReactNode, lazy, Suspense, useEffect, useState } from "react"
+import { Component, type ReactNode, lazy, Suspense, useEffect } from "react"
 import { QueryClientProvider } from "@tanstack/react-query"
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Navigate, Link } from "react-router-dom"
 import { Toaster } from "@/components/ui/toaster"
 import { MainLayout } from "@/components/layout/MainLayout"
 import { CommandPalette } from "@/components/command-palette"
 import { Home } from "@/pages/Home"
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { queryClient } from "@/lib/api"
-import { setCsrfToken } from "@/lib/api"
+import { queryClient, ensureCsrfToken } from "@/lib/api"
 import { useUIStore } from "@/store/ui"
 
 const Corsi = lazy(() => import("@/pages/Corsi").then((m) => ({ default: m.Corsi })))
@@ -92,29 +91,20 @@ function Loading() {
 }
 
 function useCsrfToken() {
-  const [token, setToken] = useState<string | null>(null)
-
   useEffect(() => {
-    // Inizializza token CSRF e cookie api_token chiamando l'endpoint dedicato
-    const fetchCsrfToken = async () => {
-      try {
-        const res = await fetch("/api/csrf", { credentials: "include" })
-        if (res.ok) {
-          const data = await res.json()
-          if (data?.csrf_token) {
-            setToken(data.csrf_token)
-            setCsrfToken(data.csrf_token)
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch CSRF token:", e)
-      }
-    }
-
-    fetchCsrfToken()
+    // Una sola chiamata a /api/csrf (anche con StrictMode): token CSRF e cookie api_token per audio/slide
+    void ensureCsrfToken()
   }, [])
+}
 
-  return token
+function NotFound() {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[50vh] gap-4 text-center">
+      <h1 className="text-2xl font-semibold text-neutral-950 dark:text-neutral-50">Pagina non trovata</h1>
+      <p className="text-neutral-500 dark:text-neutral-400">L'indirizzo non corrisponde a nessuna pagina di StudyHub.</p>
+      <Button asChild><Link to="/">Torna alla Home</Link></Button>
+    </div>
+  )
 }
 
 function useThemeSync() {
@@ -156,10 +146,7 @@ function useThemeSync() {
 
 function App() {
   useThemeSync()
-  const csrfToken = useCsrfToken()
-  if (csrfToken) {
-    setCsrfToken(csrfToken)
-  }
+  useCsrfToken()
 
   return (
     <ErrorBoundary>
@@ -190,6 +177,7 @@ function App() {
               <Route path="/impostazioni" element={
                 <Suspense fallback={<Loading />}><Impostazioni /></Suspense>
               } />
+              <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
           <Toaster />

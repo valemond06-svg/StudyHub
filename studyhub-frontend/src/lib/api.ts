@@ -2,17 +2,15 @@ import { QueryClient } from "@tanstack/react-query"
 import type {
   Course,
   Lecture,
-  Quiz,
-  ExamProfile,
-  TutorThread,
   AIPanelData,
+  AIStatusResponse,
   PlanData,
-  DueFlashcardsResponse,
-  StudyCourseStats,
   StudyCourseOverview,
   AIProvidersStatus,
-  FullrunStatus,
+  SetupStatus,
+  StorageStatus,
 } from "@/types"
+import { toSearchResponse, type SearchResponse } from "@/lib/search"
 
 const API_BASE = ""
 const CSRF_COOKIE_NAME = "csrf_token"
@@ -22,19 +20,11 @@ let csrfFetchPromise: Promise<string | null> | null = null
 
 export function setCsrfToken(token: string | null) {
   cachedCsrfToken = token
-  if (typeof window !== "undefined") {
-    (window as any).__csrf_token = token
-  }
 }
 
 export function getCsrfToken(): string | null {
   if (cachedCsrfToken) return cachedCsrfToken
-  if (typeof window !== "undefined") {
-    const winToken = (window as any).__csrf_token
-    if (winToken) return winToken
-    return getCsrfTokenFromCookie()
-  }
-  return null
+  return getCsrfTokenFromCookie()
 }
 
 // Read CSRF token from cookie
@@ -43,7 +33,7 @@ export function getCsrfTokenFromCookie(): string | null {
   const cookies = document.cookie.split(";")
   for (const cookie of cookies) {
     const [name, value] = cookie.trim().split("=")
-    if (name === CSRF_COOKIE_NAME) {
+    if (name === CSRF_COOKIE_NAME && value) {
       return decodeURIComponent(value)
     }
   }
@@ -76,14 +66,94 @@ export async function ensureCsrfToken(): Promise<string | null> {
   return csrfFetchPromise
 }
 
-async function requestResponse(path: string, options?: RequestInit): Promise<Response> {
+// ---------------------------------------------------------------------------------
+// Errori: FastAPI risponde {"detail": "..."} (stringa) oppure, per la validazione 422,
+// {"detail": [{"loc": [...], "msg": "..."}]}. Il messaggio del backend è già in italiano:
+// lo mostriamo così com'è; altrimenti un testo italiano per codice di stato.
+// ---------------------------------------------------------------------------------
+
+export class ApiError extends Error {
+  readonly status: number
+  readonly detail: unknown
+
+  constructor(status: number, message: string, detail?: unknown) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+    this.detail = detail
+  }
+}
+
+const STATUS_MESSAGES: Record<number, string> = {
+  400: "Richiesta non valida.",
+  401: "Accesso non autorizzato: riapri StudyHub dal suo avvio (manca il token locale).",
+  403: "Richiesta rifiutata dal server (token di sicurezza scaduto?): ricarica la pagina.",
+  404: "Elemento non trovato.",
+  409: "Operazione già in corso.",
+  413: "File troppo grande.",
+  422: "Dati inviati non validi.",
+  429: "Limite raggiunto: riprova più tardi.",
+  500: "Errore interno del server StudyHub.",
+  502: "Il servizio AI non ha risposto correttamente.",
+  503: "Servizio non disponibile in questo momento.",
+  504: "Il server ha impiegato troppo tempo a rispondere.",
+}
+
+export function messageForStatus(status: number): string {
+  if (STATUS_MESSAGES[status]) return STATUS_MESSAGES[status]
+  if (status >= 500) return `Errore del server (HTTP ${status}).`
+  return `Richiesta non riuscita (HTTP ${status}).`
+}
+
+/** Estrae il messaggio leggibile dal corpo di errore di FastAPI. */
+export function errorMessageFromBody(status: number, body: unknown): string {
+  const detail = (body && typeof body === "object" && "detail" in body) ? (body as { detail: unknown }).detail : undefined
+  if (typeof detail === "string" && detail.trim()) return detail.trim()
+  if (Array.isArray(detail) && detail.length) {
+    const parts = detail
+      .map((d) => {
+        if (!d || typeof d !== "object") return null
+        const loc = Array.isArray((d as { loc?: unknown }).loc)
+          ? ((d as { loc: unknown[] }).loc.filter((x) => x !== "body" && x !== "query").join("."))
+          : ""
+        const msg = (d as { msg?: unknown }).msg
+        return typeof msg === "string" ? (loc ? `${loc}: ${msg}` : msg) : null
+      })
+      .filter(Boolean)
+    if (parts.length) return `${messageForStatus(422)} ${parts.join("; ")}`
+  }
+  return messageForStatus(status)
+}
+
+/** Messaggio da mostrare all'utente per qualsiasi errore (ApiError, rete, altro). */
+export function describeError(err: unknown, fallback = "Operazione non riuscita."): string {
+  if (err instanceof ApiError) return err.message
+  if (err instanceof TypeError) return "Il server StudyHub non risponde: controlla che sia avviato."
+  if (err instanceof Error && err.message) return err.message
+  return fallback
+}
+
+async function toApiError(res: Response): Promise<ApiError> {
+  let body: unknown = null
+  try {
+    const text = await res.text()
+    body = text ? JSON.parse(text) : null
+  } catch {
+    body = null
+  }
+  const detail = body && typeof body === "object" ? (body as { detail?: unknown }).detail : undefined
+  return new ApiError(res.status, errorMessageFromBody(res.status, body), detail)
+}
+
+async function requestResponse(path: string, options: RequestInit = {}): Promise<Response> {
+  const method = (options.method ?? "GET").toUpperCase()
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(options?.headers as Record<string, string> || {}),
+    ...((options.headers as Record<string, string>) || {}),
   }
 
   // Add CSRF token for mutating requests
-  if (options?.method && ["POST", "PUT", "PATCH", "DELETE"].includes(options.method.toUpperCase())) {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
     const csrfToken = await ensureCsrfToken()
     if (csrfToken) {
       headers["X-CSRF-Token"] = csrfToken
@@ -91,34 +161,37 @@ async function requestResponse(path: string, options?: RequestInit): Promise<Res
   }
 
   const res = await fetch(`${API_BASE}${path}`, {
-    headers,
     ...options,
-    credentials: "include", // Important: include cookies for CSRF
+    headers,
+    credentials: "include",
   })
 
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ message: res.statusText }))
-    throw new Error(error.message || `HTTP ${res.status}`)
-  }
-
+  if (!res.ok) throw await toApiError(res)
   return res
 }
 
 async function request<T = any>(path: string, options?: RequestInit): Promise<T> {
   const res = await requestResponse(path, options)
-  if (res.status === 204) return undefined as any
-  return res.json()
+  if (res.status === 204) return undefined as T
+  const text = await res.text()
+  return (text ? JSON.parse(text) : undefined) as T
 }
 
-async function downloadAnki(format: "tsv" | "apkg", courseId?: number) {
-  const query = courseId === undefined ? "" : `?course_id=${courseId}`
-  const response = await requestResponse(`/api/flashcards/anki.${format}${query}`)
+/** Risposta binaria (PDF, PNG, .apkg): mai res.json(). */
+async function requestBlob(path: string): Promise<{ blob: Blob; filename: string | null }> {
+  const response = await requestResponse(path)
   const disposition = response.headers.get("Content-Disposition") ?? ""
   const encodedName = /filename\*=utf-8''([^;]+)/i.exec(disposition)?.[1]
-  const filename = /filename="([^"]+)"/i.exec(disposition)?.[1]
+  const plainName = /filename="([^"]+)"/i.exec(disposition)?.[1]
+  const filename = encodedName ? decodeURIComponent(encodedName) : plainName ?? null
+  return { blob: await response.blob(), filename }
+}
+
+async function downloadFile(path: string, fallbackName: string) {
+  const { blob, filename } = await requestBlob(path)
   const link = document.createElement("a")
-  link.download = (encodedName ? decodeURIComponent(encodedName) : filename) || `studyhub_flashcards.${format}`
-  const url = URL.createObjectURL(await response.blob())
+  link.download = filename || fallbackName
+  const url = URL.createObjectURL(blob)
   link.href = url
   document.body.append(link)
   try {
@@ -129,16 +202,22 @@ async function downloadAnki(format: "tsv" | "apkg", courseId?: number) {
   }
 }
 
+function q(params: Record<string, string | number | boolean | null | undefined>): string {
+  const sp = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") sp.set(k, String(v))
+  }
+  const s = sp.toString()
+  return s ? `?${s}` : ""
+}
+
 function enhanceFlashcard(card: any): any {
   return {
     ...card,
     // Normalize backend front/back → fronte/retro
     fronte: card.fronte ?? card.front ?? "",
     retro: card.retro ?? card.back ?? "",
-    // Normalize due date field
     due_date: card.due_date ?? card.due ?? null,
-    // Normalize ease_factor (backend may store as int * 1000 or as float)
-    ease_factor: card.ease_factor ?? 2500,
     reps: card.reps ?? 0,
     interval: card.interval ?? 0,
   }
@@ -150,6 +229,7 @@ function enhanceLecture(lecture: any): Lecture {
     has_audio: Boolean(lecture.has_audio),
     has_slides: Boolean(lecture.n_slides && lecture.n_slides > 0),
     has_transcript: Boolean(lecture.transcript_source && lecture.transcript_source !== "none"),
+    has_notes: Boolean(lecture.has_notes),
   }
 }
 
@@ -157,25 +237,11 @@ function enhanceCourse(course: any): Course {
   return {
     ...course,
     shortname: course.fullname?.split("(")[0]?.trim() || course.fullname,
-    semester: course.active ? 1 : 2,
-    readiness: course.lectures > 0 ? Math.round((course.ready || 0) / course.lectures * 100) : 0,
-    next_exam_date: null,
   }
 }
 
-function enhanceLectures(lectures: any[]): Lecture[] {
-  return lectures.map((lecture: any): Lecture => {
-    return {
-      ...lecture,
-      has_audio: Boolean(lecture.has_audio),
-      has_slides: Boolean(lecture.n_slides && lecture.n_slides > 0),
-      has_transcript: Boolean(lecture.transcript_source && lecture.transcript_source !== "none"),
-    };
-  });
-}
-
 function enhanceSession(session: any): any {
-  if (!session) return session;
+  if (!session) return session
   return {
     ...session,
     entries: (session.entries || []).map((entry: any, index: number) => ({
@@ -183,91 +249,81 @@ function enhanceSession(session: any): any {
       id: entry.id ?? index,
       idx: entry.idx ?? index,
     })),
-  };
+  }
 }
-
 
 export const api = {
   // Courses
-  getCourses: () => request<any[]>(`/api/courses`).then(courses => courses.map(enhanceCourse)),
+  getCourses: () => request<any[]>(`/api/courses`).then((courses) => courses.map(enhanceCourse)),
   getCourse: (id: number) => request<any>(`/api/courses/${id}`).then(enhanceCourse),
   getCourseLectures: (id: number) =>
-    request<any[]>(`/api/courses/${id}/lectures`).then(enhanceLectures),
+    request<any[]>(`/api/courses/${id}/lectures`).then((rows) => rows.map(enhanceLecture)),
   getNotesIndex: (id: number) => request<number[]>(`/api/courses/${id}/notes-index`),
 
-  // Lectures
-  getLecture: (id: number) =>
-    request<any>(`/api/lectures/${id}`).then(enhanceLecture),
+  // Lectures (il JSON grezzo va passato a toLectureMedia in lib/lecture-media.ts)
+  getLecture: (id: number) => request<any>(`/api/lectures/${id}`),
   getLectureNotes: (id: number) => request<any>(`/api/lectures/${id}/notes`),
   generateLectureNotes: (id: number) =>
-    request<any>(`/api/lectures/${id}/notes`, { method: "POST" }),
+    request<{ queued: number }>(`/api/lectures/${id}/notes`, { method: "POST" }),
 
   // AI
-  getAIStatus: () => request<any>(`/api/ai/status`),
+  getAIStatus: () => request<AIStatusResponse>(`/api/ai/status`),
   getAIProviders: () => request<AIProvidersStatus>(`/api/ai/providers`),
   getAIPanel: () => request<AIPanelData>(`/api/ai/pannello`),
-  queueAIJob: (job: { kind: string; course_id: number; lecture_id?: number; priority?: number }) =>
-    request<any>(`/api/ai/queue`, { method: "POST", body: JSON.stringify(job) }),
-  cancelAIJob: (id: number) =>
-    request<any>(`/api/ai/cancel`, { method: "POST", body: JSON.stringify({ id }) }),
+  /** Backend: query `course_id` e `limit` (non un body JSON). */
+  queueCourseNotes: (course_id: number, limit = 3) =>
+    request<{ queued: number }>(`/api/ai/queue${q({ course_id, limit })}`, { method: "POST" }),
+  cancelAIQueue: () => request<{ cancelled: number }>(`/api/ai/cancel`, { method: "POST" }),
 
   // Flashcards
   getDueFlashcards: (course_id?: number) =>
-    request<any>(`/api/flashcards/due${course_id ? `?course_id=${course_id}` : ''}`).then((data: any) => ({
+    request<any>(`/api/flashcards/due${q({ course_id })}`).then((data: any) => ({
       ...data,
-      cards: (data.cards || data.flashcards || []).map(enhanceFlashcard),
+      cards: (data.cards || []).map(enhanceFlashcard),
     })),
   importFlashcards: (course_id?: number) =>
-    request<{ added: number }>(`/api/flashcards/import${course_id === undefined ? "" : `?course_id=${course_id}`}`, { method: "POST" }),
+    request<{ added: number }>(`/api/flashcards/import${q({ course_id })}`, { method: "POST" }),
   reviewFlashcard: (id: number, rating: number) =>
     request<any>(`/api/flashcards/${id}/review`, { method: "POST", body: JSON.stringify({ rating }) }),
-  exportAnki: (courseId?: number) => downloadAnki("tsv", courseId),
-  exportAnkiApkg: (courseId?: number) => downloadAnki("apkg", courseId),
-  getFlashcardStats: (course_id?: number) => request<any>(`/api/flashcards/stats${course_id ? `?course_id=${course_id}` : ''}`),
+  exportAnki: (courseId?: number) => downloadFile(`/api/flashcards/anki.tsv${q({ course_id: courseId })}`, "studyhub_flashcards.tsv"),
+  exportAnkiApkg: (courseId?: number) => downloadFile(`/api/flashcards/anki.apkg${q({ course_id: courseId })}`, "studyhub_flashcards.apkg"),
+  getFlashcardStats: (course_id?: number) => request<any>(`/api/flashcards/stats${q({ course_id })}`),
 
   // Tutor
-  getTutorThreads: (course_id?: number) => request<any[]>(`/api/tutor/threads${course_id ? `?course_id=${course_id}` : ''}`),
+  getTutorThreads: (course_id?: number) => request<any[]>(`/api/tutor/threads${q({ course_id })}`),
   createTutorThread: (course_id: number | null, mode: string = "normale") =>
     request<any>(`/api/tutor/threads`, { method: "POST", body: JSON.stringify({ course_id, mode }) }),
-  getTutorThread: (id: string) => request<any>(`/api/tutor/threads/${id}`),
-  askTutor: (id: string, question: string) =>
+  getTutorThread: (id: number) => request<any>(`/api/tutor/threads/${id}`),
+  askTutor: (id: number, question: string) =>
     request<any>(`/api/tutor/threads/${id}/ask`, { method: "POST", body: JSON.stringify({ question }) }),
-  deleteTutorThread: (id: string) => request<any>(`/api/tutor/threads/${id}`, { method: "DELETE" }),
+  deleteTutorThread: (id: number) => request<{ ok: boolean }>(`/api/tutor/threads/${id}`, { method: "DELETE" }),
 
-  // Quiz
+  // Quiz (n va in query: il backend non accetta un body)
   getLectureQuizzes: (lecture_id: number) => request<any[]>(`/api/lectures/${lecture_id}/quizzes`),
   generateQuiz: (lecture_id: number, n: number = 10) =>
-    request<any>(`/api/lectures/${lecture_id}/quiz`, { method: "POST", body: JSON.stringify({ n }) }),
+    request<any>(`/api/lectures/${lecture_id}/quiz${q({ n })}`, { method: "POST" }),
   getQuiz: (id: number) => request<any>(`/api/quizzes/${id}`),
-  submitQuiz: (id: number, answers: any[]) =>
+  submitQuiz: (id: number, answers: unknown[]) =>
     request<any>(`/api/quizzes/${id}/submit`, { method: "POST", body: JSON.stringify({ answers }) }),
-  getQuizHistory: (course_id?: number) => request<any>(`/api/quizzes/history/list${course_id ? `?course_id=${course_id}` : ''}`),
+  getQuizHistory: (course_id?: number) => request<any[]>(`/api/quizzes/history/list${q({ course_id })}`),
 
   // Study
   getPlan: () => request<PlanData>(`/api/plan`),
   getStudyCourses: () => request<StudyCourseOverview[]>(`/api/study`),
   getStudyCourseStats: (id: number) => request<any>(`/api/study/${id}`),
-  getStudyTopics: (id: number) => request<any>(`/api/study/${id}`), // Returns topics with mastery
   prepareStudy: (id: number, limit?: number) =>
-    request<any>(`/api/study/${id}/prepare`, { method: "POST", body: JSON.stringify({ limit }) }),
-  scanStudy: (id: number) => request<any>(`/api/study/${id}/scan`),
-  stopPrepare: (id: number) =>
-    request<any>(`/api/study/${id}/prepare/stop`, { method: "POST" }),
+    request<any>(`/api/study/${id}/prepare`, { method: "POST", body: JSON.stringify({ limit: limit ?? null }) }),
+  stopPrepare: (id: number) => request<any>(`/api/study/${id}/prepare/stop`, { method: "POST" }),
   getStudyTopicDetail: (topicId: number) => request<any>(`/api/study/topics/${topicId}`),
-  getStudyTopicLesson: (topicId: number) => request<any>(`/api/study/topics/${topicId}/lesson`),
-  completeStudyTopicLesson: (topicId: number) => request<any>(`/api/study/topics/${topicId}/lesson/done`, { method: "POST" }),
-  askStudyTopic: (topicId: number, question: string, context?: string, mode?: string) =>
-    request<any>(`/api/study/topics/${topicId}/ask`, { method: "POST", body: JSON.stringify({ question, context, mode }) }),
   getStudyChapters: (courseId: number) => request<any>(`/api/study/${courseId}/chapters`),
-  getExcludedChapters: (courseId: number) => request<any>(`/api/study/${courseId}/chapters/excluded`),
-  excludeChapter: (courseId: number, chapter: string) =>
-    request<any>(`/api/study/${courseId}/chapters`, { method: "POST", body: JSON.stringify({ chapter }) }),
-  getStudyArchetype: (courseId: number) => request<any>(`/api/courses/${courseId}/archetype`),
-  getMoodleStrategy: (courseId: number) => request<any>(`/api/courses/${courseId}/moodle-strategy`),
-  getStudyTopicArtifact: (topicId: number) => request<any>(`/api/study/topics/${topicId}/artifact`),
-  getStudyTopicScript: (topicId: number) => request<any>(`/api/study/topics/${topicId}/script.m`),
-  prefetchStudyLessons: (courseId: number, topicIds: number[]) =>
-    request<any>(`/api/study/${courseId}/lessons/prefetch`, { method: "POST", body: JSON.stringify({ topic_ids: topicIds }) }),
+  getExcludedChapters: (courseId: number) => request<string[]>(`/api/study/${courseId}/chapters/excluded`),
+  setChapterExcluded: (courseId: number, chapter: string, exclude: boolean = true) =>
+    request<{ topics: number }>(`/api/study/${courseId}/chapters`, { method: "POST", body: JSON.stringify({ chapter, exclude }) }),
+  getCourseArchetype: (courseId: number) => request<any>(`/api/courses/${courseId}/archetype`),
+  getCourseMoodleStrategy: (courseId: number) => request<any>(`/api/courses/${courseId}/moodle-strategy`),
+  /** Backend: query `n` (numero di lezioni da preparare), non un elenco di topic. */
+  prefetchStudyLessons: (courseId: number, n = 4) =>
+    request<{ topics: number[] }>(`/api/study/${courseId}/lessons/prefetch${q({ n })}`, { method: "POST" }),
 
   // Sessions
   createSession: (course_id: number, minutes: number = 45, focus_topic?: number) =>
@@ -284,62 +340,48 @@ export const api = {
 
   // Exams
   createExam: (data: { course_id: number; date: string; kind?: string; note?: string }) =>
-    request<any>(`/api/exams`, { method: "POST", body: JSON.stringify(data) }),
-  deleteExam: (id: number) => request<any>(`/api/exams/${id}`, { method: "DELETE" }),
+    request<{ id: number }>(`/api/exams`, { method: "POST", body: JSON.stringify(data) }),
+  deleteExam: (id: number) => request<{ ok: boolean }>(`/api/exams/${id}`, { method: "DELETE" }),
   getCourseExam: (course_id: number) => request<any>(`/api/courses/${course_id}/exam`),
   generateExamProfile: (course_id: number, force: boolean = false) =>
     request<any>(`/api/courses/${course_id}/exam/profile`, { method: "POST", body: JSON.stringify({ force }) }),
-  generateSimulations: (course_id: number, count: number) =>
-    request<any>(`/api/courses/${course_id}/exam/sims`, { method: "POST", body: JSON.stringify({ count }) }),
+  generateSimulation: (course_id: number) =>
+    request<any>(`/api/courses/${course_id}/exam/sims`, { method: "POST" }),
   getSimulation: (id: string) => request<any>(`/api/sims/${id}`),
   submitSimulation: (id: string, answers: any[], elapsed_min?: number) =>
     request<any>(`/api/sims/${id}/submit`, { method: "POST", body: JSON.stringify({ answers, elapsed_min }) }),
-  getExamSims: (course_id: number) => request<any>(`/api/courses/${course_id}/exam/sims`),
-  getExamSim: (sim_id: string) => request<any>(`/api/sims/${sim_id}`),
 
   // Feed (StudyTok shorts)
-  getFeed: (course_id?: number, limit: number = 30) => request<any>(`/api/feed${course_id ? `?course_id=${course_id}&limit=${limit}` : `?limit=${limit}`}`),
+  getFeed: (course_id?: number, limit: number = 30) => request<any>(`/api/feed${q({ course_id, limit })}`),
 
   // Notifications (real news, not feed)
   getNotifications: () => request<any[]>(`/api/notifications`),
   markNotificationsRead: () => request<{ ok: boolean }>(`/api/notifications/read`, { method: "POST" }),
 
-  // Fullrun
-  getFullrunStatus: () => request<any>(`/api/fullrun`),
-
-  // Search
-  search: (q: string, course_id?: number, year?: number, limit: number = 20) =>
-    request<any>(`/api/search?q=${encodeURIComponent(q)}${course_id ? `&course_id=${course_id}` : ""}${year ? `&year=${year}` : ""}&limit=${limit}`),
+  // Search: il backend risponde {results, semantic}
+  search: (text: string, opts: { courseId?: number; year?: number; limit?: number } = {}): Promise<SearchResponse> =>
+    request<unknown>(`/api/search${q({ q: text, course_id: opts.courseId, year: opts.year, limit: opts.limit ?? 20 })}`)
+      .then(toSearchResponse),
 
   // Storage
-  getStorage: () => request<any>(`/api/storage`),
+  getStorage: () => request<StorageStatus>(`/api/storage`),
 
-  // Documents
+  // Documents (binari: niente res.json())
   getDocument: (id: number) => request<any>(`/api/docs/${id}`),
-  getDocumentFile: (id: number) => request<Blob>(`/api/docs/${id}/file`),
-  getDocumentPage: (id: number, page: number, dpi: number = 110) => request<Blob>(`/api/docs/${id}/page/${page}.png?dpi=${dpi}`),
+  documentFileUrl: (id: number, page?: number) => `/api/docs/${id}/file${page ? `#page=${page}` : ""}`,
+  documentPageUrl: (id: number, page: number, dpi = 110) => `/api/docs/${id}/page/${page}.png?dpi=${dpi}`,
 
   // Export
-  exportLecturePdf: (lecture_id: number) => request<Blob>(`/api/lectures/${lecture_id}/notes.pdf`),
-  exportCoursePdf: (course_id: number) => request<Blob>(`/api/courses/${course_id}/dispensa.pdf`),
+  downloadLecturePdf: (lecture_id: number) => downloadFile(`/api/lectures/${lecture_id}/notes.pdf`, `appunti_lezione_${lecture_id}.pdf`),
+  downloadCoursePdf: (course_id: number) => downloadFile(`/api/courses/${course_id}/dispensa.pdf`, `dispensa_corso_${course_id}.pdf`),
 
   // Setup
-  getSetupStatus: () => request<any>(`/api/setup`),
+  getSetupStatus: () => request<SetupStatus>(`/api/setup`),
   setupLogin: () => request<{ started: boolean }>(`/api/setup/login`, { method: "POST" }),
-  setupCourses: () => request<{ courses: number; active: number }>(`/api/setup/courses`, { method: "POST" }),
-  setupFullrun: () => request<{ started: boolean }>(`/api/setup/fullrun`, { method: "POST" }),
-
-  // Study chapters
-  setChapterExcluded: (course_id: number, chapter: string, exclude: boolean = true) =>
-    request<any>(`/api/study/${course_id}/chapters`, { method: "POST", body: JSON.stringify({ chapter, exclude }) }),
-
-  // Course archetype & moodle strategy
-  getCourseArchetype: (course_id: number) => request<any>(`/api/courses/${course_id}/archetype`),
-  getCourseMoodleStrategy: (course_id: number) => request<any>(`/api/courses/${course_id}/moodle-strategy`),
+  getFullrunStatus: () => request<any>(`/api/fullrun`),
 
   // UI version
-  getUIVersion: (currentVersion?: string) => request<{ ui: string }>(`/api/version${currentVersion ? `?v=${currentVersion}` : ""}`),
-  getUIClients: () => request<any>(`/api/version/clients`),
+  getUIVersion: (currentVersion?: string) => request<{ ui: string }>(`/api/version${q({ v: currentVersion })}`),
 }
 
 export const queryClient = new QueryClient({

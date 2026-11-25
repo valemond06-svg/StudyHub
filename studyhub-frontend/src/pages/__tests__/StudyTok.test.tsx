@@ -187,7 +187,7 @@ describe("StudyTok Page", () => {
     await waitFor(() => {
       expect(screen.getByText("Dosso Anti-Doomscrolling")).toBeDefined()
       expect(screen.getByText("Hai visto 5 pillole!")).toBeDefined()
-      expect(screen.getByText("Avvia Studio Attivo")).toBeDefined()
+      expect(screen.getByText("Prepara una sessione di studio")).toBeDefined()
       expect(screen.getByText("Continua nel feed")).toBeDefined()
     })
 

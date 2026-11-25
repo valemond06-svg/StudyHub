@@ -8,23 +8,26 @@ export interface Course {
   folder: string | null
   /** numero di lezioni del corso (da /api/courses) */
   lectures: number
-  /** numero di lezioni pronte (media_ok/trascritta) (da /api/courses) */
+  /** lezioni con media scaricati o trascritte (status media_ok/trascritta): materiale elaborato, NON preparazione */
   ready: number
-  // Campi frontend-only (non esposti dal backend, usati dalle pagine UI)
+  /** nome senza il suffisso tra parentesi (calcolato nel client) */
   shortname?: string
-  semester?: number
-  readiness?: number
-  next_exam_date?: string | null
 }
 
 export interface Lecture {
   id: number
   course_id: number
   title: string
-  status: "nuova" | "media_ok" | "trascritta" | "pronta" | "errore"
-  source: "moodle" | "panopto" | "manual"
-  date: string
-  duration: number
+  /** valori reali della tabella lectures (db.py) */
+  status: "nuova" | "media_ok" | "trascritta" | "errore"
+  date: string | null
+  number?: number | null
+  /** secondi; può mancare */
+  duration: number | null
+  n_slides?: number
+  transcript_source?: string | null
+  video_type?: "panopto" | "moodle" | "standard"
+  error?: string | null
   has_audio: boolean
   has_slides: boolean
   has_transcript: boolean
@@ -92,36 +95,6 @@ export interface Exam {
   days_left: number | null
   note?: string | null
   created_at?: string
-}
-
-export interface ExamProfile {
-  id: number
-  course_id: number
-  parts: ExamPart[]
-  topics: ExamTopic[]
-  exercises: ExamExercise[]
-  theory: string[]
-  advice: string[]
-  generated_at: string
-}
-
-export interface ExamPart {
-  name: string
-  points: number
-  minimum: number
-  weight: number
-}
-
-export interface ExamTopic {
-  name: string
-  frequency: string
-  weight: number
-}
-
-export interface ExamExercise {
-  type: string
-  method: string
-  common_errors: string[]
 }
 
 export interface Simulation {
@@ -429,15 +402,6 @@ export interface DueFlashcardsResponse {
   stats: { totale: number; da_ripassare: number; ripassate_oggi: number }
 }
 
-// --- AI Status (/api/ai/status) ----------------------------------------------------
-
-export interface AIJobStatus {
-  jobs: any[]
-  paused_reason: string | null
-  usage: any
-  backlog: any
-}
-
 export interface AIProvidersStatus {
   local: { available: boolean; healthy: boolean; url: string | null }
   gemini: { available: boolean; healthy: boolean; url: string | null }
@@ -467,22 +431,41 @@ export interface FeedResponse {
   shorts: FeedShort[]
 }
 
-// --- Study Course Stats (/api/study/{id}) ------------------------------------------
+// --- AI Status (/api/ai/status → ai/jobs.py status()) ---------------------------------
 
-export interface StudyCourseStats {
-  streak: number
-  xp_total: number
-  xp_today: number
-  ready_exam: boolean
+export interface ClaudeUsage {
+  /** 0-1, finestra di 5 ore */
+  utilization?: number | null
+  /** epoch secondi */
+  resets_at?: number | null
+  /** stato della rate limit di Claude Code: allowed | allowed_warning | rejected | … */
+  status?: string | null
+  checked_at?: number | null
 }
 
-// --- AI Status (/api/ai/status) ----------------------------------------------------
-
 export interface AIStatusResponse {
-  local: boolean
-  gemini: boolean
-  freellm: boolean
-  claude: boolean
+  jobs: Array<{ id: number; kind: string; status: string; title?: string | null; message?: string | null }>
+  paused_reason: string | null
+  usage: ClaudeUsage
+  backlog: { enabled: boolean; stop_at: number; waiting?: boolean | null }
+}
+
+// --- Setup (/api/setup → doctor.checks()) --------------------------------------------
+
+export interface SetupCheck {
+  id: string
+  ok: boolean
+  required: boolean
+  label: string
+  detail: string
+  fix: string
+}
+
+export interface SetupStatus {
+  checks: SetupCheck[]
+  ready: boolean
+  login_running: boolean
+  fullrun_running: boolean
 }
 
 // --- Storage (/api/storage) --------------------------------------------------------
@@ -490,12 +473,6 @@ export interface AIStatusResponse {
 export interface StorageStatus {
   media_root: string | null
   free_gb: number
-  // Frontend-computed/derived fields (not from backend)
-  db_size_mb?: number
-  media_size_gb?: number
-  cache_size_mb?: number
-  total_gb?: number
-  disk_total_gb?: number
 }
 
 // --- Fullrun (/api/fullrun) --------------------------------------------------------

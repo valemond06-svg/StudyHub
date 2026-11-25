@@ -3,7 +3,7 @@ import { useUIStore } from "./ui"
 
 beforeEach(() => {
   localStorage.clear()
-  useUIStore.setState({ theme: "system", sidebarCollapsed: false, commandPaletteOpen: false, sidebarOpen: true })
+  useUIStore.setState({ theme: "system", sidebarCollapsed: false, commandPaletteOpen: false, sidebarOpen: false })
 })
 
 describe("useUIStore", () => {
@@ -13,5 +13,14 @@ describe("useUIStore", () => {
     useUIStore.getState().toggleSidebarCollapsed()
     const saved = JSON.parse(localStorage.getItem("studyhub-ui")!).state
     expect(saved).toEqual({ theme: "oled", sidebarCollapsed: true })
+  })
+})
+
+describe("menu mobile", () => {
+  it("parte chiuso e non viene ricordato tra le sessioni", () => {
+    expect(useUIStore.getInitialState().sidebarOpen).toBe(false)
+    useUIStore.getState().setSidebarOpen(true)
+    const saved = JSON.parse(localStorage.getItem("studyhub-ui")!).state
+    expect(saved.sidebarOpen).toBeUndefined()
   })
 })

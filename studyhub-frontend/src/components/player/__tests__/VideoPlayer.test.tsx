@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import React from "react"
-import { VideoPlayer, formatTime } from "../VideoPlayer"
+import { VideoPlayer } from "../VideoPlayer"
+import { formatTime } from "@/lib/lecture-media"
 import type { VideoPlayerHandle } from "../VideoPlayer"
 import { api } from "@/lib/api"
 
 // Mock api
-vi.mock("@/lib/api", () => ({
-  api: {
-    getLecture: vi.fn(),
-  },
-}))
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api")
+  return { ...actual, api: { getLecture: vi.fn() } }
+})
 
 describe("VideoPlayer Component", () => {
   const originalScrollIntoView = Element.prototype.scrollIntoView
@@ -57,8 +57,8 @@ describe("VideoPlayer Component", () => {
       viewer_url: "https://univr.cloud.panopto.eu/Panopto/Pages/Viewer.aspx?id=panopto-uuid-12345",
       transcript: {
         segments: [
-          { t_start: 0, t_end: 10, text: "Benvenuti al corso di algoritmi." },
-          { t_start: 10, t_end: 25, text: "Oggi parleremo di complessità computazionale." },
+          { start: 0, end: 10, text: "Benvenuti al corso di algoritmi." },
+          { start: 10, end: 25, text: "Oggi parleremo di complessità computazionale." },
         ],
       },
     }
@@ -124,10 +124,10 @@ describe("VideoPlayer Component", () => {
       default_mode: "moodle",
       transcript: {
         segments: [
-          { t_start: 0, t_end: 15, text: "Iniziamo con gli alberi binari di ricerca." },
+          { start: 0, end: 15, text: "Iniziamo con gli alberi binari di ricerca." },
         ],
       },
-      silences: [{ start: 120, end: 125 }],
+      silences: [[120, 125]],
     }
 
     vi.mocked(api.getLecture).mockResolvedValueOnce(mockMoodleVideoLecture as any)
@@ -183,15 +183,18 @@ describe("VideoPlayer Component", () => {
       has_transcript: true,
       has_notes: false,
       folder: "corso_2/lezione_3",
-      audio_path: "/media/103/audio.opus",
+      has_local_audio: true,
+      has_local_slides: true,
+      video_modes: ["slides"],
+      default_mode: "slides",
       slides: [
-        { index: 0, timestamp: 0, url: "/media/103/slides/1.png", thumbnailUrl: "/media/103/slides/1.png" },
-        { index: 1, timestamp: 60, url: "/media/103/slides/2.png", thumbnailUrl: "/media/103/slides/2.png" },
+        { file: "0001_00-00-00.png", start: 0, end: 60, shot_at: 55 },
+        { file: "0002_00-01-00.png", start: 60, end: 120, shot_at: 115 },
       ],
       transcript: {
         segments: [
-          { t_start: 0, t_end: 30, text: "Prima slide introduttiva." },
-          { t_start: 60, t_end: 90, text: "Passiamo alla seconda slide." },
+          { start: 0, end: 30, text: "Prima slide introduttiva." },
+          { start: 60, end: 90, text: "Passiamo alla seconda slide." },
         ],
       },
     }
@@ -238,13 +241,15 @@ describe("VideoPlayer Component", () => {
       folder: "corso_1/lezione_4",
       panopto_embed_url: "https://univr.cloud.panopto.eu/Panopto/Pages/Embed.aspx?id=test-multi-id",
       media_url: "/media/104/video.mp4",
+      has_local_audio: true,
+      has_local_slides: true,
       video_modes: ["panopto", "moodle", "slides"],
       default_mode: "panopto",
       slides: [
-        { index: 0, timestamp: 0, url: "/media/104/slides/1.png", thumbnailUrl: "/media/104/slides/1.png" },
+        { file: "0001_00-00-00.png", start: 0, end: 30, shot_at: 25 },
       ],
       transcript: {
-        segments: [{ t_start: 0, t_end: 10, text: "Test multimodale." }],
+        segments: [{ start: 0, end: 10, text: "Test multimodale." }],
       },
     }
 
@@ -310,8 +315,8 @@ describe("VideoPlayer Component", () => {
       media_url: "/media/105/video.mp4",
       transcript: {
         segments: [
-          { t_start: 0, t_end: 10, text: "Primo segmento a 0 secondi." },
-          { t_start: 45, t_end: 60, text: "Secondo segmento a 45 secondi." },
+          { start: 0, end: 10, text: "Primo segmento a 0 secondi." },
+          { start: 45, end: 60, text: "Secondo segmento a 45 secondi." },
         ],
       },
     }
@@ -358,8 +363,8 @@ describe("VideoPlayer Component", () => {
       media_url: "/media/106/video.mp4",
       transcript: {
         segments: [
-          { t_start: 0, t_end: 10, text: "Introduzione alle matrici sparse." },
-          { t_start: 20, t_end: 35, text: "Spiegazione degli algoritmi greedy." },
+          { start: 0, end: 10, text: "Introduzione alle matrici sparse." },
+          { start: 20, end: 35, text: "Spiegazione degli algoritmi greedy." },
         ],
       },
     }
@@ -408,7 +413,7 @@ describe("VideoPlayer Component", () => {
       folder: "corso_1/lezione_7",
       media_url: "/media/107/video.mp4",
       transcript: {
-        segments: [{ t_start: 0, t_end: 10, text: "Segmento base." }],
+        segments: [{ start: 0, end: 10, text: "Segmento base." }],
       },
     }
 
@@ -470,7 +475,7 @@ describe("VideoPlayer Component", () => {
       folder: "corso_1/lezione_8",
       media_url: "/media/108/video.mp4",
       transcript: {
-        segments: [{ t_start: 0, t_end: 10, text: "Ref test." }],
+        segments: [{ start: 0, end: 10, text: "Ref test." }],
       },
     }
 
@@ -504,5 +509,82 @@ describe("VideoPlayer Component", () => {
       playerRef.current?.seek(35)
     })
     expect(playerRef.current?.getCurrentTime()).toBe(35)
+  })
+})
+
+describe("VideoPlayer con il JSON reale del backend", () => {
+  // Fixture nel formato di GET /api/lectures/{id}: transcript.segments {start,end,text}, slides {file,start,end,shot_at}, silences [[a,b]]
+  const realLecture = {
+    id: 190, course_id: 25782, panopto_id: null, title: "Lezione 12", date: "2026-11-10", number: 12,
+    folder: "1_Anno/AMM/lezioni/12", viewer_url: null, duration: 5400.5, has_audio: 1, n_slides: 2,
+    transcript_source: "whisper", status: "trascritta", error: null, updated_at: "2026-11-10T12:00:00",
+    panopto_embed_url: null, media_url: null, has_local_audio: true, has_local_slides: true,
+    video_modes: ["slides"], default_mode: "slides", videos: [],
+    slides: [
+      { file: "0001_00-00-00.png", start: 0, end: 300, shot_at: 290 },
+      { file: "0002_00-05-00.png", start: 300, end: 900, shot_at: 880 },
+    ],
+    transcript: { source: "whisper", segments: [
+      { start: 0, end: 12.5, text: "Buongiorno, oggi parliamo di Laplace." },
+      { start: 754.2, end: 760, text: "La trasformata della derivata." },
+    ] },
+    silences: [[100.5, 104], [200, 201.5]],
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    Element.prototype.scrollIntoView = vi.fn()
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined)
+    window.HTMLMediaElement.prototype.pause = vi.fn()
+  })
+
+  it("mostra i tempi veri della trascrizione e le slide dal campo file, senza scaricare nulla in anticipo", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+    vi.mocked(api.getLecture).mockResolvedValueOnce(realLecture as any)
+    render(<VideoPlayer lectureId={190} lectureTitle="Lezione 12" onClose={vi.fn()} />)
+
+    await waitFor(() => expect(screen.getByText("La trasformata della derivata.")).toBeDefined())
+    expect(screen.getAllByText("12:34").length).toBeGreaterThan(0)
+    const srcs = Array.from(document.querySelectorAll("img")).map((i) => i.getAttribute("src"))
+    expect(srcs).toContain("/media/190/slides/0001_00-00-00.png")
+    expect(srcs).toContain("/media/190/slides/0002_00-05-00.png")
+    expect(srcs.every((s) => s && !s.includes("undefined"))).toBe(true)
+    expect(screen.queryByText(/NaN/)).toBeNull()
+    expect(screen.getByText(/Slide 1 \/ 2/)).toBeDefined()
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it("si apre in un portal sopra header e sidebar e si chiude con Esc o con il pulsante", async () => {
+    const onClose = vi.fn()
+    vi.mocked(api.getLecture).mockResolvedValueOnce(realLecture as any)
+    const { container } = render(<VideoPlayer lectureId={190} lectureTitle="Lezione 12" onClose={onClose} />)
+    const dialog = await screen.findByRole("dialog")
+    expect(container.contains(dialog)).toBe(false)
+    expect(dialog.className).toContain("z-[510]")
+    await waitFor(() => expect(screen.getByText("La trasformata della derivata.")).toBeDefined())
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole("button", { name: "Chiudi player" }))
+    expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  it("si apre anche con il solo Panopto (nessun audio locale) e parte dal secondo richiesto", async () => {
+    vi.mocked(api.getLecture).mockResolvedValueOnce({
+      ...realLecture, has_audio: 0, n_slides: 0, has_local_audio: false, has_local_slides: false, slides: [],
+      panopto_id: "abc", panopto_embed_url: "https://univr.cloud.panopto.eu/Panopto/Pages/Embed.aspx?id=abc&start=0",
+      video_modes: ["panopto"], default_mode: "panopto",
+    } as any)
+    render(<VideoPlayer lectureId={190} lectureTitle="Lezione 12" onClose={vi.fn()} initialTime={754} />)
+    await waitFor(() => expect(document.querySelector("iframe")).not.toBeNull())
+    expect(document.querySelector("iframe")?.getAttribute("src")).toContain("start=754")
+    expect(screen.queryByRole("tab", { name: /Slide & Audio/ })).toBeNull()
+  })
+
+  it("mostra il messaggio d'errore del backend (detail) se la lezione non esiste", async () => {
+    const { ApiError } = await vi.importActual<typeof import("@/lib/api")>("@/lib/api")
+    vi.mocked(api.getLecture).mockRejectedValueOnce(new ApiError(404, "Lezione non trovata"))
+    render(<VideoPlayer lectureId={9} lectureTitle="X" onClose={vi.fn()} />)
+    expect(await screen.findByText("Lezione non trovata")).toBeDefined()
   })
 })

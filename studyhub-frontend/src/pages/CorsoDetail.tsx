@@ -1,145 +1,162 @@
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowLeft, Play, BookOpen, FlaskConical, HelpCircle, Target, Zap, Settings, Download, Upload, Edit, Plus, ListMusic, Image as ImageIcon, Brain, Loader2 } from "lucide-react"
+import { ArrowLeft, Play, BookOpen, FlaskConical, HelpCircle, Target, Zap, Download, Upload, Plus, ListMusic, Image as ImageIcon, Loader2, RotateCcw, Video, FileText, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { VideoPlayer } from "@/components/player/VideoPlayer"
-import { MathMarkdown } from "@/components/ui/math-markdown"
-import { api } from "@/lib/api"
-import type { Course, Lecture, Exam, ExamProfile, Simulation, PlanData, StudyTopic } from "@/types"
+import { MathMarkdown, MathInline } from "@/components/ui/math-markdown"
+import { api, describeError } from "@/lib/api"
+import { canOpenLecture } from "@/lib/lecture-media"
+import { toExamProfile, toExamSims, EXAM_WEIGHT_LABEL } from "@/lib/exam-profile"
+import { readinessVariant } from "@/lib/readiness"
+import { useToast } from "@/hooks/use-toast"
+import type { Course, Lecture, Exam, PlanData, StudyTopic } from "@/types"
 import { cn, safeFormatDistance } from "@/lib/utils"
+
+type LectureRow = Lecture & { has_notes: boolean }
+
+function lectureDuration(seconds: number | null | undefined): string {
+  if (!seconds || seconds <= 0) return "durata n.d."
+  return `${Math.round(seconds / 60)} min`
+}
+
+/** Prima le lezioni con data (più recenti in alto), poi quelle senza data. */
+function sortLectures(rows: LectureRow[]): LectureRow[] {
+  return [...rows].sort((a, b) => {
+    if (a.date && b.date) return b.date.localeCompare(a.date) || (b.number ?? 0) - (a.number ?? 0)
+    if (a.date) return -1
+    if (b.date) return 1
+    return a.title.localeCompare(b.title)
+  })
+}
 
 export function CorsoDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const courseId = Number(id)
+  const validId = Number.isSafeInteger(courseId) && courseId > 0
 
-  const [playerLecture, setPlayerLecture] = useState<Lecture | null>(null)
-  const [isCreatingSim, setIsCreatingSim] = useState(false)
-
-  const handleCreateSim = async () => {
-    try {
-      setIsCreatingSim(true)
-      const res = await api.generateSimulations(courseId, 1)
-      if (res?.id) {
-        navigate(`/simulazione/${res.id}`)
-      } else {
-        await queryClient.invalidateQueries({ queryKey: ["examProfile", courseId] })
-      }
-    } catch (err: any) {
-      alert(err?.message || "Errore nella generazione della simulazione")
-    } finally {
-      setIsCreatingSim(false)
-    }
-  }
+  // Apertura diretta di una lezione al secondo esatto (dalla ricerca): /corsi/7?lezione=190&t=754
+  const lectureParam = Number(searchParams.get("lezione"))
+  const timeParam = Math.max(0, Number(searchParams.get("t")) || 0)
+  const [today] = useState(() => new Date().toISOString().slice(0, 10))
+  const [playerLecture, setPlayerLecture] = useState<{ id: number; title: string; t: number } | null>(null)
+  const openFromUrl = Number.isSafeInteger(lectureParam) && lectureParam > 0 ? lectureParam : null
 
   const { data: course, isLoading: courseLoading, isError: courseError, refetch: refetchCourse } = useQuery<Course>({
     queryKey: ["course", courseId],
     queryFn: () => api.getCourse(courseId),
-    enabled: !!courseId,
+    enabled: validId,
   })
 
-  const { data: lectures = [] } = useQuery<Lecture[]>({
+  const { data: lectureRows = [] } = useQuery<Lecture[]>({
     queryKey: ["lectures", courseId],
     queryFn: () => api.getCourseLectures(courseId),
-    enabled: !!courseId,
+    enabled: validId,
   })
+  const { data: notesIndex = [] } = useQuery<number[]>({
+    queryKey: ["notesIndex", courseId],
+    queryFn: () => api.getNotesIndex(courseId),
+    enabled: validId,
+  })
+  const withNotes = new Set(notesIndex)
+  const lectures: LectureRow[] = lectureRows.map((l) => ({ ...l, has_notes: withNotes.has(l.id) }))
 
-  const { data: courseExam } = useQuery<{ profile: ExamProfile | null; profile_md: string | null; sims: Simulation[] }>({
+  const { data: courseExam } = useQuery<{ profile: unknown; profile_md: string | null; sims: unknown }>({
     queryKey: ["examProfile", courseId],
     queryFn: () => api.getCourseExam(courseId),
-    enabled: !!courseId,
+    enabled: validId,
   })
-  const examProfile = courseExam?.profile ?? null
-  const simulations = courseExam?.sims ?? []
+  const profile = toExamProfile(courseExam?.profile)
+  const simulations = toExamSims(courseExam?.sims)
   const profileMutation = useMutation({
     mutationFn: (force: boolean) => api.generateExamProfile(courseId, force),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["examProfile", courseId] }),
+    onError: (err) => toast({ variant: "destructive", title: "Profilo d'esame non generato", description: describeError(err) }),
+  })
+  const simMutation = useMutation({
+    mutationFn: () => api.generateSimulation(courseId),
+    onSuccess: async (res: { id?: number } | undefined) => {
+      if (res?.id) navigate(`/simulazione/${res.id}`)
+      else await queryClient.invalidateQueries({ queryKey: ["examProfile", courseId] })
+    },
+    onError: (err) => toast({ variant: "destructive", title: "Simulazione non generata", description: describeError(err) }),
   })
 
-  const examProfileRaw = (courseExam?.profile as any) ?? null
-  const examMarkdown = courseExam?.profile_md || examProfileRaw?.sintesi_md || null
-
-  const examParts: any[] = (examProfileRaw?.parts || examProfileRaw?.formato?.parti || []).map((p: any) => ({
-    name: p.name || p.nome || "Parte",
-    points: p.points ?? p.punti ?? null,
-    minimum: p.minimum ?? p.minimo ?? null,
-    weight: p.weight ?? p.peso ?? null,
-    description: p.description ?? p.descrizione ?? "",
-  }))
-
-  const examTopics: any[] = (examProfileRaw?.topics || examProfileRaw?.argomenti || []).map((t: any) => ({
-    name: t.name || t.nome || "Argomento",
-    frequency: t.frequency || t.frequenza || "Standard",
-    weight: t.weight || t.peso || null,
-    notes: t.notes || t.note || "",
-  }))
-
-  const examExercises: any[] = (examProfileRaw?.exercises || examProfileRaw?.esercizi_tipo || []).map((e: any) => ({
-    type: e.type || e.tipo || "Esercizio",
-    method: e.method || e.metodo_risolutivo || "",
-    common_errors: Array.isArray(e.common_errors) ? e.common_errors : (Array.isArray(e.errori_tipici) ? e.errori_tipici : []),
-  }))
-
-  const examTheory: string[] = Array.isArray(examProfileRaw?.theory) 
-    ? examProfileRaw.theory 
-    : (Array.isArray(examProfileRaw?.teoria_richiesta) ? examProfileRaw.teoria_richiesta : [])
-
-  const examAdvice: string[] = Array.isArray(examProfileRaw?.advice)
-    ? examProfileRaw.advice
-    : Array.isArray(examProfileRaw?.consigli)
-      ? examProfileRaw.consigli
-      : (typeof examProfileRaw?.consigli === "object" && examProfileRaw?.consigli !== null)
-        ? [
-            ...(Array.isArray(examProfileRaw.consigli.studio) ? examProfileRaw.consigli.studio : []),
-            ...(examProfileRaw.consigli.tempo ? [examProfileRaw.consigli.tempo] : []),
-            ...(Array.isArray(examProfileRaw.consigli.verifiche) ? examProfileRaw.consigli.verifiche : []),
-          ]
-        : []
-
-  // Study overview: topics, mastery, streak, XP (real data from /api/study/{id})
+  // Padronanza reale (mastery.overview) da /api/study/{id}
   const { data: studyData } = useQuery<any>({
     queryKey: ["study", courseId],
     queryFn: () => api.getStudyCourseStats(courseId),
-    enabled: !!courseId,
+    enabled: validId,
   })
+  const readyExamPct = typeof studyData?.ready_exam === "number" ? Math.round(studyData.ready_exam * 100) : null
 
-  // Chapters with real mastery (from /api/study/{id}/chapters)
   const { data: chapters = [] } = useQuery<{ name: string; topics: number; weight: number; mastery: number; mastery_exam: number }[]>({
     queryKey: ["studyChapters", courseId],
     queryFn: () => api.getStudyChapters(courseId),
-    enabled: !!courseId,
+    enabled: validId,
   })
 
-  // Flashcard stats for this course (from /api/flashcards/stats)
   const { data: flashcardStats } = useQuery<any>({
     queryKey: ["flashcardStats", courseId],
     queryFn: () => api.getFlashcardStats(courseId),
-    enabled: !!courseId,
+    enabled: validId,
   })
   const importMutation = useMutation({
     mutationFn: () => api.importFlashcards(courseId),
-    onSuccess: () => Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["flashcardStats"] }),
-      queryClient.invalidateQueries({ queryKey: ["flashcards-due"] }),
-    ]),
+    onSuccess: (res) => {
+      toast({ title: "Flashcard importate", description: `${res?.added ?? 0} nuove carte dagli appunti del corso.` })
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["flashcardStats"] }),
+        queryClient.invalidateQueries({ queryKey: ["flashcards-due"] }),
+      ])
+    },
+    onError: (err) => toast({ variant: "destructive", title: "Importazione non riuscita", description: describeError(err) }),
   })
-  const exportMutation = useMutation({ mutationFn: () => api.exportAnki(courseId) })
+  const exportMutation = useMutation({
+    mutationFn: () => api.exportAnki(courseId),
+    onError: (err) => toast({ variant: "destructive", title: "Download Anki non riuscito", description: describeError(err) }),
+  })
+  const pdfMutation = useMutation({
+    mutationFn: () => api.downloadCoursePdf(courseId),
+    onError: (err) => toast({ variant: "destructive", title: "Dispensa PDF non creata", description: describeError(err) }),
+  })
 
-  // Exams: get from plan or use the course_exam endpoint which might have it
   const { data: plan } = useQuery<PlanData>({
     queryKey: ["plan"],
     queryFn: api.getPlan,
-    enabled: !!courseId,
+    enabled: validId,
   })
   const exams = (plan?.exams ?? []).filter((e: Exam) => e.course_id === courseId)
+
+  const urlLecture = openFromUrl ? lectures.find((l) => l.id === openFromUrl) : undefined
+  const activePlayer = playerLecture ?? (openFromUrl ? { id: openFromUrl, title: urlLecture?.title ?? "Lezione", t: timeParam } : null)
+  const closePlayer = () => {
+    setPlayerLecture(null)
+    if (openFromUrl) {
+      const next = new URLSearchParams(searchParams)
+      next.delete("lezione")
+      next.delete("t")
+      setSearchParams(next, { replace: true })
+    }
+  }
+
+  if (!validId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
+        <p className="text-neutral-600 dark:text-neutral-400">Indirizzo del corso non valido.</p>
+        <Button variant="outline" onClick={() => navigate("/corsi")}>Torna ai corsi</Button>
+      </div>
+    )
+  }
 
   if (courseLoading) {
     return (
@@ -153,7 +170,7 @@ export function CorsoDetail() {
   if (courseError || !course) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
-        <p className="text-neutral-600 dark:text-neutral-400">Impossibile caricare il corso #{courseId}.</p>
+        <p className="text-neutral-600 dark:text-neutral-400">Impossibile caricare il corso.</p>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => navigate("/corsi")}>Torna ai corsi</Button>
           <Button onClick={() => refetchCourse()}>Riprova</Button>
@@ -163,30 +180,37 @@ export function CorsoDetail() {
   }
 
   const upcomingExams = exams
-    .filter((e: Exam) => e.date && new Date(e.date) > new Date())
-    .sort((a: Exam, b: Exam) => new Date(a.date!).getTime() - new Date(b.date!).getTime())
+    .filter((e: Exam) => e.date && e.date >= today)
+    .sort((a: Exam, b: Exam) => a.date.localeCompare(b.date))
 
-  const lecturesByStatus = {
-    nuova: lectures.filter(l => l.status === "nuova"),
-    media_ok: lectures.filter(l => l.status === "media_ok"),
-    trascritta: lectures.filter(l => l.status === "trascritta"),
-    pronta: lectures.filter(l => l.status === "pronta"),
-    errore: lectures.filter(l => l.status === "errore"),
-  }
+  const notesCount = lectures.filter((l) => l.has_notes).length
+  const groups = [
+    { key: "notes", title: "Con appunti AI", items: lectures.filter((l) => l.has_notes) },
+    { key: "trascritta", title: "Trascritte, senza appunti", items: lectures.filter((l) => !l.has_notes && l.status === "trascritta") },
+    { key: "media_ok", title: "Audio pronto, da trascrivere", items: lectures.filter((l) => !l.has_notes && l.status === "media_ok") },
+    { key: "nuova", title: "Nuove (da scaricare)", items: lectures.filter((l) => !l.has_notes && l.status === "nuova") },
+    { key: "errore", title: "Errori", items: lectures.filter((l) => !l.has_notes && l.status === "errore") },
+  ].map((g) => ({ ...g, items: sortLectures(g.items) }))
+  const toProcess = lectures.length - notesCount
+
+  const topics: StudyTopic[] = studyData?.topics ?? []
+  const untried = topics.filter((t) => !t.tried)
+  const nextTopic: StudyTopic | undefined = untried[0] ?? (topics.length ? topics.reduce((min, t) => (t.m ?? 0) < (min.m ?? 0) ? t : min, topics[0]) : undefined)
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div className="flex items-start gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/corsi")} aria-label="Indietro">
+        <div className="flex items-start gap-3 min-w-0">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/corsi")} aria-label="Torna ai corsi" className="shrink-0">
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div>
-            <div className="flex items-center gap-2 mb-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-accent-100 text-accent-700 dark:bg-accent-900/30 dark:text-accent-300">
-                {course.year_of_study}° anno · {course.semester}° semestre
+                {course.year_of_study ? `${course.year_of_study}° anno` : "Anno non indicato"}
               </span>
+              {course.passed ? <Badge variant="success">Superato</Badge> : course.active ? <Badge variant="outline">Attivo</Badge> : <Badge variant="outline">Non attivo</Badge>}
               {course.priority > 0 && (
                 <Badge variant="accent" className="gap-1">
                   <Target className="h-3 w-3" />
@@ -194,77 +218,64 @@ export function CorsoDetail() {
                 </Badge>
               )}
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50 break-words">
               {course.fullname}
             </h1>
-            <p className="text-neutral-500 dark:text-neutral-400 mt-1">{course.shortname}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 sm:ml-auto">
-          <Button variant="outline" className="gap-1">
-            <Download className="h-4 w-4" />
-            Export
-          </Button>
-          <Button variant="outline" className="gap-1">
-            <Settings className="h-4 w-4" />
-            Impostazioni
+          <Button variant="outline" className="gap-1" disabled={pdfMutation.isPending} onClick={() => pdfMutation.mutate()}>
+            {pdfMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Dispensa PDF
           </Button>
         </div>
       </div>
 
       {/* Stats row */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
         <Card>
           <CardContent className="p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-neutral-500 dark:text-neutral-400">Prontezza</span>
-              <Badge variant={(course.readiness || 0) >= 80 ? "success" : (course.readiness || 0) >= 50 ? "warning" : "default"}>
-                {(course.readiness || 0)}%
-              </Badge>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-neutral-500 dark:text-neutral-400" title="Padronanza stimata al giorno dell'esame, dalle tue risposte">Prontezza</span>
+              <Badge variant={readinessVariant(readyExamPct)}>{readyExamPct === null ? "n.d." : `${readyExamPct}%`}</Badge>
             </div>
-            <Progress value={course.readiness || 0} className="h-2" />
+            <Progress value={readyExamPct ?? 0} className="h-2" />
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-neutral-500 dark:text-neutral-400">Lezioni pronte</span>
-              <span className="font-semibold text-2xl">{lecturesByStatus.pronta.length}</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-neutral-500 dark:text-neutral-400">Lezioni con appunti</span>
+              <span className="font-semibold text-2xl">{notesCount}</span>
             </div>
-            <Progress value={lectures.length ? (lecturesByStatus.pronta.length / lectures.length) * 100 : 0} className="h-1.5" />
+            <Progress value={lectures.length ? (notesCount / lectures.length) * 100 : 0} className="h-1.5" />
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-neutral-500 dark:text-neutral-400">Da elaborare</span>
-              <span className="font-semibold text-2xl text-warning-600 dark:text-warning-400">
-                {lecturesByStatus.nuova.length + lecturesByStatus.media_ok.length + lecturesByStatus.trascritta.length}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-neutral-500 dark:text-neutral-400">Senza appunti</span>
+              <span className="font-semibold text-2xl text-warning-600 dark:text-warning-400">{toProcess}</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-neutral-500 dark:text-neutral-400">Prossimo appello</span>
+              <span className="font-semibold text-right">
+                {upcomingExams[0] ? safeFormatDistance(upcomingExams[0].date) : "—"}
               </span>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="col-span-2 lg:col-span-1">
           <CardContent className="p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-neutral-500 dark:text-neutral-400">Prossimo appello</span>
-              {upcomingExams[0] ? (
-                <span className="font-semibold">
-                  {safeFormatDistance(upcomingExams[0].date)}
-                </span>
-              ) : (
-                <span className="font-semibold text-neutral-500">—</span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4 space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-sm text-neutral-500 dark:text-neutral-400">Simulazioni</span>
               <span className="font-semibold text-2xl">{simulations.length}</span>
             </div>
@@ -273,23 +284,23 @@ export function CorsoDetail() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="studia" className="space-y-4">
+      <Tabs defaultValue={openFromUrl ? "lezioni" : "studia"} className="space-y-4">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="studia">
-            <BookOpen className="h-4 w-4 mr-2" />
-            Studia
+            <BookOpen className="h-4 w-4 sm:mr-2" />
+            <span className="sr-only sm:not-sr-only">Studia</span>
           </TabsTrigger>
           <TabsTrigger value="lezioni">
-            <Play className="h-4 w-4 mr-2" />
-            Lezioni
+            <Play className="h-4 w-4 sm:mr-2" />
+            <span className="sr-only sm:not-sr-only">Lezioni</span>
           </TabsTrigger>
           <TabsTrigger value="esame">
-            <Target className="h-4 w-4 mr-2" />
-            Esame
+            <Target className="h-4 w-4 sm:mr-2" />
+            <span className="sr-only sm:not-sr-only">Esame</span>
           </TabsTrigger>
           <TabsTrigger value="lab">
-            <FlaskConical className="h-4 w-4 mr-2" />
-            Lab
+            <FlaskConical className="h-4 w-4 sm:mr-2" />
+            <span className="sr-only sm:not-sr-only">Lab</span>
           </TabsTrigger>
         </TabsList>
 
@@ -297,141 +308,100 @@ export function CorsoDetail() {
         <TabsContent value="studia" className="space-y-6">
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <Zap className="h-5 w-5 text-accent-500" />
-                  Sessione di studio
-                </CardTitle>
-              </div>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="h-5 w-5 text-accent-500" />
+                Sessione di studio
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-neutral-600 dark:text-neutral-300">
-                Scegli la durata e inizia una sessione guidata: ripasso flashcard → lezione interattiva → pratica → boss finale.
+                Scegli la durata: nella pagina successiva confermi argomento e avvio. Nessuna sessione parte senza il tuo clic.
               </p>
-              <div className="flex flex-wrap gap-3">
+              <div className="grid gap-3 sm:grid-cols-3">
                 {[
-                  { duration: 25, label: "Pomodoro", desc: "Focus breve, 1 argomento" },
+                  { duration: 25, label: "Breve", desc: "Un argomento, ripasso mirato" },
                   { duration: 45, label: "Standard", desc: "Sessione completa bilanciata" },
-                  { duration: 90, label: "Deep Work", desc: "Immersione profonda, più argomenti" },
+                  { duration: 90, label: "Lunga", desc: "Più argomenti, più pratica" },
                 ].map((opt) => (
                   <Button
                     key={opt.duration}
                     variant="outline"
-                    className="flex-1 min-w-[150px] flex-col items-start text-left gap-1 py-4"
+                    className="h-auto flex-col items-start text-left gap-1 py-4"
                     onClick={() => navigate(`/studio/${courseId}?duration=${opt.duration}`)}
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-lg font-semibold">{opt.duration} min</span>
                       <Badge variant="outline" className="text-xs">{opt.label}</Badge>
                     </div>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400">{opt.desc}</p>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 whitespace-normal">{opt.desc}</p>
                   </Button>
                 ))}
               </div>
             </CardContent>
           </Card>
 
-          {/* Prossimo argomento (reali da /api/study/{id}) */}
-          {studyData?.topics?.length ? (
-            (() => {
-              // Il prossimo argomento è il primo non ancora provato,
-              // o quello con padronanza più bassa se tutti sono stati provati.
-              const topics: StudyTopic[] = studyData.topics
-              const untried = topics.filter(t => !t.tried)
-              const next: StudyTopic = untried[0] ?? topics.reduce((min, t) => (t.m ?? 0) < (min.m ?? 0) ? t : min, topics[0])
-              if (!next) return null
-              return (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Prossimo argomento da studiare</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="p-4 rounded-lg bg-accent-50 dark:bg-accent-900/20 border border-accent-200 dark:border-accent-800">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-accent-100 text-accent-700 dark:bg-accent-900/30 dark:text-accent-300">
-                          {next.chapter || "Senza capitolo"}
-                        </span>
-                        <Badge variant={!next.tried ? "default" : (next.level ?? 0) >= 3 ? "success" : (next.level ?? 0) >= 2 ? "warning" : "destructive"}>
-                          {next.tried ? (next.level_name || "In crescita") : "Mai provato"}
-                        </Badge>
-                      </div>
-                      <h3 className="font-medium text-lg mb-1">{next.name}</h3>
-                      <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-3">
-                        Padronanza {Math.round((next.m ?? 0) * 100)}% · {next.n_items ?? 0} domande · Peso: {next.weight}/3
-                      </p>
-                      <Button size="sm" className="gap-1" onClick={() => navigate(`/studio/${courseId}`)}>
-                        <Play className="h-3 w-3" />
-                        Inizia da qui
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })()
-          ) : (
-            <Card>
-              <CardHeader>
-                <CardTitle>Prossimo argomento da studiare</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-neutral-500 dark:text-neutral-400">
-                  Nessuna domanda in banca. Avvia l'analisi del materiale per generare i contenuti di studio.
-                </p>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Mappa corso (reali da /api/study/{id}/chapters) */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center justify-between">
+              <CardTitle>Prossimo argomento da studiare</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {nextTopic ? (
+                <div className="p-4 rounded-lg bg-accent-50 dark:bg-accent-900/20 border border-accent-200 dark:border-accent-800">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-accent-100 text-accent-700 dark:bg-accent-900/30 dark:text-accent-300">
+                      {nextTopic.chapter || "Senza capitolo"}
+                    </span>
+                    <Badge variant={!nextTopic.tried ? "default" : (nextTopic.level ?? 0) >= 3 ? "success" : (nextTopic.level ?? 0) >= 2 ? "warning" : "destructive"}>
+                      {nextTopic.tried ? (nextTopic.level_name || "In crescita") : "Mai provato"}
+                    </Badge>
+                  </div>
+                  <h3 className="font-medium text-lg mb-1"><MathInline content={nextTopic.name} /></h3>
+                  <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-3">
+                    Padronanza {Math.round((nextTopic.m ?? 0) * 100)}% · {nextTopic.n_items ?? 0} domande · Peso {nextTopic.weight}/3
+                  </p>
+                  <Button size="sm" className="gap-1" onClick={() => navigate(`/studio/${courseId}?topic=${nextTopic.id}&duration=25`)}>
+                    <Play className="h-3 w-3" />
+                    Prepara una sessione su questo argomento
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-neutral-500 dark:text-neutral-400">
+                  Nessuna domanda in banca: il materiale del corso non è ancora stato analizzato.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex flex-wrap items-center justify-between gap-2">
                 Mappa del corso
-                <Badge variant="outline">{chapters.length} capitoli · {studyData?.topics?.length ?? 0} argomenti</Badge>
+                <Badge variant="outline">{chapters.length} capitoli · {topics.length} argomenti</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent>
               {chapters.length > 0 ? (
-                <ScrollArea className="max-h-96">
-                  <div className="space-y-4">
-                    {chapters.map((ch) => (
-                      <div key={ch.name} className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-neutral-950 dark:text-neutral-50">
-                            {ch.name}
-                          </span>
-                          <div className="flex items-center gap-3 text-sm">
-                            <Badge variant={ch.mastery >= 0.7 ? "success" : ch.mastery >= 0.4 ? "warning" : "default"}>
-                              {Math.round(ch.mastery * 100)}%
-                            </Badge>
-                            <span className="text-neutral-500 dark:text-neutral-400">{ch.topics} argomenti</span>
-                          </div>
+                <div className="max-h-96 overflow-y-auto pr-1 space-y-4">
+                  {chapters.map((ch) => (
+                    <div key={ch.name} className="space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium text-neutral-950 dark:text-neutral-50 min-w-0 break-words">
+                          <MathInline content={ch.name} />
+                        </span>
+                        <div className="flex items-center gap-3 text-sm shrink-0">
+                          <Badge variant={ch.mastery >= 0.7 ? "success" : ch.mastery >= 0.4 ? "warning" : "default"}>
+                            {Math.round(ch.mastery * 100)}%
+                          </Badge>
+                          <span className="hidden sm:inline text-neutral-500 dark:text-neutral-400">{ch.topics} argomenti</span>
                         </div>
-                        <Progress value={Math.round(ch.mastery * 100)} className="h-1.5" />
                       </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              ) : studyData?.topics?.length ? (
-                <ScrollArea className="max-h-96">
-                  <div className="space-y-3">
-                    {studyData.topics.map((t: StudyTopic) => (
-                      <div key={t.id} className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-neutral-950 dark:text-neutral-50">{t.name}</span>
-                          <div className="flex items-center gap-2 text-xs">
-                            <Badge variant={t.tried ? ((t.level ?? 0) >= 3 ? "success" : (t.level ?? 0) >= 2 ? "warning" : "destructive") : "default"}>
-                              {t.tried ? (t.level_name || "") : "Mai provato"}
-                            </Badge>
-                          </div>
-                        </div>
-                        <Progress value={Math.round((t.m ?? 0) * 100)} className="h-1" />
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
+                      <Progress value={Math.round(ch.mastery * 100)} className="h-1.5" />
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <p className="text-neutral-500 dark:text-neutral-400 text-center py-8">
-                  Nessun dato di studio disponibile. Avvia l'analisi del materiale.
+                  Nessun dato di studio disponibile.
                 </p>
               )}
             </CardContent>
@@ -440,165 +410,150 @@ export function CorsoDetail() {
 
         {/* TAB: LEZIONI */}
         <TabsContent value="lezioni" className="space-y-4">
-          <div className="flex flex-wrap gap-2 mb-4">
-            {[
-              { status: "pronta", label: "Pronte", count: lecturesByStatus.pronta.length, color: "success" },
-              { status: "trascritta", label: "Trascritte", count: lecturesByStatus.trascritta.length, color: "accent" },
-              { status: "media_ok", label: "Media OK", count: lecturesByStatus.media_ok.length, color: "warning" },
-              { status: "nuova", label: "Nuove", count: lecturesByStatus.nuova.length, color: "default" },
-              { status: "errore", label: "Errori", count: lecturesByStatus.errore.length, color: "destructive" },
-            ].map((s) => (
-              <Badge key={s.status} variant={s.color as any} className="gap-1">
-                {s.label} ({s.count})
+          <div className="flex flex-wrap gap-2">
+            {groups.map((g) => (
+              <Badge key={g.key} variant={g.key === "errore" ? "destructive" : g.key === "notes" ? "success" : "outline"}>
+                {g.title} ({g.items.length})
               </Badge>
             ))}
           </div>
 
-          <ScrollArea className="h-[calc(100vh-320px)]">
-            <div className="space-y-3">
-              {[
-                { status: "pronta", title: "Pronte per lo studio", items: lecturesByStatus.pronta },
-                { status: "trascritta", title: "Trascritte (mancano appunti)", items: lecturesByStatus.trascritta },
-                { status: "media_ok", title: "Media pronte (manca trascrizione)", items: lecturesByStatus.media_ok },
-                { status: "nuova", title: "Nuove (da scaricare/elaborare)", items: lecturesByStatus.nuova },
-                { status: "errore", title: "Errori", items: lecturesByStatus.errore },
-              ].map((group) => {
-                if (group.items.length === 0) return null
-                return (
-                  <div key={group.status} className="space-y-2">
-                    <h4 className="text-sm font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider">
-                      {group.title}
-                    </h4>
-                    {group.items.map((lec) => (
-                      <Card
-                        key={lec.id}
-                        className={cn(
-                          "transition-shadow cursor-pointer",
-                          lec.has_audio
-                            ? "hover:shadow-md group"
-                            : "hover:shadow-none cursor-default"
-                        )}
-                        onClick={() => {
-                          if (lec.has_audio) setPlayerLecture(lec)
-                        }}
-                      >
+          {lectures.length === 0 ? (
+            <p className="text-neutral-500 dark:text-neutral-400 text-center py-8">Nessuna lezione registrata per questo corso.</p>
+          ) : (
+            <div className="space-y-5">
+              {groups.map((group) => group.items.length === 0 ? null : (
+                <div key={group.key} className="space-y-2">
+                  <h4 className="text-sm font-medium text-neutral-500 dark:text-neutral-400 uppercase tracking-wider">
+                    {group.title}
+                  </h4>
+                  {group.items.map((lec) => {
+                    const openable = canOpenLecture(lec)
+                    return (
+                      <Card key={lec.id} className={cn("transition-shadow", openable && "hover:shadow-md")}>
                         <CardContent className="p-4">
-                          <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start justify-between gap-3">
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1">
-                                <Badge
-                                  variant={
-                                    lec.status === "pronta" ? "success" :
-                                    lec.status === "trascritta" ? "accent" :
-                                    lec.status === "media_ok" ? "warning" :
-                                    lec.status === "nuova" ? "default" : "destructive"
-                                  }
-                                  className="text-xs"
-                                >
-                                  {lec.status}
-                                </Badge>
+                              <div className="flex flex-wrap items-center gap-1.5 mb-1">
                                 {lec.has_audio && (
-                                  <Badge variant="outline" className="text-xs gap-1">
-                                    <ListMusic className="h-2.5 w-2.5" />
-                                    Audio
-                                  </Badge>
+                                  <Badge variant="outline" className="text-xs gap-1"><ListMusic className="h-2.5 w-2.5" />Audio</Badge>
+                                )}
+                                {(lec.n_slides ?? 0) > 0 && (
+                                  <Badge variant="outline" className="text-xs gap-1"><ImageIcon className="h-2.5 w-2.5" />Slide</Badge>
+                                )}
+                                {lec.video_type === "panopto" && (
+                                  <Badge variant="outline" className="text-xs gap-1"><Video className="h-2.5 w-2.5" />Panopto</Badge>
+                                )}
+                                {lec.video_type === "moodle" && (
+                                  <Badge variant="outline" className="text-xs gap-1"><Video className="h-2.5 w-2.5" />Video Moodle</Badge>
                                 )}
                                 {lec.has_notes && (
-                                  <Badge variant="outline" className="text-xs gap-1">
-                                    <BookOpen className="h-2.5 w-2.5" />
-                                    Appunti
-                                  </Badge>
-                                )}
-                                {lec.has_slides && (
-                                  <Badge variant="outline" className="text-xs gap-1">
-                                    <ImageIcon className="h-2.5 w-2.5" />
-                                    Slide
-                                  </Badge>
+                                  <Badge variant="success" className="text-xs gap-1"><FileText className="h-2.5 w-2.5" />Appunti</Badge>
                                 )}
                               </div>
-                              <h4 className="font-medium truncate">{lec.title}</h4>
+                              <h4 className="font-medium break-words">{lec.title}</h4>
                               <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
-                                {safeFormatDistance(lec.date)} · {Math.round(lec.duration / 60)} min
+                                {lec.date ? safeFormatDistance(lec.date) : "senza data"} · {lectureDuration(lec.duration)}
                               </p>
+                              {lec.status === "errore" && lec.error && (
+                                <p className="mt-1 text-xs text-error-600 dark:text-error-400 flex items-start gap-1 break-words">
+                                  <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />{lec.error}
+                                </p>
+                              )}
                             </div>
-                            {lec.has_audio && (
+                            {openable ? (
                               <Button
-                                variant="ghost"
-                                size="icon"
-                                className="opacity-0 group-hover:opacity-100 transition-opacity"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setPlayerLecture(lec)
-                                }}
-                                aria-label={`Riproduci ${lec.title}`}
+                                variant="outline"
+                                size="sm"
+                                className="gap-1 shrink-0"
+                                onClick={() => setPlayerLecture({ id: lec.id, title: lec.title, t: 0 })}
+                                aria-label={`Apri ${lec.title}`}
                               >
-                                <Play className="h-5 w-5" />
+                                <Play className="h-4 w-4" />
+                                <span className="hidden sm:inline">Apri</span>
                               </Button>
+                            ) : (
+                              <span className="text-xs text-neutral-400 shrink-0">Nessuna sorgente</span>
                             )}
                           </div>
                         </CardContent>
                       </Card>
-                    ))}
-                  </div>
-                )
-              })}
+                    )
+                  })}
+                </div>
+              ))}
             </div>
-          </ScrollArea>
+          )}
         </TabsContent>
 
         {/* TAB: ESAME */}
         <TabsContent value="esame" className="space-y-6">
-          {/* Profilo esame */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
               <CardTitle className="flex items-center gap-2">
                 <Target className="h-5 w-5" />
                 Profilo d'esame
               </CardTitle>
-              {examProfile ? (
-                <Button variant="outline" size="sm" disabled={profileMutation.isPending} onClick={() => profileMutation.mutate(true)}>
-                  <Settings className="h-3 w-3 mr-1" />
+              {profile ? (
+                <Button variant="outline" size="sm" disabled={profileMutation.isPending} onClick={() => profileMutation.mutate(true)} className="gap-1">
+                  {profileMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
                   Rigenera
                 </Button>
               ) : (
-                <Button disabled={profileMutation.isPending} onClick={() => profileMutation.mutate(false)}>
-                  <Plus className="h-4 w-4 mr-1" />
+                <Button disabled={profileMutation.isPending} onClick={() => profileMutation.mutate(false)} className="gap-1">
+                  {profileMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                   Genera profilo
                 </Button>
               )}
             </CardHeader>
             <CardContent>
-              {profileMutation.isError && <p role="alert">Errore nella generazione del profilo. Riprova.</p>}
-              {examProfileRaw ? (
+              {profile ? (
                 <div className="space-y-6">
-                  {/* Sintesi / Guida Esame Markdown */}
-                  {examMarkdown && (
-                    <div className="p-4 rounded-lg bg-neutral-50 dark:bg-neutral-900/50 border border-neutral-200 dark:border-neutral-800">
-                      <h4 className="font-semibold mb-2 flex items-center gap-2">
-                        <BookOpen className="h-4 w-4 text-accent-500" />
-                        Sintesi e note d'esame
-                      </h4>
-                      <div className="max-h-96 overflow-y-auto pr-2 text-sm">
-                        <MathMarkdown content={examMarkdown} />
-                      </div>
+                  {profile.summaryMd && (
+                    <div className="text-sm">
+                      <MathMarkdown content={profile.summaryMd} />
                     </div>
                   )}
 
-                  {/* Parti esame */}
-                  {examParts.length > 0 && (
+                  {/* Formato */}
+                  <div className="grid gap-3 sm:grid-cols-2 text-sm">
+                    <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/50">
+                      <p className="text-neutral-500 dark:text-neutral-400">Durata</p>
+                      <p className="font-medium">{profile.durationMin ? `${profile.durationMin} minuti` : "Non indicata"}</p>
+                    </div>
+                    {profile.allowedMaterial && (
+                      <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/50">
+                        <p className="text-neutral-500 dark:text-neutral-400">Materiale consentito</p>
+                        <p className="font-medium">{profile.allowedMaterial}</p>
+                      </div>
+                    )}
+                    {profile.oral && (
+                      <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/50">
+                        <p className="text-neutral-500 dark:text-neutral-400">Orale</p>
+                        <p className="font-medium">{profile.oral}</p>
+                      </div>
+                    )}
+                    {profile.gradingRules && (
+                      <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/50">
+                        <p className="text-neutral-500 dark:text-neutral-400">Voto</p>
+                        <p className="font-medium">{profile.gradingRules}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {profile.parts.length > 0 && (
                     <div>
-                      <h4 className="font-medium mb-3">Struttura esame</h4>
+                      <h4 className="font-medium mb-3">Struttura della prova</h4>
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {examParts.map((part, i) => (
+                        {profile.parts.map((part, i) => (
                           <Card key={i} className="p-4">
-                            <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center justify-between gap-2 mb-2">
                               <span className="font-medium">{part.name}</span>
-                              {part.points != null && <Badge variant="accent">{part.points} pt</Badge>}
+                              {part.points != null && <Badge variant="accent">{part.points} punti</Badge>}
                             </div>
                             <div className="text-sm text-neutral-500 dark:text-neutral-400 space-y-1">
-                              {part.description && <p className="text-xs line-clamp-3">{part.description}</p>}
+                              {part.description && <MathInline content={part.description} className="text-xs" />}
                               {part.minimum != null && <div>Minimo: {part.minimum}</div>}
-                              {part.weight != null && <div>Peso: {part.weight}%</div>}
                             </div>
                           </Card>
                         ))}
@@ -606,171 +561,130 @@ export function CorsoDetail() {
                     </div>
                   )}
 
-                  {examParts.length > 0 && examTopics.length > 0 && <Separator />}
-
-                  {/* Argomenti frequenti */}
-                  {examTopics.length > 0 && (
-                    <div>
-                      <h4 className="font-medium mb-3">Argomenti per frequenza</h4>
-                      <ScrollArea className="max-h-64">
+                  {profile.topics.length > 0 && (
+                    <>
+                      <Separator />
+                      <div>
+                        <h4 className="font-medium mb-3">Argomenti per frequenza</h4>
                         <div className="space-y-2">
-                          {examTopics.map((topic, i) => (
-                            <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/50">
-                              <div className="flex-1 mr-4">
-                                <span className="font-medium">{topic.name}</span>
-                                {topic.notes && <p className="text-xs text-neutral-400 mt-0.5 line-clamp-1">{topic.notes}</p>}
+                          {profile.topics.map((topic, i) => (
+                            <div key={i} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/50">
+                              <div className="min-w-0">
+                                <span className="font-medium"><MathInline content={topic.name} /></span>
+                                {topic.notes && <p className="text-xs text-neutral-500 mt-0.5"><MathInline content={topic.notes} /></p>}
                               </div>
-                              <div className="flex items-center gap-2 text-sm shrink-0">
-                                <Badge variant="outline">{topic.frequency}</Badge>
-                                {topic.weight != null && <Badge variant="accent">{topic.weight}%</Badge>}
+                              <div className="flex flex-wrap items-center gap-2 text-sm shrink-0">
+                                {topic.frequency && <Badge variant="outline">{topic.frequency}</Badge>}
+                                {topic.weight && (
+                                  <Badge variant={topic.weight === "alto" ? "destructive" : topic.weight === "medio" ? "warning" : "default"}>
+                                    {EXAM_WEIGHT_LABEL[topic.weight]}
+                                  </Badge>
+                                )}
                               </div>
                             </div>
                           ))}
                         </div>
-                      </ScrollArea>
-                    </div>
-                  )}
-
-                  {examTopics.length > 0 && examExercises.length > 0 && <Separator />}
-
-                  {/* Esercizi tipo */}
-                  {examExercises.length > 0 && (
-                    <div>
-                      <h4 className="font-medium mb-3">Esercizi tipo</h4>
-                      <div className="space-y-2">
-                        {examExercises.map((ex, i) => (
-                          <div key={i} className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/50">
-                            <div className="font-medium mb-1">{ex.type}</div>
-                            {ex.method && <div className="text-sm text-neutral-600 dark:text-neutral-300 mb-2">Metodo: {ex.method}</div>}
-                            {ex.common_errors?.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {ex.common_errors.map((err: string, j: number) => (
-                                  <Badge key={j} variant="destructive" className="text-xs">{err}</Badge>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
                       </div>
-                    </div>
+                    </>
                   )}
 
-                  {(examExercises.length > 0 || examTopics.length > 0) && (examTheory.length > 0 || examAdvice.length > 0) && <Separator />}
+                  {profile.exercises.length > 0 && (
+                    <>
+                      <Separator />
+                      <div>
+                        <h4 className="font-medium mb-3">Esercizi tipo</h4>
+                        <div className="space-y-3">
+                          {profile.exercises.map((ex, i) => (
+                            <div key={i} className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/50">
+                              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                                <span className="font-medium"><MathInline content={ex.title || `Esercizio ${i + 1}`} /></span>
+                                {ex.frequency && <Badge variant="outline">{ex.frequency}</Badge>}
+                              </div>
+                              {ex.methodMd && <div className="text-sm"><MathMarkdown content={ex.methodMd} /></div>}
+                              {ex.commonErrors && (
+                                <p className="mt-2 text-xs text-error-700 dark:text-error-400">
+                                  Errori tipici: <MathInline content={ex.commonErrors} />
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
 
-                  {/* Teoria e consigli */}
-                  {(examTheory.length > 0 || examAdvice.length > 0) && (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      {examTheory.length > 0 && (
-                        <div>
-                          <h4 className="font-medium mb-2">Teoria richiesta</h4>
-                          <ul className="space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
-                            {examTheory.map((t, i) => (
-                              <li key={i} className="flex items-center gap-2">
-                                <span className="h-1.5 w-1.5 rounded-full bg-accent-500 shrink-0" />
-                                <span>{t}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {examAdvice.length > 0 && (
-                        <div>
-                          <h4 className="font-medium mb-2">Consigli</h4>
-                          <ul className="space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
-                            {examAdvice.map((a, i) => (
-                              <li key={i} className="flex items-start gap-2">
-                                <HelpCircle className="h-3 w-3 text-accent-500 shrink-0 mt-1" />
-                                <span>{a}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
+                  {(profile.theory.length > 0 || profile.adviceMd) && (
+                    <>
+                      <Separator />
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {profile.theory.length > 0 && (
+                          <div>
+                            <h4 className="font-medium mb-2">Teoria richiesta</h4>
+                            <ul className="space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
+                              {profile.theory.map((t, i) => (
+                                <li key={i} className="flex items-start gap-2">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-accent-500 shrink-0 mt-2" />
+                                  <MathInline content={t} />
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {profile.adviceMd && (
+                          <div>
+                            <h4 className="font-medium mb-2 flex items-center gap-2"><HelpCircle className="h-4 w-4 text-accent-500" />Consigli</h4>
+                            <div className="text-sm"><MathMarkdown content={profile.adviceMd} /></div>
+                          </div>
+                        )}
+                      </div>
+                    </>
                   )}
                 </div>
               ) : (
-                <div className="text-center py-12">
+                <div className="text-center py-10">
                   <Target className="h-12 w-12 mx-auto text-neutral-300 dark:text-neutral-600 mb-4" />
-                  <h3 className="text-lg font-medium text-neutral-950 dark:text-neutral-50 mb-2">
-                    Nessun profilo d'esame
-                  </h3>
-                  <p className="text-neutral-500 dark:text-neutral-400 mb-6">
-                    Genera il profilo analizzando appelli passati e programma del corso
+                  <h3 className="text-lg font-medium text-neutral-950 dark:text-neutral-50 mb-2">Nessun profilo d'esame</h3>
+                  <p className="text-neutral-500 dark:text-neutral-400">
+                    «Genera profilo» chiede all'AI di analizzare appelli passati e programma del corso.
                   </p>
-                  <Button disabled={profileMutation.isPending} onClick={() => profileMutation.mutate(false)} className="gap-2">
-                    <Plus className="h-4 w-4" />
-                    Genera profilo
-                  </Button>
                 </div>
               )}
             </CardContent>
           </Card>
 
-          {/* Simulazioni */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
               <CardTitle className="flex items-center gap-2">
                 <Zap className="h-5 w-5 text-accent-500" />
-                Simulazioni d'Esame
+                Simulazioni d'esame
               </CardTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCreateSim}
-                disabled={isCreatingSim}
-                className="gap-1.5"
-              >
-                {isCreatingSim ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Plus className="h-3.5 w-3.5" />
-                )}
-                <span>{isCreatingSim ? "Generazione..." : "Nuova simulazione"}</span>
+              <Button variant="outline" size="sm" onClick={() => simMutation.mutate()} disabled={simMutation.isPending} className="gap-1.5">
+                {simMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                <span>{simMutation.isPending ? "Generazione..." : "Nuova simulazione"}</span>
               </Button>
             </CardHeader>
             <CardContent>
               {simulations.length > 0 ? (
                 <div className="space-y-3">
                   {simulations.map((sim) => {
-                    const simIdStr = String(sim.id)
-                    const title = sim.titolo || sim.title || `Simulazione #${simIdStr.slice(0, 8)}`
-                    const questionCount = sim.domande?.length || sim.questions?.length || 0
-                    const grade = sim.best ?? (sim.score !== undefined ? sim.score : null)
-                    const isDone = grade !== null && grade !== undefined
-
+                    const done = sim.bestGrade !== null
                     return (
-                      <Card key={simIdStr} className="p-4 hover:border-neutral-300 dark:hover:border-neutral-700 transition-all">
+                      <Card key={sim.id} className="p-4">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div>
-                            <p className="font-semibold text-neutral-900 dark:text-neutral-100">{title}</p>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-neutral-900 dark:text-neutral-100 break-words">{sim.title}</p>
                             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                              {isDone ? "Completata" : "Pronta"} · {sim.durata_min || sim.duration_min || 60} min
-                              {questionCount > 0 ? ` · ${questionCount} quesiti` : ""}
+                              {done ? "Svolta" : "Da svolgere"}{sim.durationMin ? ` · ${sim.durationMin} min` : ""}
                             </p>
                           </div>
                           <div className="flex items-center gap-3">
-                            {isDone && (
-                              <Badge
-                                variant={grade >= 18 ? "default" : "destructive"}
-                                className={cn(
-                                  "text-sm font-mono font-bold px-2.5 py-0.5",
-                                  grade >= 18 && "bg-emerald-600 text-white"
-                                )}
-                              >
-                                {grade}/30 {grade >= 18 ? "✓" : "✗"}
+                            {done && (
+                              <Badge variant={(sim.bestGrade ?? 0) >= 18 ? "success" : "destructive"} className="font-mono">
+                                Migliore: {sim.bestGrade}/30
                               </Badge>
                             )}
-                            <Button
-                              size="sm"
-                              variant={isDone ? "outline" : "default"}
-                              onClick={() => navigate(`/simulazione/${sim.id}`)}
-                              className={cn(
-                                "text-xs rounded-xl",
-                                !isDone && "bg-accent-600 hover:bg-accent-700 text-white"
-                              )}
-                            >
-                              {isDone ? "Rivedi correzione" : "Avvia simulazione"}
+                            <Button size="sm" variant={done ? "outline" : "default"} onClick={() => navigate(`/simulazione/${sim.id}`)}>
+                              {done ? "Rifai o rivedi" : "Apri simulazione"}
                             </Button>
                           </div>
                         </div>
@@ -779,134 +693,68 @@ export function CorsoDetail() {
                   })}
                 </div>
               ) : (
-                <div className="text-center py-8 space-y-3">
-                  <Zap className="h-10 w-10 mx-auto text-neutral-300 dark:text-neutral-600" />
-                  <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                    Nessuna simulazione disponibile per questo corso.
-                  </p>
-                  <Button
-                    onClick={handleCreateSim}
-                    disabled={isCreatingSim}
-                    size="sm"
-                    className="gap-1.5"
-                  >
-                    {isCreatingSim ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Plus className="h-4 w-4" />
-                    )}
-                    <span>{isCreatingSim ? "Generazione in corso..." : "Genera la prima simulazione"}</span>
-                  </Button>
-                </div>
+                <p className="text-sm text-neutral-500 dark:text-neutral-400 text-center py-6">
+                  Nessuna simulazione per questo corso. «Nuova simulazione» la fa preparare all'AI dal profilo d'esame.
+                </p>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-{/* TAB: LAB */}
+        {/* TAB: LAB */}
         <TabsContent value="lab" className="space-y-6">
-          {/* Flashcard (reali da /api/flashcards/stats) */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
               <CardTitle className="flex items-center gap-2">
                 <FlaskConical className="h-5 w-5" />
                 Flashcard (FSRS)
               </CardTitle>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" disabled={exportMutation.isPending} onClick={() => exportMutation.mutate()}>
+                <Button variant="outline" size="sm" disabled={exportMutation.isPending} onClick={() => exportMutation.mutate()} aria-label="Anki">
                   <Download className="h-3 w-3 mr-1" />
                   Anki
                 </Button>
-                <Button variant="outline" size="sm" disabled={importMutation.isPending} onClick={() => importMutation.mutate()}>
+                <Button variant="outline" size="sm" disabled={importMutation.isPending} onClick={() => importMutation.mutate()} aria-label="Import" title="Crea le flashcard dagli appunti AI delle lezioni">
                   <Upload className="h-3 w-3 mr-1" />
                   Import
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              {importMutation.isError && <p role="alert">Errore nell’importazione delle flashcard. Riprova.</p>}
-              {exportMutation.isError && <p role="alert">Errore nel download Anki. Riprova.</p>}
-              {flashcardStats ? (
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <Card className="p-4 text-center">
-                    <p className="text-3xl font-bold text-success-600 dark:text-success-400">{flashcardStats.totale - flashcardStats.da_ripassare - (flashcardStats.ripassate_oggi ?? 0)}</p>
-                    <p className="text-sm text-neutral-500 dark:text-neutral-400">Mature</p>
-                  </Card>
-                  <Card className="p-4 text-center">
-                    <p className="text-3xl font-bold text-warning-600 dark:text-warning-400">{flashcardStats.ripassate_oggi ?? 0}</p>
-                    <p className="text-sm text-neutral-500 dark:text-neutral-400">Ripassate oggi</p>
-                  </Card>
-                  <Card className="p-4 text-center">
-                    <p className="text-3xl font-bold text-accent-600 dark:text-accent-400">{flashcardStats.da_ripassare}</p>
-                    <p className="text-sm text-neutral-500 dark:text-neutral-400">Da rivedere oggi</p>
-                  </Card>
-                </div>
-              ) : (
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <Card className="p-4 text-center"><p className="text-3xl font-bold">—</p><p className="text-sm text-neutral-500">Mature</p></Card>
-                  <Card className="p-4 text-center"><p className="text-3xl font-bold">—</p><p className="text-sm text-neutral-500">Ripassate oggi</p></Card>
-                  <Card className="p-4 text-center"><p className="text-3xl font-bold">—</p><p className="text-sm text-neutral-500">Da rivedere oggi</p></Card>
-                </div>
-              )}
-              <div className="mt-4 flex gap-2">
+              <div className="grid gap-3 grid-cols-3">
+                <Card className="p-4 text-center">
+                  <p className="text-3xl font-bold">{flashcardStats?.totale ?? "—"}</p>
+                  <p className="text-sm text-neutral-500 dark:text-neutral-400">Totali</p>
+                </Card>
+                <Card className="p-4 text-center">
+                  <p className="text-3xl font-bold text-warning-600 dark:text-warning-400">{flashcardStats?.ripassate_oggi ?? "—"}</p>
+                  <p className="text-sm text-neutral-500 dark:text-neutral-400">Ripassate oggi</p>
+                </Card>
+                <Card className="p-4 text-center">
+                  <p className="text-3xl font-bold text-accent-600 dark:text-accent-400">{flashcardStats?.da_ripassare ?? "—"}</p>
+                  <p className="text-sm text-neutral-500 dark:text-neutral-400">Da rivedere oggi</p>
+                </Card>
+              </div>
+              <div className="mt-4">
                 <Button className="gap-2" onClick={() => navigate("/lab?tab=flashcard&course=" + courseId)}>
                   <Play className="h-4 w-4" />
                   Ripassa ora
                 </Button>
-                <Button variant="outline" className="gap-2" onClick={() => navigate("/lab?tab=flashcard&course=" + courseId)}>
-                  <BookOpen className="h-4 w-4" />
-                  Sfoglia tutte
-                </Button>
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Quiz */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <HelpCircle className="h-5 w-5" />
-                Quiz adattivi
-              </CardTitle>
-              <Button variant="outline" size="sm">Genera quiz</Button>
-            </CardHeader>
-            <CardContent>
-              <p className="text-neutral-600 dark:text-neutral-300 mb-4">
-                I quiz vengono generati per lezione. Vai alla scheda <strong>Lezioni</strong> per generarne uno.
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* Tutor */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Brain className="h-5 w-5" />
-                Tutor RAG
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-neutral-600 dark:text-neutral-300 mb-4">
-                Fai domande sul materiale del corso. Il tutor usa ricerca ibrida (BM25 + vettori) e cita le fonti.
-              </p>
-              <Button variant="outline" className="w-full gap-2" onClick={() => navigate(`/lab?tab=tutor&course=${courseId}`)}>
-                <Brain className="h-4 w-4" />
-                Apri Tutor
-              </Button>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
-      {/* VideoPlayer Modal */}
-      {playerLecture && (
+      {activePlayer && (
         <VideoPlayer
-          lectureId={playerLecture.id}
-          lectureTitle={playerLecture.title}
-          onClose={() => setPlayerLecture(null)}
+          key={`${activePlayer.id}:${activePlayer.t}`}
+          lectureId={activePlayer.id}
+          lectureTitle={activePlayer.title}
+          initialTime={activePlayer.t}
+          onClose={closePlayer}
         />
       )}
     </div>
   )
 }
-
