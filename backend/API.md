@@ -12,15 +12,35 @@ Le date di calendario hanno formato `YYYY-MM-DD`. I timestamp UTC riportano l'of
 | `POST /api/setup/login` | Avvia il login. Risponde con `{started}`. |
 | `POST /api/setup/courses` | Aggiorna il catalogo. Risponde con `{courses, active}`. |
 | `POST /api/setup/fullrun` | Avvia o riprende l'elaborazione. Risponde con `{started}`. |
-| `GET /api/study/topics/{topic_id}/lesson` | Legge la lezione interattiva. Se manca o è in errore, `prepare=true` (predefinito) la accoda. Usare `prepare=false` per la sola lettura. L'accodamento richiede `Sec-Fetch-Site: same-origin`, un Bearer valido o la coppia cookie e header CSRF. |
-| `POST /api/study/topics/{topic_id}/lesson/done` | Segna il completamento in modo idempotente. Risponde con `{ok: true}`. |
+| `GET /api/study/topics/{topic_id}/lesson` | Legge la lezione interattiva e il suo stato. Una lezione da generare ha `status: "da preparare"`. Il parametro storico `prepare` viene ignorato. |
+| `POST /api/study/topics/{topic_id}/lesson/prepare` | Accoda una lezione mancante o in errore. Restituisce lo stato corrente, consultabile con il GET. |
+| `POST /api/study/topics/{topic_id}/lesson/done` | Registra il primo completamento anche prima che venga generata la lezione. Risponde con `{ok: true}`. |
 | `POST /api/lectures/{lecture_id}/quiz` | Accetta `{"n": 12}` nel JSON o `?n=12` nella query. Se sono presenti entrambi, prevale la query. Valore predefinito 10, intervallo effettivo 4–20. |
 
 Ogni POST di setup accetta una richiesta autenticata ogni 60 secondi per indirizzo client e percorso. La risposta `429` include l'header `Retry-After` in secondi.
 
+## Preparazione del corso e sessioni
+
+| Metodo e percorso | Contratto |
+| --- | --- |
+| `GET /api/study/{course_id}` | Legge padronanza e preparazione. `prepare.status` vale `da preparare`, `in_corso` o `pronta`. `prepare.order_pending` indica che l'ordine didattico va aggiornato. |
+| `POST /api/study/{course_id}/prepare` | Avvia in background la preparazione del materiale e l'aggiornamento dell'ordine didattico. Funziona anche quando è richiesto il solo ordinamento. Accetta `{"limit": 3}` oppure `?limit=3` per limitare le unità da analizzare. |
+| `POST /api/study/{course_id}/sessions` | Avvia una sessione. Accetta `minutes` e `focus_topic` facoltativi. |
+| `GET /api/study/{course_id}/sessions/open` | Restituisce la sessione aperta più recente del corso, nello stesso formato del GET per ID. Risposta `404` quando il corso non ha sessioni aperte. |
+| `GET /api/study/sessions/{sid}` | Restituisce la coda con `entries`, `resume_index`, `phase`, `status` ed eventuali `errors`. |
+| `POST /api/study/sessions/{sid}/seen/{idx}` | Segna la voce `scheda` come letta nella sessione. Risponde con `{"ok": true, "done": true}` anche sui retry. Un indice non valido o una voce di altro tipo restituiscono `400`. |
+| `POST /api/study/sessions/{sid}/reveal/{idx}` | Restituisce soluzione, criteri, fonte, `confidence` e `revealed_at`. Accetta un corpo facoltativo con `confidence` da 1 a 3 e `seconds` per il tempo trascorso prima di vedere la soluzione. I retry conservano la prima rivelazione. |
+| `POST /api/study/sessions/{sid}/answer` | Salva la risposta e restituisce `attempt_id`, `seconds` e `review_seconds` insieme alla correzione. Una correzione AI indisponibile restituisce `502` con `detail` in italiano. |
+| `POST /api/study/sessions/{sid}/finish` | Chiude la sessione come `completata` e restituisce il riepilogo. Restituisce `409` se la sessione è stata abbandonata. |
+| `POST /api/study/sessions/{sid}/abandon` | Chiude una sessione aperta come `abbandonata` e restituisce la sessione. I retry restituiscono lo stato di chiusura già salvato. |
+
+Le sessioni aperte da più di 12 ore vengono abbandonate all'avvio del server e ogni minuto. Tentativi, XP e ripassi già registrati restano disponibili. Una sessione `abbandonata` è esclusa dal conteggio delle sessioni completate. Dopo la chiusura, le nuove operazioni sulla coda restituiscono `409`.
+
+`revealed_at` è un timestamp UTC salvato nella voce della coda. La sicurezza dichiarata al reveal prevale sul valore inviato con la risposta. Per l'autovalutazione, `seconds` nel POST di risposta rappresenta il tempo complessivo fino all'invio. Il risultato conserva in `seconds` il tempo di risoluzione e in `review_seconds` il tempo di autovalutazione. Se il client omette i secondi al reveal, la separazione usa l'intervallo misurato dal server. Per risposte scritte, fotografiche e a scelta, inviare il tempo di risoluzione. I tempi non rilevati valgono `null`.
+
 ## Ricerca globale
 
-`GET /api/search?q=laplace&course_id=1&limit=20` risponde con `{results, semantic}`. Sono facoltativi `course_id` e `year`. Se vengono passati entrambi, prevale `course_id`. Il limite massimo è 50.
+`GET /api/search?q=laplace&course_id=1&limit=20` cerca per parole e risponde con `{results, semantic: false}`. `POST /api/search` accetta gli stessi campi nel JSON e calcola anche gli embedding per la ricerca semantica. Sono facoltativi `course_id` e `year`. Se vengono passati entrambi, prevale `course_id`. Il limite massimo è 50.
 
 Ogni voce conserva i campi esistenti, tra cui `kind`, `snippet`, `doc_id`, `lecture_id`, `page` e `t_start`. Gli evidenziatori nello snippet sono `[[...]]`.
 
@@ -103,3 +123,9 @@ La risposta include `day`, `course_id`, `cards`, `due_count`, `new_count`, `over
 - `restic` indica lo stato del repository **locale**, i byte occupati dai dati restic (`repository_bytes`), lo spazio libero sul volume (`free_bytes`) e la capacità del volume (`capacity_bytes`). Le misure non disponibili valgono `null`.
 
 Il payload contiene solo dati diagnostici ammessi e omette credenziali, token, cookie, URL dei provider e testo grezzo degli errori.
+
+`GET /api/ai/providers` restituisce `local`, `gemini` e `claude`. Lo stato dei provider cloud deriva dalla CLI configurata e dall'ultimo esito registrato. `available` e `healthy` valgono `null` quando manca un esito. Claude include anche `utilization` e `resets_at` quando disponibili. Il server locale espone l'URL verificato o quello configurato e il modello annunciato da `/v1/models` o `/props`. Il nome del modello è in cache, con scadenza di cinque minuti per gli esiti positivi. Le richieste di diagnostica non avviano generazioni.
+
+`GET /api/ai/pannello` espone gli stessi dati in `providers`. `cluster` mantiene lo stato usato dal pannello e riporta URL e modello del provider locale.
+
+La radice `/` serve la build React quando è disponibile. `/legacy` serve la UI statica inclusa nel backend. Se manca la build, anche `/` serve la UI legacy.

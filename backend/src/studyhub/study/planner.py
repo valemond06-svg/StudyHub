@@ -94,7 +94,7 @@ def today_plan() -> dict:
             (start_of_week.isoformat(),)
         ).fetchone()[0]
         completed_sessions = db.execute(
-            """SELECT COUNT(*) FROM study_sessions WHERE started_at >= ? AND ended_at IS NOT NULL""",
+            """SELECT COUNT(*) FROM study_sessions WHERE started_at >= ? AND status='completata'""",
             (start_of_week.isoformat(),)
         ).fetchone()[0]
         quiz_week = db.execute(

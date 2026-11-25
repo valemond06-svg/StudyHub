@@ -330,6 +330,8 @@ def _worker() -> None:
 
 def request(topic_ids: list[int]) -> None:
     """Mette in coda le lezioni mancanti (o finite in errore) di questi argomenti."""
+    if not topic_ids:
+        return
     with _wlock:
         if not _workers:
             with session() as db:  # lezioni rimaste a metà da un server chiuso
@@ -341,14 +343,16 @@ def request(topic_ids: list[int]) -> None:
                 _workers.append(th)
             for tid in pending:
                 _q.put(tid)
+    queued = []
     with session() as db:
         for tid in topic_ids:
-            row = db.execute("SELECT status FROM study_lessons WHERE topic_id=?", (tid,)).fetchone()
-            if row and row[0] in ("pronta", "in_coda", "in_corso"):
-                continue
-            db.execute("""INSERT INTO study_lessons (topic_id, status) VALUES (?, 'in_coda')
-                          ON CONFLICT(topic_id) DO UPDATE SET status='in_coda', message=NULL""", (tid,))
-            _q.put(tid)
+            changed = db.execute("""INSERT INTO study_lessons (topic_id, status) VALUES (?, 'in_coda')
+                       ON CONFLICT(topic_id) DO UPDATE SET status='in_coda', message=NULL
+                       WHERE study_lessons.status IN ('da preparare', 'errore')""", (tid,)).rowcount
+            if changed:
+                queued.append(tid)
+    for tid in queued:
+        _q.put(tid)
 
 
 def prefetch(course_id: int, n: int = 4) -> list[int]:
@@ -372,7 +376,7 @@ def get(topic_id: int) -> dict:
         raise KeyError(topic_id)
     arch = get_course_archetype(t["course_id"])
     out = {"topic": {**dict(t), "lecture": lec[0] if lec else None}, "archetype": asdict(arch),
-           "status": row["status"] if row else None,
+           "status": row["status"] if row else "da preparare",
            "message": row["message"] if row else None, "completed_at": row["completed_at"] if row else None}
     if row and row["status"] == "pronta":
         les_data = json.loads(row["data"])
@@ -391,7 +395,10 @@ def get(topic_id: int) -> dict:
 
 def complete(topic_id: int) -> None:
     with session() as db:
-        db.execute("UPDATE study_lessons SET completed_at=COALESCE(completed_at, ?) WHERE topic_id=?", (_now(), topic_id))
+        db.execute("""INSERT INTO study_lessons (topic_id, status, completed_at)
+                      SELECT id, 'da preparare', ? FROM study_topics WHERE id=?
+                      ON CONFLICT(topic_id) DO UPDATE
+                      SET completed_at=COALESCE(study_lessons.completed_at, excluded.completed_at)""", (_now(), topic_id))
 
 
 def ask(topic_id: int, question: str, context: str = "", mode: str = "domanda") -> str:

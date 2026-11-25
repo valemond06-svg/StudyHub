@@ -381,6 +381,8 @@ _jobs_lock = threading.Lock()
 
 
 def prepare_status(course_id: int) -> dict:
+    from .syllabus import needs_order
+
     with session() as db:
         counts = {r[0]: r[1] for r in db.execute(
             "SELECT status, COUNT(*) FROM study_units WHERE course_id=? GROUP BY status", (course_id,))}
@@ -390,7 +392,15 @@ def prepare_status(course_id: int) -> dict:
         errors = [dict(r) for r in db.execute(
             "SELECT title, message FROM study_units WHERE course_id=? AND status='errore' LIMIT 5", (course_id,))]
     job = _jobs.get(course_id) or {}
-    return {"units": counts, "todo": counts.get("nuova", 0) + counts.get("errore", 0) + counts.get("in_corso", 0),
+    todo = sum(counts.get(status, 0) for status in ('nuova', 'errore', 'in_corso'))
+    order_pending = needs_order(course_id)
+    if job.get("running") or counts.get("in_corso"):
+        status = "in_corso"
+    elif todo or order_pending or not counts.get("pronta"):
+        status = "da preparare"
+    else:
+        status = "pronta"
+    return {"units": counts, "todo": todo, "status": status, "order_pending": order_pending,
             "ready": counts.get("pronta", 0), "lectures_without_notes": no_notes, "errors": errors,
             "running": bool(job.get("running")), "current": job.get("current"), "stopped": job.get("stopped")}
 
@@ -462,18 +472,22 @@ def _work(course_id: int, unit_ids: list[int]) -> None:
             job["stopped"] = limited
 
     try:
-        with ThreadPoolExecutor(max_workers=effective_workers()) as pool:
-            list(pool.map(one, unit_ids))
-    finally:
-        job.update(running=False, current=None)
+        if unit_ids:
+            with ThreadPoolExecutor(max_workers=effective_workers()) as pool:
+                list(pool.map(one, unit_ids))
+        job["current"] = None
         try:  # argomenti nuovi: si rifà l'ordine didattico del corso
             from .syllabus import order_course
             order_course(course_id)
         except Exception:
             pass
+    finally:
+        job.update(running=False, current=None)
 
 
 def start_prepare(course_id: int, limit: int | None = None) -> dict:
+    from .syllabus import needs_order
+
     sync_units(course_id)
     release_stale()
     with _jobs_lock:
@@ -485,8 +499,9 @@ def start_prepare(course_id: int, limit: int | None = None) -> dict:
                 (course_id,))]
         if limit:
             ids = ids[:limit]
-        _jobs[course_id] = {"running": bool(ids), "current": None, "stopped": None}
-        if ids:
+        running = bool(ids) or needs_order(course_id)
+        _jobs[course_id] = {"running": running, "current": None, "stopped": None}
+        if running:
             threading.Thread(target=_work, args=(course_id, ids), name=f"studia-{course_id}", daemon=True).start()
     return prepare_status(course_id)
 

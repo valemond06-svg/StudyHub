@@ -4,12 +4,13 @@ from __future__ import annotations
 import datetime as dt
 import json
 import time
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from studyhub import config, notte, turno
-from studyhub.ai import claude_runner, llm
+from studyhub.ai import claude_runner, health, llm
 from studyhub.db import session
 
 from conftest import inserisci_corso
@@ -62,6 +63,65 @@ def test_vuoto(client):
     assert d["notte"] == {"in_corso": False, "ultimo": None}
     assert d["finestra"]["uso_pct"] is None and d["finestra"]["soglia_pct"] == 70
     assert d["finestra"]["claude_backlog"] is False
+
+
+def test_provider_e_pannello_usano_esiti_reali_e_modello_in_cache(client, monkeypatch):
+    host = "http://modello.test:8080"
+    monkeypatch.setenv("STUDYHUB_LOCAL_LLM", host + "/v1/")
+    monkeypatch.setenv("STUDYHUB_LLM_MODEL", "studio")
+    monkeypatch.setattr(llm, "_server_models", {})
+    monkeypatch.setattr(llm, "LOCAL_CANDIDATES", ())
+    monkeypatch.setattr(llm, "_cache", {"url": None, "at": 0, "ttl": 0, "candidates": ()})
+    probe = Mock(return_value=True)
+    monkeypatch.setattr(llm, "_probe", probe)
+    metadata = Mock(return_value={"data": [{"id": "altro"}, {"id": "ModelloStudio", "aliases": ["studio"]}]})
+    monkeypatch.setattr(llm, "_get_json", metadata)
+    monkeypatch.setattr(llm, "_agy_exe", lambda: "agy")
+    monkeypatch.setattr(claude_runner, "_claude_exe", lambda: "claude")
+    initial = client.get("/api/ai/providers").json()
+    assert set(initial) == {"local", "gemini", "claude"}
+    assert initial["local"]["url"] == host and initial["local"]["model"] == "ModelloStudio"
+    assert initial["local"]["healthy"] is True
+    assert initial["gemini"]["available"] is None and initial["gemini"]["status"] == "unverified"
+
+    health.record("gemini", "quota_exceeded")
+    health.record("claude", "available")
+    states = client.get("/api/ai/providers").json()
+    assert states["gemini"]["status"] == "quota_exceeded" and states["gemini"]["healthy"] is False
+    assert states["gemini"]["checked_at"]
+    assert states["claude"]["status"] == "available" and states["claude"]["healthy"] is True
+    panel = client.get("/api/ai/pannello").json()
+    assert panel["providers"] == states
+    assert panel["cluster"]["model"] == "ModelloStudio" and panel["cluster"]["url"] == host
+    probe.assert_called_once_with(host)
+    metadata.assert_called_once_with(host, "/v1/models", llm.HEALTH_TIMEOUT_S)
+
+    health.record("gemini", "available")
+    monkeypatch.setattr(claude_runner, "last_usage", lambda: {"utilization": 0.99, "resets_at": time.time() + 300})
+    states = client.get("/api/ai/providers").json()
+    assert states["gemini"]["status"] == "available"
+    assert states["claude"]["status"] == "quota_exceeded"
+    assert states["claude"]["retry_at"] == states["claude"]["resets_at"]
+
+
+def test_modello_locale_da_props_e_offline_senza_url_di_ripiego(client, monkeypatch):
+    monkeypatch.setattr(llm, "_server_models", {})
+    host = "http://props.test:8080"
+    metadata = Mock(side_effect=[None, {"model_path": "C:/modelli/ModelloLocale.gguf"}])
+    monkeypatch.setattr(llm, "_get_json", metadata)
+    assert llm.server_model(host) == "ModelloLocale.gguf"
+    assert llm.server_model(host) == "ModelloLocale.gguf"
+    assert [call.args[1] for call in metadata.call_args_list] == ["/v1/models", "/props"]
+
+    monkeypatch.setattr(llm, "get_local_llm_url", lambda: None)
+    monkeypatch.setattr(llm, "_agy_exe", lambda: None)
+    panel = client.get("/api/ai/pannello").json()
+    assert panel["cluster"]["status"] == "offline" and panel["cluster"]["healthy"] is False
+    assert panel["cluster"]["url"] is None and panel["cluster"]["model"] is None
+    assert panel["providers"]["gemini"]["status"] == "not_configured"
+    monkeypatch.setenv("STUDYHUB_LOCAL_LLM", "http://sintetico:mascherato@props.test:8080")
+    state = client.get("/api/ai/providers").json()["local"]
+    assert state["url"] == host and state["model"] is None and state["status"] == "unreachable"
 
 
 def test_conteggi_errori_troncati(client):

@@ -33,6 +33,10 @@ def test_migrazione_incrementale_conserva_fsrs_e_indicizza_note(ambiente):
         db.execute("INSERT INTO flashcards(id, course_id, front, back, fsrs, due) VALUES (1, 1, 'D', 'R', ?, ?)",
                    (original, "2026-11-25T00:00:00+00:00"))
         db.execute("INSERT INTO reviews(card_id, rating, reviewed_at) VALUES (1, 3, '2026-11-24')")
+        db.executemany("INSERT INTO study_sessions(course_id, started_at, ended_at, queue) VALUES (1, ?, ?, ?)", [
+            ("2026-11-24T09:00:00", "2026-11-24T09:25:00", '{"entries": []}'),
+            ("2026-11-24T11:00:00", None, '{"entries": []}'),
+        ])
         db.commit()
 
     with session() as db:
@@ -41,6 +45,7 @@ def test_migrazione_incrementale_conserva_fsrs_e_indicizza_note(ambiente):
             original, None, None, None,
         )
         assert db.execute("SELECT rating FROM reviews WHERE card_id=1").fetchone()[0] == 3
+        assert [row[0] for row in db.execute("SELECT status FROM study_sessions ORDER BY id")] == ["completata", "aperta"]
         assert not db.execute("PRAGMA foreign_key_check").fetchall()
         db.execute("""INSERT INTO notes(course_id, body, created_at, updated_at)
                       VALUES (1, 'Integrali', '2026-11-25', '2026-11-25')""")

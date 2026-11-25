@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from conftest import inserisci_corso
 from studyhub import doctor, fullrun, search
-from studyhub.study import lesson, quiz
+from studyhub.study import bank, lesson, quiz, syllabus
 from studyhub.sync import auth, catalog, moodle
 
 api = import_module("studyhub.api.app")
@@ -60,18 +60,49 @@ def test_lezione_richiede_auth_e_csrf_per_le_scritture(ambiente, db, monkeypatch
     raw = TestClient(api.app)
     path = "/api/study/topics/1/lesson"
     assert raw.get(path).status_code == 401
+    assert raw.post(path + "/prepare").status_code == 401
     assert raw.post(path + "/done").status_code == 401
     csrf = raw.get("/api/csrf").json()["csrf_token"]
-    assert raw.get(path).status_code == 403
-    assert raw.get(path, headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
-    assert raw.get(path, params={"prepare": "false"}).status_code == 200
+    for params in ({}, {"prepare": "false"}, {"prepare": "true"}):
+        assert raw.get(path, params=params, headers={"Sec-Fetch-Site": "same-origin"}).json()["status"] == "da preparare"
+    assert raw.post(path + "/prepare", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 403
     assert raw.post(path + "/done").status_code == 403
     enqueue.assert_not_called()
     complete.assert_not_called()
-    assert raw.get(path, headers={"Sec-Fetch-Site": "same-origin"}).status_code == 200
+    assert raw.post(path + "/prepare", headers={"X-CSRF-Token": csrf}).status_code == 200
     enqueue.assert_called_once_with([1])
     assert raw.post(path + "/done", headers={"X-CSRF-Token": csrf}).json() == {"ok": True}
     complete.assert_called_once_with(1)
+
+
+def test_ordine_didattico_passa_dal_post_prepare(client, db, monkeypatch):
+    inserisci_corso(db)
+    db.execute("INSERT INTO study_topics (id, course_id, name) VALUES (1, 1, 'Laplace')")
+    db.commit()
+    monkeypatch.setattr(bank, "_jobs", {})
+    order = Mock()
+    monkeypatch.setattr(syllabus, "order_course", order)
+    # Esegue il worker nello stesso thread per verificare l'endpoint senza race nei test.
+    monkeypatch.setattr(bank, "threading", SimpleNamespace(Thread=lambda target, args, **_: SimpleNamespace(
+        start=lambda: target(*args),
+    )))
+    response = client.get("/api/study/1")
+    assert response.status_code == 200
+    assert response.json()["prepare"]["status"] == "da preparare"
+    assert response.json()["prepare"]["order_pending"] is True
+    order.assert_not_called()
+    assert client.post("/api/study/1/prepare").status_code == 200
+    order.assert_called_once_with(1)
+
+
+def test_solo_il_post_di_ricerca_calcola_embedding(client, monkeypatch):
+    embedding = Mock(return_value=object())
+    monkeypatch.setattr(search, "embed_query", embedding)
+    monkeypatch.setattr(search.vectors, "knn", lambda *args: [])
+    assert client.get("/api/search?q=laplace").json() == {"results": [], "semantic": False}
+    embedding.assert_not_called()
+    assert client.post("/api/search", json={"q": "laplace"}).json() == {"results": [], "semantic": True}
+    embedding.assert_called_once_with("laplace")
 
 
 @pytest.mark.parametrize(("query", "body", "count"), [

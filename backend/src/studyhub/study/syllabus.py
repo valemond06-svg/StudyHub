@@ -40,8 +40,8 @@ def _key(names: list[str]) -> str:
 def needs_order(course_id: int) -> bool:
     with session() as db:
         names = [r[0] for r in db.execute("SELECT name FROM study_topics WHERE course_id=?", (course_id,))]
-        key = db.execute("SELECT topics_order_key FROM courses WHERE id=?", (course_id,)).fetchone()[0]
-    return bool(names) and key != _key(names)
+        course = db.execute("SELECT topics_order_key FROM courses WHERE id=?", (course_id,)).fetchone()
+    return bool(course and names and course[0] != _key(names))
 
 
 def order_course(course_id: int, force: bool = False) -> dict:

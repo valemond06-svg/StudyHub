@@ -65,10 +65,11 @@ _LOCAL_TIMEOUT_SENTINELLA = 600
 LOCAL_TIMEOUT_DEFAULT_S = 1200                     # generazioni lunghe: timeout di lettura (35B su 1 slot)
 MAX_LOCAL_ATTEMPTS = 3
 
-_cache: dict = {"url": None, "at": -1e9, "ttl": 0.0}
+_cache: dict = {"url": None, "at": -1e9, "ttl": 0.0, "candidates": ()}
 _cache_lock = threading.Lock()
 _auth_failed: set[str] = set()     # server che rispondono 401/403: chiave mancante o sbagliata (per doctor)
 _vision: dict[str, tuple[float, bool | None]] = {}   # server -> (quando, supporta le immagini?)
+_server_models: dict[tuple[str, str], tuple[float, str | None]] = {}
 
 
 def _now() -> float:
@@ -87,13 +88,14 @@ def _norm(url: str) -> str:
     return url
 
 
-def local_llm_candidates() -> list[str]:
+def configured_local_llm_url() -> str | None:
     custom = os.environ.get("STUDYHUB_LOCAL_LLM") or settings.extra.get("local_llm_url")
-    out: list[str] = []
-    for cand in ([custom] if custom else []) + list(LOCAL_CANDIDATES):
-        if cand and _norm(str(cand)) not in out:
-            out.append(_norm(str(cand)))
-    return out
+    return (_norm(str(custom)) or None) if custom else None
+
+
+def local_llm_candidates() -> list[str]:
+    custom = configured_local_llm_url()
+    return list(dict.fromkeys((custom, *LOCAL_CANDIDATES) if custom else LOCAL_CANDIDATES))
 
 
 def _auth_headers(base: str) -> dict:
@@ -133,6 +135,9 @@ def invalidate_local_llm(url: str | None = None) -> None:
     with _cache_lock:
         if url is None or _cache["url"] == _norm(url):
             _cache.update(url=None, at=-1e9, ttl=0.0)
+        for key in list(_server_models):
+            if url is None or key[0] == _norm(url):
+                _server_models.pop(key, None)
 
 
 def get_local_llm_url(exclude: tuple | list = ()) -> str | None:
@@ -142,11 +147,13 @@ def get_local_llm_url(exclude: tuple | list = ()) -> str | None:
     poi si sceglie in ordine di priorità. `exclude`: server appena caduti durante una richiesta.
     """
     skip = {_norm(u) for u in exclude}
+    candidates = tuple(local_llm_candidates())
     with _cache_lock:
-        url, fresh = _cache["url"], _now() - _cache["at"] < _cache["ttl"]
+        url = _cache["url"]
+        fresh = candidates == _cache["candidates"] and _now() - _cache["at"] < _cache["ttl"]
     if fresh and (url is None or url not in skip):
         return url
-    cands = [c for c in local_llm_candidates() if c not in skip]
+    cands = [c for c in candidates if c not in skip]
     found = None
     if cands:
         pool = ThreadPoolExecutor(max_workers=len(cands), thread_name_prefix="llm-health")
@@ -159,7 +166,7 @@ def get_local_llm_url(exclude: tuple | list = ()) -> str | None:
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
     with _cache_lock:
-        _cache.update(url=found, at=_now(), ttl=CACHE_OK_S if found else CACHE_NONE_S)
+        _cache.update(url=found, at=_now(), ttl=CACHE_OK_S if found else CACHE_NONE_S, candidates=candidates)
     return found
 
 
@@ -171,18 +178,6 @@ class LLMResult:
     duration_s: float
     images_sent: int = 0   # foto davvero consegnate a un modello con vista (0 = nessuna letta)
     usage: dict | None = None
-
-# --- FreeLLMAPI (VPS / Brain) ----------------------------------------------------------------
-# FRAGILE: provider gratuito OpenAI-compatible.
-# ATTENZIONE: FreeLLMAPI NON VIENE USATO per StudyHub (security/hygiene:
-# non inviare contenuto studente a provider gratuiti).
-# IMPORTANTE: se mai si riattiva FreeLLMAPI, applicare il filtro privacy del Brain prima di chiamare.
-# Fare riferimento a C:\Brain\corerain\privacy.py per gli array e funzioni attuali.
-
-# Costanti obsolescenti ma mantenute per compatibilità futura (non usate da StudyHub)
-FREELLM_TIMEOUT_S = 180
-FREELLM_MODEL = "auto"   # catena curata dal Brain: Qwen3.8, Nemotron...
-
 
 def _check_local() -> bool:
     return get_local_llm_url() is not None
@@ -197,10 +192,7 @@ def _agy_exe() -> str | None:
 
 
 def provider_order() -> list[str]:
-    """config.yaml → ai_provider: auto | local | gemini | claude. auto = local (se cluster attivo), poi Gemini se c'è, poi Claude.
-
-    IMPORTANT: FreeLLMAPI è disabilitato per StudyHub (security/hygiene: non inviare contenuto studente a provider gratuiti).
-    Usa solo LLM local (Qwen 35B) e Claude Pro."""
+    """config.yaml → ai_provider: auto, local, gemini o claude. Auto prova locale, Gemini e Claude."""
     pref = (settings.extra.get("ai_provider") or "auto").lower()
     if pref == "local":
         return ["local"]
@@ -214,8 +206,6 @@ def provider_order() -> list[str]:
         chain.append("local")
     if _agy_exe():
         chain.append("gemini")
-    # FREELLMAPI DISABILITATO per StudyHub (security: privacy filter del Brain non usato)
-    # Se necessario riattivare, aggiungere sopra: if _freellm_up(): chain.append("freellm")
     chain.append("claude")
     return chain
 
@@ -383,22 +373,50 @@ def _extract_json(raw: str):
     return data
 
 
-def _get_json(base: str, path: str):
+def _get_json(base: str, path: str, timeout: float = HEALTH_TIMEOUT_S * 3):
     try:
         req = urllib.request.Request(base + path, headers=_auth_headers(base))
-        with urllib.request.urlopen(req, timeout=HEALTH_TIMEOUT_S * 3) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except Exception:
         return None
 
 
-def _vision_from_models(models, wanted: str) -> bool | None:
-    """Router llama.cpp: /v1/models elenca per ogni modello gli argomenti di avvio; --mmproj = ha la vista."""
+def _model_entry(models, wanted: str) -> dict | None:
     data = models.get("data") if isinstance(models, dict) else None
     if not isinstance(data, list) or not data:
         return None
-    entry = next((m for m in data if isinstance(m, dict) and (m.get("id") == wanted or wanted in (m.get("aliases") or []))),
-                 data[0] if isinstance(data[0], dict) else None)
+    entries = [m for m in data if isinstance(m, dict)]
+    return next((m for m in entries if m.get("id") == wanted or wanted in (m.get("aliases") or [])),
+                entries[0] if entries else None)
+
+
+def server_model(base: str) -> str | None:
+    """Identificativo annunciato dal server, con cache per indirizzo e alias richiesto."""
+    wanted = get_local_llm_model()
+    key = base, wanted
+    with _cache_lock:
+        hit = _server_models.get(key)
+    if hit and _now() - hit[0] < (CACHE_OK_S if hit[1] else CACHE_NONE_S):
+        return hit[1]
+    entry = _model_entry(_get_json(base, "/v1/models", HEALTH_TIMEOUT_S), wanted) or {}
+    model = entry.get("id")
+    if not model or model == LOCAL_MODEL:
+        props = _get_json(base, "/props", HEALTH_TIMEOUT_S)
+        if isinstance(props, dict):
+            path = props.get("model_path")
+            if isinstance(path, str):
+                path = path.replace("\\", "/").rsplit("/", 1)[-1]
+            model = props.get("model") or path or model
+    model = model.strip() if isinstance(model, str) else None
+    with _cache_lock:
+        _server_models[key] = (_now(), model or None)
+    return model or None
+
+
+def _vision_from_models(models, wanted: str) -> bool | None:
+    """Router llama.cpp: /v1/models elenca per ogni modello gli argomenti di avvio; --mmproj = ha la vista."""
+    entry = _model_entry(models, wanted)
     if not entry:
         return None
     caps = entry.get("capabilities")
@@ -493,7 +511,7 @@ def _local(system: str, text: str, schema: dict, quality: str, content: list[dic
         res, _base = _local_vision(system, content, schema, validated=validated)
         msg = (res.get("choices") or [{}])[0].get("message", {})
         raw = msg.get("content") or msg.get("reasoning_content") or ""
-        return LLMResult(_extract_json(raw), "local", res.get("model", "local-qwen3.6-35b"),
+        return LLMResult(_extract_json(raw), "local", res.get("model") or get_local_llm_model(),
                          round(time.time() - t0, 1), images_sent=sum(1 for b in content if b.get("type") == "image"),
                          usage=res.get("usage"))
     prompt = (
@@ -533,7 +551,7 @@ def _local(system: str, text: str, schema: dict, quality: str, content: list[dic
     if not raw.strip() and msg.get("reasoning_content"):
         raw = msg.get("reasoning_content")
     data = _extract_json(raw)
-    model_name = res.get("model", "local-qwen3.6-35b")
+    model_name = res.get("model") or get_local_llm_model()
     return LLMResult(data, "local", model_name, round(time.time() - t0, 1), usage=res.get("usage"))
 
 

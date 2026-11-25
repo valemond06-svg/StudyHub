@@ -1,7 +1,4 @@
-"""Dati leggeri per il pannello «Coda AI e turno di notte»: solo query SQL e file locali.
-
-Mai sync, mai chiamate a LLM o Claude: deve rispondere in meno di un secondo.
-"""
+"""Coda AI, turno di notte e diagnostica dei provider senza generazioni."""
 from __future__ import annotations
 
 import json
@@ -10,7 +7,7 @@ import time
 from .. import turno
 from .. import config
 from ..db import session
-from . import jobs
+from . import health, jobs
 from .claude_runner import last_usage
 
 MAX_MSG = 200
@@ -69,37 +66,11 @@ def _notte() -> dict:
     return {"in_corso": in_corso, "ultimo": ultimo}
 
 
-def _cluster() -> dict:
-    from .llm import local_llm_healthy, get_local_llm_url
-    try:
-        url = get_local_llm_url()
-        healthy = bool(url and local_llm_healthy())
-    except Exception:
-        url, healthy = None, False
-
-    in_corso = False
-    try:
-        in_corso = turno.notte_attiva()
-    except Exception:
-        pass
-
-    try:
-        with session() as db:
-            local_running = db.execute("SELECT COUNT(*) FROM ai_jobs WHERE status='in_corso'").fetchone()[0] > 0
-    except Exception:
-        local_running = False
-
-    status = "offline"
-    if healthy:
-        status = "attivo" if (in_corso or local_running) else "in_attesa"
-
-    return {
-        "url": url or "http://10.10.10.1:8080",
-        "model": "Qwen3.6-35B",
-        "healthy": healthy,
-        "status": status,
-    }
-
-
 def dati() -> dict:
-    return {"coda": _coda(), "arretrati": _arretrati(), "finestra": _finestra(), "notte": _notte(), "cluster": _cluster()}
+    notte = _notte()
+    providers = health.providers()
+    local = providers["local"]
+    status = "offline" if not local["healthy"] else "attivo" if notte["in_corso"] else "in_attesa"
+    cluster = {**local, "status": status}
+    return {"coda": _coda(), "arretrati": _arretrati(), "finestra": _finestra(), "notte": notte,
+            "cluster": cluster, "providers": providers}

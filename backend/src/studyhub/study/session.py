@@ -13,12 +13,12 @@ in alternativa ti autovaluti sui criteri, ma l'autovalutazione vale al massimo 0
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
 from fsrs import Card, Rating
 
-from ..ai.claude_runner import ClaudeError
+from ..ai.claude_runner import ClaudeError, RateLimited
 from ..ai.llm import run_json, run_json_content
 from ..ai.privacy import scope
 from ..ai.vision import MAX_PHOTOS_PER_ANSWER, check_data_urls, photo_notice, prepare_images
@@ -29,6 +29,11 @@ from .mastery import KIND_WEIGHT, item_states, overview, topic_mastery
 SECONDS = {"vero_falso": 45, "multipla": 60, "richiamo": 75, "aperta": 240, "esercizio": 480}
 SCHEDA_S = 480          # lezione interattiva di un argomento nuovo (circa 8 minuti)
 SELF_CAP = 0.85
+SESSION_MAX_AGE = timedelta(hours=12)
+
+
+class SessionClosed(ValueError):
+    """La sessione è già terminata."""
 
 GRADE_SYSTEM = """Sei l'esaminatore di un corso universitario di Ingegneria. Correggi UNA risposta dello studente
 confrontandola con la soluzione e i criteri. Sii giusto ma esigente come all'esame: una risposta vaga, senza
@@ -46,6 +51,10 @@ GRADE_SCHEMA = {
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _public(it: dict) -> dict:
@@ -176,40 +185,97 @@ def _load(db, sid: int) -> tuple[dict, dict]:
     return dict(row), json.loads(row["queue"])
 
 
+def get_open(course_id: int) -> dict:
+    with session() as db:
+        db.execute("BEGIN")
+        row = db.execute(
+            """SELECT id FROM study_sessions WHERE course_id=? AND ended_at IS NULL
+               ORDER BY started_at DESC, id DESC LIMIT 1""", (course_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(course_id)
+        return _get(db, row["id"])
+
+
+def abandon(sid: int) -> dict:
+    with session() as db:
+        db.execute("UPDATE study_sessions SET ended_at=?, status='abbandonata' WHERE id=? AND ended_at IS NULL",
+                   (_now(), sid))
+        return _get(db, sid)
+
+
+def abandon_expired() -> int:
+    cutoff = (_utc_now() - SESSION_MAX_AGE).astimezone().replace(tzinfo=None).isoformat(timespec="seconds")
+    with session() as db:
+        db.execute("PRAGMA busy_timeout=250")
+        return db.execute(
+            """UPDATE study_sessions SET ended_at=?, status='abbandonata'
+               WHERE ended_at IS NULL AND started_at < ?""", (_now(), cutoff),
+        ).rowcount
+
+
 def get(sid: int) -> dict:
     with session() as db:
-        s, q = _load(db, sid)
-        item_ids = [e["item"] for e in q["entries"] if e["t"] == "domanda"]
-        lesson_ids = {e["topic"] for e in q["entries"] if e["t"] == "scheda"}
-        items = {r["id"]: dict(r) for r in db.execute(
-            f"SELECT * FROM study_items WHERE id IN ({','.join('?' * len(item_ids)) or 'NULL'})", item_ids)}
-        topic_ids = lesson_ids | {it["topic_id"] for it in items.values()}
-        topics = {r["id"]: dict(r) for r in db.execute(
-            f"SELECT id, name, weight, summary_md, lecture_id, t_start, doc_id, page FROM study_topics "
-            f"WHERE id IN ({','.join('?' * len(topic_ids)) or 'NULL'})", list(topic_ids))}
-        learned = {r[0] for r in db.execute(
-            f"SELECT topic_id FROM study_lessons WHERE completed_at IS NOT NULL "
-            f"AND topic_id IN ({','.join('?' * len(lesson_ids)) or 'NULL'})", list(lesson_ids))}
-        errors = [dict(r) for r in db.execute(
-            """SELECT a.id AS attempt_id, a.item_id, a.score, i.prompt_md
-               FROM study_attempts a JOIN study_items i ON i.id=a.item_id
-               WHERE a.session_id=? AND a.score < 0.5 ORDER BY a.id""", (sid,))]
+        return _get(db, sid)
+
+
+def _get(db, sid: int) -> dict:
+    s, q = _load(db, sid)
+    item_ids = [e["item"] for e in q["entries"] if e["t"] == "domanda"]
+    lesson_ids = {e["topic"] for e in q["entries"] if e["t"] == "scheda"}
+    items = {r["id"]: dict(r) for r in db.execute(
+        f"SELECT * FROM study_items WHERE id IN ({','.join('?' * len(item_ids)) or 'NULL'})", item_ids)}
+    topic_ids = lesson_ids | {it["topic_id"] for it in items.values()}
+    topics = {r["id"]: dict(r) for r in db.execute(
+        f"SELECT id, name, weight, summary_md, lecture_id, t_start, doc_id, page FROM study_topics "
+        f"WHERE id IN ({','.join('?' * len(topic_ids)) or 'NULL'})", list(topic_ids))}
+    learned = {r[0] for r in db.execute(
+        f"SELECT topic_id FROM study_lessons WHERE completed_at IS NOT NULL "
+        f"AND topic_id IN ({','.join('?' * len(lesson_ids)) or 'NULL'})", list(lesson_ids))}
+    errors = [dict(r) for r in db.execute(
+        """SELECT a.id AS attempt_id, a.item_id, a.score, i.prompt_md
+           FROM study_attempts a JOIN study_items i ON i.id=a.item_id
+           WHERE a.session_id=? AND a.score < 0.5 ORDER BY a.id""", (sid,))]
     entries = []
     for e in q["entries"]:
-        x = _public_entry(e, items[e["item"]] if e["t"] == "domanda" else None)
+        item = items.get(e.get("item"))
+        x = _public_entry(e, item)
+        if e["t"] == "domanda" and item is None:
+            # Una nuova preparazione può aver sostituito una domanda prima del tentativo.
+            x.update(done=True, unavailable=True)
         if e["t"] == "scheda" and e["topic"] in learned:
             x["done"] = True
         entries.append(x)
     resume_index = None
-    phase = "completata"
+    phase = s["status"]
     if not s["ended_at"]:
         resume_index = next((idx for idx, e in enumerate(entries) if not e["done"]), None)
+        phase = "completata"  # coda finita, in attesa del riepilogo
         if resume_index is not None:
             entry = entries[resume_index]
             phase = "rivelata" if entry.get("revealed") else entry["t"]
     return {"id": sid, "course_id": s["course_id"], "minutes": s["minutes"], "started_at": s["started_at"],
-            "ended_at": s["ended_at"], "xp": s["xp"], "entries": entries, "topics": topics,
+            "ended_at": s["ended_at"], "status": s["status"], "xp": s["xp"], "entries": entries, "topics": topics,
             "resume_index": resume_index, "phase": phase, "errors": errors}
+
+
+def _require_open(s: dict) -> None:
+    if s["ended_at"] is not None:
+        raise SessionClosed("La sessione è già terminata.")
+
+
+def seen(sid: int, idx: int) -> dict:
+    with session() as db:
+        db.execute("BEGIN IMMEDIATE")
+        s, q = _load(db, sid)
+        entry = _entry(q, idx)
+        if entry["t"] != "scheda":
+            raise ValueError("Non è una scheda.")
+        if not entry.get("done"):
+            _require_open(s)
+            entry["done"] = True
+            db.execute("UPDATE study_sessions SET queue=? WHERE id=?", (json.dumps(q), sid))
+    return {"ok": True, "done": True}
 
 
 def _rating(score: float, confidence: int | None) -> Rating:
@@ -226,7 +292,12 @@ def _grade_ai(it: dict, answer: str) -> tuple[float, str, list]:
             + ("Criteri:\n" + "\n".join(f"{i + 1}. {c}" for i, c in enumerate(rubric)) + "\n\n" if rubric else "")
             + f"Risposta dello studente:\n{answer}")
     with scope(kind="exam_answers", private=True):
-        res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
+        try:
+            res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
+        except RateLimited:
+            raise
+        except ClaudeError as error:
+            raise ClaudeError("La correzione AI non è disponibile. Riprova tra poco o usa l'autovalutazione.") from error
     return _parse_grade(res.data)
 
 
@@ -281,20 +352,34 @@ def _source(db, it: dict) -> dict:
             "doc_id": it["doc_id"], "doc": doc[0].rsplit("/", 1)[-1] if doc else None, "page": it["page"]}
 
 
-def reveal(sid: int, idx: int) -> dict:
+def _question(db, item_id: int) -> dict:
+    row = db.execute("SELECT * FROM study_items WHERE id=?", (item_id,)).fetchone()
+    if row is None:
+        raise ValueError("Questa domanda non è più disponibile.")
+    return dict(row)
+
+
+def reveal(sid: int, idx: int, confidence: int | None = None, seconds: float | None = None) -> dict:
     """Soluzione e criteri subito dopo aver risposto (la correzione AI arriva qualche secondo dopo).
     Da qui in poi la risposta a quella domanda non si può più cambiare."""
     with session() as db:
         db.execute("BEGIN IMMEDIATE")
-        _, q = _load(db, sid)
+        s, q = _load(db, sid)
         entry = _entry(q, idx)
         if entry["t"] != "domanda":
             raise ValueError("Non è una domanda.")
-        entry["revealed"] = True
-        db.execute("UPDATE study_sessions SET queue=? WHERE id=?", (json.dumps(q), sid))
-        it = dict(db.execute("SELECT * FROM study_items WHERE id=?", (entry["item"],)).fetchone())
+        if not entry.get("revealed"):
+            _require_open(s)
+            entry.update(revealed=True, revealed_at=_utc_now().isoformat(timespec="milliseconds"))
+            if confidence is not None:
+                entry["confidence"] = confidence
+            if seconds is not None:
+                entry["seconds"] = seconds
+            db.execute("UPDATE study_sessions SET queue=? WHERE id=?", (json.dumps(q), sid))
+        it = _question(db, entry["item"])
         src = _source(db, it)
-    return {"answer_md": it["answer_md"], "rubric": json.loads(it["rubric"] or "[]"), "source": src}
+    return {"answer_md": it["answer_md"], "rubric": json.loads(it["rubric"] or "[]"), "source": src,
+            "confidence": entry.get("confidence"), "revealed_at": entry.get("revealed_at")}
 
 
 def _saved_answer(entry: dict, fingerprint: str) -> dict | None:
@@ -308,9 +393,25 @@ def _saved_answer(entry: dict, fingerprint: str) -> dict | None:
     raise ValueError("Questa domanda è già stata corretta.")
 
 
+def _answer_times(entry: dict, total: float | None, submitted_at: datetime,
+                  graded_by: str) -> tuple[float | None, float | None]:
+    resolution = entry.get("seconds")
+    revealed_at = entry.get("revealed_at")
+    if graded_by != "io" or revealed_at is None:
+        return resolution if resolution is not None else total, None
+    elapsed = max(0.0, (submitted_at - datetime.fromisoformat(revealed_at)).total_seconds())
+    if resolution is not None:
+        return resolution, elapsed if total is None else max(0.0, total - resolution)
+    if total is None:
+        return None, elapsed
+    review = min(total, elapsed)
+    return total - review, review
+
+
 def answer(sid: int, idx: int, payload: dict) -> dict:
     """payload: choice (multipla/vero_falso) | text | self_criteria (lista di bool) | self_score;
     confidence 1-3; seconds."""
+    submitted_at = _utc_now()
     answer_fields = ("choice", "text", "images", "self_criteria", "self_score", "confidence")
     submitted = json.dumps([payload.get(key) for key in answer_fields], ensure_ascii=True)
     fingerprint = sha256(submitted.encode()).hexdigest()
@@ -319,8 +420,8 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
         entry = _entry(q, idx)
         if (saved := _saved_answer(entry, fingerprint)) is not None:
             return saved
-        it = dict(db.execute("SELECT * FROM study_items WHERE id=?", (entry["item"],)).fetchone())
-    conf = payload.get("confidence")
+        _require_open(s)
+        it = _question(db, entry["item"])
     rubric = json.loads(it["rubric"] or "[]")
     feedback, crit_ok, graded_by = None, [], "auto"
     if it["kind"] in ("multipla", "vero_falso"):
@@ -352,26 +453,29 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
         else:
             raw = float(payload.get("self_score") or 0)
         score = min(SELF_CAP, raw)
-    rating = _rating(score, conf)
     gained = round(10 * KIND_WEIGHT.get(it["kind"], 1) * it["difficulty"] * score)
-    if conf == 3 and score >= 0.85 or conf == 1 and score < 0.5:
-        gained += 3  # sapevi di sapere (o di non sapere): la calibrazione si premia
     # La correzione AI può richiedere tempo. Rileggiamo coda e carta sotto il lock di scrittura.
     with session() as db:
         db.execute("BEGIN IMMEDIATE")
-        _, q = _load(db, sid)
+        s, q = _load(db, sid)
         entry = _entry(q, idx)
         if (saved := _saved_answer(entry, fingerprint)) is not None:
             return saved
+        _require_open(s)
+        conf = entry.get("confidence", payload.get("confidence"))
+        rating = _rating(score, conf)
+        if conf == 3 and score >= 0.85 or conf == 1 and score < 0.5:
+            gained += 3  # sapevi di sapere (o di non sapere): la calibrazione si premia
         if entry.get("boss") and score >= 0.7:
             gained *= 2
-        fsrs = db.execute("SELECT fsrs FROM study_items WHERE id=?", (it["id"],)).fetchone()[0]
+        fsrs = _question(db, it["id"])["fsrs"]
         card, _ = scheduler.review_card(Card.from_json(fsrs) if fsrs else Card(), rating)
         next_due = _iso(card.due)
         db.execute("UPDATE study_items SET fsrs=?, due=? WHERE id=?", (card.to_json(), next_due, it["id"]))
+        seconds, review_seconds = _answer_times(entry, payload.get("seconds"), submitted_at, graded_by)
         attempt_id = db.execute("""INSERT INTO study_attempts (item_id, session_id, score, confidence, answer, feedback_md, graded_by,
-                      seconds, created_at) VALUES (?,?,?,?,?,?,?,?,?)""",
-                   (it["id"], sid, score, conf, given, feedback, graded_by, payload.get("seconds"), _now())).lastrowid
+                      seconds, review_seconds, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                   (it["id"], sid, score, conf, given, feedback, graded_by, seconds, review_seconds, _now())).lastrowid
         requeued = None
         if score < 0.5 and not entry.get("retry"):
             retry_entry = {"t": "domanda", "item": it["id"], "retry": True}
@@ -379,8 +483,10 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
             q["entries"].append(retry_entry)
         result = {"attempt_id": attempt_id, "score": score, "correct": it["correct"], "answer_md": it["answer_md"], "rubric": rubric,
                   "criteria_ok": crit_ok, "feedback_md": feedback, "graded_by": graded_by, "xp": gained,
-                  "retry": requeued is not None, "requeued": requeued, "next_due": next_due, "source": _source(db, it)}
-        entry.update(done=True, score=score, _answer={"fingerprint": fingerprint, "result": result})
+                  "retry": requeued is not None, "requeued": requeued, "next_due": next_due, "source": _source(db, it),
+                  "seconds": seconds, "review_seconds": review_seconds}
+        entry.update(done=True, score=score, seconds=seconds, review_seconds=review_seconds,
+                     _answer={"fingerprint": fingerprint, "result": result})
         db.execute("UPDATE study_sessions SET queue=?, xp=xp+? WHERE id=?", (json.dumps(q), gained, sid))
         return result
 
@@ -389,11 +495,11 @@ def answer_photo(sid: int, idx: int, payload: dict) -> dict:
     """Come answer(), ma lo svolgimento arriva come foto (payload["images"]: data URL). Solo domande a risposta scritta."""
     check_data_urls(payload.get("images"))
     with session() as db:
-        s, q = _load(db, sid)
+        _, q = _load(db, sid)
         entry = _entry(q, idx)
         if entry["t"] != "domanda":
             raise ValueError("Non è una domanda.")
-        kind = db.execute("SELECT kind FROM study_items WHERE id=?", (entry["item"],)).fetchone()[0]
+        kind = _question(db, entry["item"])["kind"]
     if kind in ("multipla", "vero_falso"):
         raise ValueError("Le domande a scelta si risolvono scegliendo l'opzione, non con una foto.")
     return answer(sid, idx, payload)
@@ -401,20 +507,25 @@ def answer_photo(sid: int, idx: int, payload: dict) -> dict:
 
 def finish(sid: int) -> dict:
     with session() as db:
+        db.execute("BEGIN IMMEDIATE")
         s, q = _load(db, sid)
-    ov = overview(s["course_id"])
-    before = q.get("snapshot", {})
-    ups = [{"name": t["name"], "from": before.get(str(t["id"]), 0), "to": t["m"], "level_name": t["level_name"]}
-           for t in ov["topics"] if t["m"] - before.get(str(t["id"]), 0) >= 0.05]
-    done = [e for e in q["entries"] if e.get("done")]
-    with session() as db:
-        db.execute("UPDATE study_sessions SET ended_at=COALESCE(ended_at, ?), ready_after=? WHERE id=?",
-                   (_now(), ov["ready_exam"], sid))
+        if s["status"] == "abbandonata":
+            raise SessionClosed("La sessione è stata abbandonata.")
+        ov = overview(s["course_id"])
+        ready_after = s["ready_after"] if s["ready_after"] is not None else ov["ready_exam"]
+        if s["ended_at"] is None:
+            ready_after = ov["ready_exam"]
+            db.execute("UPDATE study_sessions SET ended_at=?, status='completata', ready_after=? WHERE id=?",
+                       (_now(), ready_after, sid))
         wrong = [dict(r) for r in db.execute(
             """SELECT i.id, MIN(a.id) AS attempt_id, i.prompt_md, i.lecture_id, i.t_start, i.doc_id, i.page, t.name AS topic
                FROM study_attempts a JOIN study_items i ON i.id=a.item_id JOIN study_topics t ON t.id=i.topic_id
                WHERE a.session_id=? AND a.score < 0.5 GROUP BY i.id""", (sid,))]
+    before = q.get("snapshot", {})
+    ups = [{"name": t["name"], "from": before.get(str(t["id"]), 0), "to": t["m"], "level_name": t["level_name"]}
+           for t in ov["topics"] if t["m"] - before.get(str(t["id"]), 0) >= 0.05]
+    done = [e for e in q["entries"] if e["t"] == "domanda" and e.get("done")]
     return {"answered": len(done), "correct": sum(1 for e in done if e["score"] >= 0.7),
-            "xp": s["xp"], "ready_before": s["ready_before"], "ready_after": ov["ready_exam"],
+            "xp": s["xp"], "ready_before": s["ready_before"], "ready_after": ready_after,
             "topics_up": sorted(ups, key=lambda u: u["from"] - u["to"])[:8], "wrong": wrong,
             "verdict": ov["verdict"], "streak": ov["streak"]}

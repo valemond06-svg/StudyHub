@@ -58,6 +58,21 @@ def test_missing_dist_logs_and_serves_legacy_on_root(browser, caplog):
     assert "Build React assente" in caplog.text
 
 
+def test_root_uses_dist_and_legacy_uses_shipped_html(client, ambiente, monkeypatch):
+    dist = ambiente / "react-dist"
+    dist.mkdir()
+    react = '<div id="root"></div><script type="module" src="/assets/app.js"></script>'
+    (dist / "index.html").write_text(react, encoding="utf-8")
+    monkeypatch.setenv("STUDYHUB_UI_DIST", str(dist))
+
+    root = client.get("/")
+    legacy = client.get("/legacy")
+    assert root.status_code == legacy.status_code == 200
+    assert root.text == react
+    assert legacy.text == (api.STATIC / "index.html").read_text(encoding="utf-8").replace("__UI_VERSION__", api._ui_version())
+    assert client.head("/legacy").headers["content-length"] == legacy.headers["content-length"]
+
+
 def test_react_deep_link_bootstraps_same_origin_api_and_csrf(browser):
     client, dist = browser
     dist.mkdir()

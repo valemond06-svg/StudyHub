@@ -1083,11 +1083,11 @@ function renderStudyCourse(d, arch = null) {
     d.overconfidence != null ? `Sicuro ma sbagliato <b>${pct(d.overconfidence)}%</b>` : "",
     `🔥 <b>${d.streak}</b> ${d.streak === 1 ? "giorno" : "giorni"} di fila`, `XP oggi <b>${d.xp_today}</b>`,
   ].filter(Boolean).map((x) => `<span>${x}</span>`).join("");
-  const prep = p.todo || p.running ? `<div class="card prep" id="prep">${prepHtml(p)}</div>` : "";
+  const prep = p.todo || p.running || p.order_pending ? `<div class="card prep" id="prep">${prepHtml(p)}</div>` : "";
   const byLevel = [d.topics.filter((t) => !t.tried).length, ...[0, 1, 2, 3, 4].map((l) => d.topics.filter((t) => t.tried && t.level === l).length)];
   const toLearn = d.topics.find((t) => !t.learned), learnN = d.topics.indexOf(toLearn) + 1, nLearned = d.topics.filter((t) => t.learned).length;
   const learn = toLearn ? `<div class="card learn"><div class="t"><div class="muted small">① IMPARA · lezioni interattive in ordine · ${nLearned}/${d.topics.length} fatte</div>
-      <b>${learnN}. ${esc(toLearn.name)}</b><div class="muted small">${toLearn.lesson === "pronta" ? "Pronta: passi brevi con verifiche, un esempio da esame, errori da evitare." : '<span class="spin"></span> In preparazione da appunti, trascrizioni e PDF…'}</div></div>
+      <b>${learnN}. ${esc(toLearn.name)}</b><div class="muted small">${toLearn.lesson === "pronta" ? "Pronta: passi brevi con verifiche, un esempio da esame, errori da evitare." : "Apri la scheda per leggere o preparare la lezione."}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="learnGo" data-learn="${toLearn.id}">${nLearned ? "Continua a imparare →" : "Inizia a imparare →"}</button><button class="pill-eureka" id="eurekaGo" data-learn="${toLearn.id}" title="Accendi la curiosità in 2 minuti senza fatica">⚡ Pillola Eureka (2 min)</button></div></div>` : "";
   const go = d.n_items ? `<div class="sect"><h2>② Allenati: sessione di oggi ${d.due ? `<span class="pill ai">${d.due} domande stanno per sfuggirti</span>` : ""}</h2>
       <p class="muted small" style="margin:-4px 0 10px">Domande in ordine di corso: prima ripassi quello che stai per dimenticare, poi rinforzi i punti deboli; se resta tempo entra l'argomento nuovo con la sua lezione. Così la prontezza qui sopra misura cosa sai davvero.</p><div class="go">
@@ -1186,7 +1186,6 @@ function renderStudyCourse(d, arch = null) {
   b.querySelectorAll("[data-min]").forEach((x) => (x.onclick = () => startRun(cid, +x.dataset.min)));
   $("learnGo")?.addEventListener("click", () => openLesson(+$("learnGo").dataset.learn));
   $("eurekaGo")?.addEventListener("click", () => openLesson(+$("eurekaGo").dataset.learn));
-  postJ(`/api/study/${cid}/lessons/prefetch?n=4`).catch(() => {});  // le prossime lezioni in ordine, pronte quando arrivi
   b.querySelectorAll("[data-focus]").forEach((x) => (x.onclick = () => startRun(cid, 20, +x.dataset.focus)));
   b.querySelectorAll("[data-topic]").forEach((x) => (x.onclick = () => openTopic(+x.dataset.topic, d.topics.find((t) => t.id === +x.dataset.topic))));
   bindPrep(cid);
@@ -1199,7 +1198,7 @@ function chapters(topics) {  // argomenti consecutivi dello stesso capitolo (ord
 }
 function prepHtml(p) {
   const total = p.ready + p.todo, done = total ? p.ready / total : 0;
-  return `<div class="row"><b>${p.running ? '<span class="spin"></span> Sto studiando il corso per te' : "Materiale non ancora analizzato"}</b>
+  return `<div class="row"><b>${p.running ? '<span class="spin"></span> Preparazione del corso in corso' : p.todo ? "Materiale da analizzare" : "Ordine didattico da aggiornare"}</b>
       <span class="muted small" style="flex:1">${p.todo} contenuti fino a oggi${p.lectures_without_notes ? ` · ${p.lectures_without_notes} lezioni passano prima dagli appunti (Claude Sonnet)` : ""} · domande e schede con Gemini</span>
       ${p.running ? '<button class="btn sm" id="prepStop">Ferma</button>' : '<button class="btn sm primary" id="prepGo">Analizza</button>'}</div>
     <div class="meter"><i style="width:${pct(done)}%"></i></div>
@@ -1256,7 +1255,7 @@ async function loadLesson() {
     }
   }
   renderLesson();
-  if (!les.data && d.status !== "errore") lesPoll = setTimeout(() => { if (les && !les.data && view === "study") loadLesson(); }, 6000);
+  if (d.status === "in_coda" || d.status === "in_corso") lesPoll = setTimeout(() => { if (les && !les.data && view === "study") loadLesson(); }, 6000);
 }
 const opts_inSession = () => !!(les && les.head);
 
@@ -1713,11 +1712,16 @@ function renderLesson() {
   if (!L) {
     body.innerHTML = head + `<div class="card lsn"><div class="stepname">Argomento nuovo</div><h2>${esc(t.name)}</h2>
       ${les.status === "errore" ? `<div class="small" style="color:var(--warn)">La lezione non si è potuta preparare: ${esc(les.message || "")}</div><div><button class="btn sm" id="lRetry">Riprova</button></div>`
+        : les.status === "da preparare" ? '<div><button class="btn sm" id="lRetry">Prepara lezione</button></div>'
         : '<div class="muted"><span class="spin"></span> Sto preparando la lezione interattiva da appunti, trascrizioni e PDF (1-3 minuti). Intanto leggi la scheda:</div>'}
       <div class="md">${md(t.summary_md || "")}</div><div>${videoLink(null)}</div>
       <div><button class="btn" id="lSkip">${les.onDone ? "Salta la lezione e vai alle domande →" : "Torna al corso"}</button></div></div>`;
     $("lSkip").onclick = () => { clearTimeout(lesPoll); const f = les.onDone || (() => loadStudyCourse(t.course_id)); les = null; f(); };
-    $("lRetry")?.addEventListener("click", async () => { await getJ(`/api/study/topics/${t.id}/lesson`); loadLesson(); });
+    $("lRetry")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget; button.disabled = true;
+      try { await postJ(`/api/study/topics/${t.id}/lesson/prepare`); if (les?.tid === t.id) await loadLesson(); }
+      catch (error) { button.disabled = false; alert(error.message); }
+    });
     $("lExit")?.addEventListener("click", () => { clearTimeout(lesPoll); les = null; loadStudyCourse(t.course_id); });
     bindSources(body);
     bindLessonMedia(body, t); return;
@@ -2022,7 +2026,7 @@ async function submitRun(conf) {
     run.res = await postJ(`/api/study/sessions/${run.id}/answer`, { idx, choice: run.sel, confidence: conf, seconds });
     return afterAnswer();
   }
-  run.res = { pending: true, ...(await postJ(`/api/study/sessions/${run.id}/reveal/${idx}`)) };
+  run.res = { pending: true, ...(await postJ(`/api/study/sessions/${run.id}/reveal/${idx}`, { confidence: conf, seconds })) };
   if (run.paper) { run.res.self = true; return renderRun(); }
   renderRun();
   try {

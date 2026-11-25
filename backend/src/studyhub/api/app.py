@@ -1,21 +1,23 @@
 """Server locale (127.0.0.1): API JSON + file delle lezioni + player offline."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import subprocess
 import sys
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from functools import lru_cache
 from math import ceil
 from pathlib import Path
 from threading import Lock
 from time import monotonic
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.datastructures import Headers
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import Message, Receive, Scope, Send
@@ -24,7 +26,7 @@ from ..config import ui_dist_path
 from ..db import session
 from ..paths import uni_path
 from .auth import get_current_token
-from .csrf import CSRFMiddleware, csrf_protect, validate_csrf
+from .csrf import CSRFMiddleware, csrf_protect
 from .log_redaction import install_log_redaction
 from .study_routes import router as study_router
 
@@ -54,10 +56,27 @@ async def setup_rate_limit(
 
 
 STATIC = Path(__file__).parent / "static"
+SESSION_CLEANUP_INTERVAL = 60  # secondi
+
+
+async def _cleanup_study_sessions() -> None:
+    from ..study.session import abandon_expired
+
+    try:
+        await asyncio.to_thread(abandon_expired)
+    except Exception:
+        logging.getLogger(__name__).exception("Chiusura delle sessioni scadute non riuscita")
+
+
+async def _expire_study_sessions() -> None:
+    while True:
+        await asyncio.sleep(SESSION_CLEANUP_INTERVAL)
+        await _cleanup_study_sessions()
+
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Avvia la coda AI in background all'avvio del server."""
+    """Avvia la coda AI e la pulizia delle sessioni scadute."""
     install_log_redaction()
     from ..ai import jobs
 
@@ -65,7 +84,14 @@ async def _lifespan(app: FastAPI):
         jobs.start_if_needed()
     except Exception:  # il server deve partire comunque
         logging.getLogger(__name__).exception("coda AI: avvio non riuscito")
-    yield
+    await _cleanup_study_sessions()
+    cleanup = asyncio.create_task(_expire_study_sessions())
+    try:
+        yield
+    finally:
+        cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup
 
 
 app = FastAPI(title="StudyHub", lifespan=_lifespan)
@@ -261,14 +287,30 @@ def media(lecture_id: int, rel: str, token: str = Depends(get_current_token)):
     return FileResponse(target)
 
 
-@app.get("/api/search")
-def api_search(q: str, course_id: int | None = None, year: int | None = None, limit: int = 20, token: str = Depends(get_current_token)):
+def _search(q: str, course_id: int | None, year: int | None, limit: int, *, semantic: bool) -> dict:
     from ..search import search
     ids = [course_id] if course_id is not None else None
     if ids is None and year is not None:
         with session() as db:
             ids = [r[0] for r in db.execute("SELECT id FROM courses WHERE year_of_study=?", (year,))]
-    return search(q, ids, max(0, min(limit, 50)), include_notes=True)
+    return search(q, ids, max(0, min(limit, 50)), semantic=semantic, include_notes=True)
+
+
+@app.get("/api/search")
+def api_search(q: str, course_id: int | None = None, year: int | None = None, limit: int = 20, token: str = Depends(get_current_token)):
+    return _search(q, course_id, year, limit, semantic=False)
+
+
+class SearchRequest(BaseModel):
+    q: str
+    course_id: int | None = None
+    year: int | None = None
+    limit: int = 20
+
+
+@app.post("/api/search")
+def semantic_search(body: SearchRequest, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+    return _search(body.q, body.course_id, body.year, body.limit, semantic=True)
 
 
 def _document(doc_id: int) -> dict:
@@ -345,42 +387,13 @@ def ai_status(token: str = Depends(get_current_token)):
 
 @app.get("/api/ai/providers")
 def ai_providers(token: str = Depends(get_current_token)) -> dict:
-    """Restituisce lo stato di ogni provider AI (local, gemini, freellm, claude)."""
-    from ..ai.llm import (
-        local_llm_healthy,
-        get_local_llm_url,
-    )
-    from ..ai.claude_runner import check_budget, last_usage
-
-    def provider_status(name: str) -> dict:
-        if name == "local":
-            healthy = local_llm_healthy()
-            url = get_local_llm_url()
-            return {"available": bool(healthy and url), "healthy": bool(healthy), "url": url}
-        elif name == "gemini":
-            return {"available": True, "healthy": True, "url": None}  # gemini via external gateway
-        elif name == "freellm":
-            return {"available": True, "healthy": True, "url": None}  # freellm via gateway
-        elif name == "claude":
-            status = check_budget()
-            usage = last_usage()
-            util = usage.get("utilization")
-            resets = usage.get("resets_at")
-            return {"available": bool(status), "healthy": bool(status), "url": None,
-                    "utilization": util, "resets_at": resets}
-        return {"available": False, "healthy": False, "url": None}
-
-    return {
-        "local": provider_status("local"),
-        "gemini": provider_status("gemini"),
-        "freellm": provider_status("freellm"),
-        "claude": provider_status("claude"),
-    }
+    from ..ai.health import providers
+    return providers()
 
 
 @app.get("/api/ai/pannello")
 def ai_pannello(token: str = Depends(get_current_token)):
-    """Coda AI, arretrati, finestra Pro e turno di notte: solo SQL e file locali, niente LLM né Claude."""
+    """Coda AI, arretrati, finestra Pro, turno di notte e diagnostica dei provider."""
     from ..ai import pannello
     return pannello.dati()
 
@@ -396,12 +409,15 @@ def ai_cancel(_csrf: None = Depends(csrf_protect), token: str = Depends(get_curr
 def _ai_call(fn, *args):
     """Errori di Claude → risposte HTTP leggibili dalla UI."""
     from ..ai.claude_runner import ClaudeError, RateLimited
+    from ..study.session import SessionClosed
     try:
         return fn(*args)
     except RateLimited as e:
         raise HTTPException(429, str(e))
     except ClaudeError as e:
         raise HTTPException(502, str(e))
+    except SessionClosed as e:
+        raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -828,32 +844,10 @@ def setup_fullrun(_limit: None = Depends(setup_rate_limit)):
     return {"started": True}
 
 
-_ordering: set[int] = set()
-
-
-def _order_in_background(course_id: int) -> None:
-    """Argomenti cambiati: l'ordine didattico si rifà in background (una chiamata Gemini)."""
-    import threading
-    from ..study import syllabus
-    if course_id in _ordering or not syllabus.needs_order(course_id):
-        return
-    _ordering.add(course_id)
-
-    def work() -> None:
-        try:
-            syllabus.order_course(course_id)
-        except Exception:
-            pass
-        finally:
-            _ordering.discard(course_id)
-    threading.Thread(target=work, daemon=True).start()
-
-
 @app.get("/api/study/{course_id}")
 def study_overview(course_id: int, token: str = Depends(get_current_token)):
     from ..study import bank, mastery
     _need("course", course_id)
-    _order_in_background(course_id)
     return {**mastery.overview(course_id), "prepare": bank.prepare_status(course_id)}
 
 
@@ -913,14 +907,43 @@ def study_session_get(sid: int, token: str = Depends(get_current_token)):
         raise HTTPException(404)
 
 
+@app.get("/api/study/{course_id}/sessions/open")
+def study_session_open(course_id: int, token: str = Depends(get_current_token)):
+    from ..study import session as ss
+    try:
+        return ss.get_open(course_id)
+    except KeyError:
+        raise HTTPException(404, "Nessuna sessione aperta per questo corso.")
+
+
+@app.post("/api/study/sessions/{sid}/abandon")
+def study_session_abandon(sid: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+    from ..study import session as ss
+    try:
+        return ss.abandon(sid)
+    except KeyError:
+        raise HTTPException(404, "Sessione non trovata.")
+
+
+@app.post("/api/study/sessions/{sid}/seen/{idx}")
+def study_session_seen(sid: int, idx: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+    from ..study import session as ss
+    _need("session", sid)
+    return _ai_call(ss.seen, sid, idx)
+
+
+Confidence = Annotated[int, Field(ge=1, le=3)]
+Seconds = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
 class Answer(BaseModel):
     idx: int
     choice: int | None = None
     text: str | None = None
     self_criteria: list[bool] | None = None
     self_score: float | None = None
-    confidence: int | None = None
-    seconds: float | None = None
+    confidence: Confidence | None = None
+    seconds: Seconds | None = None
 
 
 @app.post("/api/study/sessions/{sid}/answer")
@@ -934,8 +957,8 @@ class PhotoAnswer(BaseModel):
     idx: int
     images: list[str]                 # data URL ridotti dal browser, come nell'esame
     text: str | None = None
-    confidence: int | None = None
-    seconds: float | None = None
+    confidence: Confidence | None = None
+    seconds: Seconds | None = None
 
 
 @app.post("/api/study/sessions/{sid}/photo")
@@ -952,21 +975,24 @@ def study_session_photo(sid: int, body: PhotoAnswer, _csrf: None = Depends(csrf_
         raise HTTPException(413, str(e))
 
 
+class Reveal(BaseModel):
+    confidence: Confidence | None = None
+    seconds: Seconds | None = None
+
+
 @app.post("/api/study/sessions/{sid}/reveal/{idx}")
-def study_session_reveal(sid: int, idx: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+def study_session_reveal(sid: int, idx: int, body: Reveal | None = None, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import session as ss
     _need("session", sid)
-    try:
-        return ss.reveal(sid, idx)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    reveal = body or Reveal()
+    return _ai_call(ss.reveal, sid, idx, reveal.confidence, reveal.seconds)
 
 
 @app.post("/api/study/sessions/{sid}/finish")
 def study_session_finish(sid: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import session as ss
     _need("session", sid)
-    return ss.finish(sid)
+    return _ai_call(ss.finish, sid)
 
 
 class Chapter(BaseModel):
@@ -1031,19 +1057,21 @@ def lecture_topics(lecture_id: int, token: str = Depends(get_current_token)):
 
 
 @app.get("/api/study/topics/{topic_id}/lesson")
-def study_lesson(topic_id: int, request: Request, prepare: bool = True, token: str = Depends(get_current_token)):
-    """La lezione interattiva dell'argomento; se manca la mette in coda (Gemini) e risponde subito."""
+def study_lesson(topic_id: int, token: str = Depends(get_current_token)):
+    """Legge la lezione interattiva o lo stato della preparazione già richiesta."""
     from ..study import lesson
     try:
-        out = lesson.get(topic_id)
+        return lesson.get(topic_id)
     except KeyError:
         raise HTTPException(404)
-    if prepare and out["status"] in (None, "errore"):
-        if request.headers.get("sec-fetch-site") != "same-origin" and not validate_csrf(request):
-            raise HTTPException(403, "La preparazione della lezione richiede una richiesta dalla stessa origine o un token CSRF.")
-        lesson.request([topic_id])
-        out = lesson.get(topic_id)
-    return out
+
+
+@app.post("/api/study/topics/{topic_id}/lesson/prepare")
+def study_lesson_prepare(topic_id: int, token: str = Depends(get_current_token), _csrf: None = Depends(csrf_protect)):
+    from ..study import lesson
+    _need("topic", topic_id)
+    lesson.request([topic_id])
+    return lesson.get(topic_id)
 
 
 @app.post("/api/study/topics/{topic_id}/lesson/done")
@@ -1326,7 +1354,7 @@ def _with_ui_cookie(response: Response) -> Response:
     return response
 
 
-@app.get("/legacy", include_in_schema=False)
+@app.api_route("/legacy", methods=["GET", "HEAD"], include_in_schema=False)
 def legacy(request: Request):
     page = STATIC / "index.html"
     if not page.is_file():

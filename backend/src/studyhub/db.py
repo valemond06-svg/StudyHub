@@ -490,6 +490,15 @@ MIGRATIONS = [
         checked_at TEXT NOT NULL
     );
     """,
+    """
+    ALTER TABLE study_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'aperta'
+        CHECK (status IN ('aperta', 'completata', 'abbandonata'));
+    UPDATE study_sessions SET status='completata' WHERE ended_at IS NOT NULL;
+    CREATE INDEX study_sessions_open_course ON study_sessions(course_id, started_at)
+        WHERE ended_at IS NULL;
+    CREATE INDEX study_sessions_open_age ON study_sessions(started_at) WHERE ended_at IS NULL;
+    ALTER TABLE study_attempts ADD COLUMN review_seconds REAL;
+    """,
 ]
 
 # Versione storica che aggiunge priority e tenta di creare lo stesso indice.
