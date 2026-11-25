@@ -310,6 +310,12 @@ def lecture_video(lecture_id: int, kind: str, token: str = Depends(get_current_t
     return FileResponse(path, media_type="video/mp4")
 
 
+@app.get("/api/health")
+def health():
+    """Sonda pubblica per il launcher (apri_studyhub.vbs): nessun dato, nessun token."""
+    return {"ok": True}
+
+
 @app.get("/api/storage")
 def storage_status(token: str = Depends(get_current_token)):
     import shutil

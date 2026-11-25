@@ -15,7 +15,7 @@ Function ServerUp()
   On Error Resume Next
   Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
   http.setTimeouts 1000, 1000, 1000, 1500
-  http.Open "GET", url & "/api/storage", False
+  http.Open "GET", url & "/api/health", False
   http.Send
   If Err.Number = 0 Then ServerUp = (http.Status = 200)
   On Error GoTo 0
