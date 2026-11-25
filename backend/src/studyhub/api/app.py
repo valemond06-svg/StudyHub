@@ -8,6 +8,7 @@ import subprocess
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 
@@ -21,6 +22,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.types import Message, Receive, Scope, Send
 
+from ..config import ui_dist_path
 from ..db import session
 from ..paths import uni_path
 from .csrf import CSRFMiddleware, csrf_protect
@@ -863,11 +865,6 @@ def setup_fullrun(_csrf: None = Depends(csrf_protect), token: str = Depends(get_
     return {"started": True}
 
 
-@app.get("/favicon.png")
-def favicon():
-    return FileResponse(STATIC / "favicon.png")
-
-
 _ordering: set[int] = set()
 
 
@@ -1312,7 +1309,10 @@ NO_CACHE = {"Cache-Control": "no-cache"}  # il browser ricontrolla sempre: dopo 
 
 
 def _ui_version() -> str:
-    return str(int((STATIC / "index.html").stat().st_mtime))
+    for page in (STATIC / "index.html", ui_dist_path() / "index.html"):
+        if page.is_file():
+            return str(int(page.stat().st_mtime))
+    return ""
 
 
 _clients: dict[str, dict] = {}
@@ -1351,18 +1351,52 @@ def ui_clients(token: str = Depends(get_current_token)):
     return {"server": _ui_version(), "clients": _clients}
 
 
-@app.get("/")
-def index(request: Request):
-    _clients[request.headers.get("user-agent", "")[:120]] = {"version": "pagina servita " + _ui_version(),
-                                                              "seen": datetime.now().isoformat(timespec="seconds")}
-    html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__UI_VERSION__", _ui_version())
-    res = HTMLResponse(html, headers=NO_CACHE)
+def _with_ui_cookie(response: Response) -> Response:
     from ..config import get_or_create_api_token
-    res.set_cookie(
-        key="api_token",
-        value=get_or_create_api_token(),
-        httponly=True,
-        samesite="lax",
-        path="/",
-    )
-    return res
+
+    response.set_cookie("api_token", get_or_create_api_token(), httponly=True, samesite="lax", path="/")
+    return response
+
+
+@app.get("/legacy", include_in_schema=False)
+def legacy(request: Request):
+    page = STATIC / "index.html"
+    if not page.is_file():
+        raise HTTPException(404)
+    version = _ui_version()
+    _clients[request.headers.get("user-agent", "")[:120]] = {"version": "pagina servita " + version,
+                                                              "seen": datetime.now().isoformat(timespec="seconds")}
+    html = page.read_text(encoding="utf-8").replace("__UI_VERSION__", version)
+    return _with_ui_cookie(HTMLResponse(html, headers=NO_CACHE))
+
+
+@lru_cache(maxsize=1)
+def _warn_missing_ui(dist: Path) -> None:
+    logging.getLogger(__name__).warning("Build React assente in %s, uso la UI legacy sulla radice", dist)
+
+
+@app.api_route("/{rel:path}", methods=["GET", "HEAD"], include_in_schema=False)
+def index(request: Request, rel: str):
+    section = rel.partition("/")[0].lower()
+    if section in {"api", "media", "video"} or "\\" in rel:
+        raise HTTPException(404)
+
+    dist = ui_dist_path()
+    entrypoint = (dist / "index.html").resolve()
+    if entrypoint.is_relative_to(dist) and entrypoint.is_file():
+        _warn_missing_ui.cache_clear()
+        target = (dist / rel).resolve()
+        if not target.is_relative_to(dist):
+            raise HTTPException(404)
+        if target != entrypoint and target.is_file():
+            headers = {"Cache-Control": "public, max-age=31536000, immutable"} if section == "assets" else NO_CACHE
+            return FileResponse(target, headers=headers)
+        if section != "assets" and rel != "favicon.png":
+            return _with_ui_cookie(FileResponse(entrypoint, headers=NO_CACHE))
+    elif not rel:
+        _warn_missing_ui(dist)
+        return legacy(request)
+
+    if rel == "favicon.png" and (STATIC / "favicon.png").is_file():
+        return FileResponse(STATIC / "favicon.png")
+    raise HTTPException(404)

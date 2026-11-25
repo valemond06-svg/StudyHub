@@ -1,11 +1,14 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
 from fsrs import Rating
 
 from conftest import inserisci_corso
+from studyhub.ai.privacy import current_scope
 from studyhub.db import session
 from studyhub.study import quiz as quizmod
 from studyhub.study import session as sess
@@ -35,6 +38,7 @@ def _domanda(db, tid, kind="multipla", correct=1, difficulty=2, rubric=None, due
 
 def _risposta_ai(punteggio=1.0, criteri=None):
     def falso(system, text, schema, quality="accurato"):
+        assert current_scope()["private"] and "exam_answers" in current_scope()["kinds"]
         return SimpleNamespace(data={"punteggio": punteggio, "feedback_md": "ok", "criteri_ok": criteri or []},
                                provider="local", model="m", duration_s=0.1)
     return falso
@@ -171,11 +175,85 @@ def test_risposta_sbagliata_torna_in_fondo_una_volta_sola(ambiente, db):
     assert len(sess.get(sid)["entries"]) == len(coda)
 
 
-def test_non_si_puo_rispondere_due_volte(ambiente, db):
+def test_non_si_puo_cambiare_una_risposta_registrata(ambiente, db):
     sid, idx, _ = _sessione_con(db, kind="multipla", correct=1)
     sess.answer(sid, idx, {"choice": 1})
     with pytest.raises(ValueError, match="già stata corretta"):
-        sess.answer(sid, idx, {"choice": 1})
+        sess.answer(sid, idx, {"choice": 0})
+
+
+def test_invio_identico_non_ripete_xp_tentativo_fsrs_o_recupero(db):
+    sid, idx, item = _sessione_con(db, kind="multipla", correct=1)
+    payload = {"choice": 0, "confidence": 1, "seconds": 10}
+    first = sess.answer(sid, idx, payload)
+    fsrs = db.execute("SELECT fsrs FROM study_items WHERE id=?", (item,)).fetchone()[0]
+
+    assert sess.answer(sid, idx, {**payload, "seconds": 15}) == first
+    assert first["xp"] == 3
+    assert sess.get(sid)["xp"] == first["xp"]
+    assert db.execute("SELECT COUNT(*) FROM study_attempts WHERE session_id=?", (sid,)).fetchone()[0] == 1
+    assert db.execute("SELECT fsrs FROM study_items WHERE id=?", (item,)).fetchone()[0] == fsrs
+    retries = [entry for entry in sess.get(sid)["entries"] if entry.get("retry")]
+    assert len(retries) == 1 and retries[0]["item"] == item
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_risposte_concorrenti_salvano_la_coda_una_volta_per_voce(db, monkeypatch, duplicate):
+    inserisci_corso(db)
+    _argomento(db, 1)
+    _domanda(db, 1, "aperta")
+    _domanda(db, 1, "esercizio")
+    db.commit()
+    started = sess.start(1, 30)
+    sid = started["id"]
+    indices = [i for i, entry in enumerate(started["entries"]) if entry["t"] == "domanda"]
+    if duplicate:
+        indices[1] = indices[0]
+    barrier = Barrier(2)
+
+    def grade(item, answer):
+        barrier.wait(timeout=10)
+        return 0.3, "Da ripassare", []
+
+    monkeypatch.setattr(sess, "_grade_ai", grade)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda idx: sess.answer(sid, idx, {"text": "risposta"}), indices))
+
+    current = sess.get(sid)
+    assert {i for i, entry in enumerate(current["entries"]) if entry["done"]} == set(indices)
+    assert db.execute("SELECT COUNT(*) FROM study_attempts WHERE session_id=?", (sid,)).fetchone()[0] == len(set(indices))
+    assert current["xp"] == (results[0]["xp"] if duplicate else sum(r["xp"] for r in results))
+    assert sum(bool(entry.get("retry")) for entry in current["entries"]) == len(set(indices))
+    for result in results:
+        requeued = dict(result["requeued"])
+        assert current["entries"][requeued.pop("idx")] == requeued
+    if duplicate:
+        assert results[0] == results[1]
+
+
+def test_get_sessione_riprende_scheda_domanda_e_recupero(client, db):
+    sid, idx, _ = _sessione_con(db, kind="multipla", correct=1)
+    url = f"/api/study/sessions/{sid}"
+    db.execute("INSERT INTO study_lessons (topic_id, status) VALUES (1, 'pronta')")
+    db.commit()
+
+    state = client.get(url).json()
+    assert (state["resume_index"], state["phase"]) == (0, "scheda")
+    assert state["entries"][0]["done"] is False
+    assert client.post("/api/study/topics/1/lesson/done").status_code == 200
+    state = client.get(url).json()
+    assert (state["resume_index"], state["phase"]) == (idx, "domanda")
+    assert state["entries"][0]["done"] is True
+    assert client.post(f"{url}/reveal/{idx}").status_code == 200
+    assert client.get(url).json()["phase"] == "rivelata"
+
+    requeued = client.post(f"{url}/answer", json={"idx": idx, "choice": 0}).json()["requeued"]
+    state = client.get(url).json()
+    assert state["entries"][idx]["done"] is True
+    assert (state["resume_index"], state["phase"]) == (requeued["idx"], "domanda")
+    assert client.post(f"{url}/answer", json={"idx": requeued["idx"], "choice": 1}).status_code == 200
+    state = client.get(url).json()
+    assert (state["resume_index"], state["phase"]) == (None, "completata")
 
 
 def test_risposta_non_data_a_multipla_vale_zero(ambiente, db):

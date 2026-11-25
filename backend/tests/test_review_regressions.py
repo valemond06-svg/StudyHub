@@ -139,7 +139,7 @@ def test_static_ui_sends_csrf_header_on_post_and_delete(ambiente, monkeypatch):
     monkeypatch.setattr("studyhub.study.session.start", Mock(return_value={"id": 1}))
     monkeypatch.setattr(exam, "delete_exam", Mock())
     with TestClient(app) as browser:
-        html = browser.get("/").text
+        html = browser.get("/legacy").text
         helpers = html[html.index("const getJ ="):html.index("function find(arr")]
         delete_handlers = [line.strip() for line in html.splitlines()
                            if 'addEventListener("click"' in line and '$("exDel")?' in line

@@ -1,23 +1,25 @@
-"""Lettura dei PDF scansionati o scritti a mano (appunti delle lezioni, tutorati): pagine → testo con Claude.
+"""Lettura locale dei PDF scansionati o scritti a mano.
 
 Il testo finisce nell'indice come quello degli altri PDF, così ricerca, quiz e profili d'esame lo vedono. Il risultato
 è salvato per contenuto del file in ~/.studyhub/ocr: se il PDF non cambia non si paga due volte.
 """
 from __future__ import annotations
 
+import base64
 import json
 
 import pymupdf
 
-from ..ai import claude_runner
 from ..ai.claude_runner import RateLimited
+from ..ai.llm import VisionBlockedByPrivacy, run_json_content
+from ..ai.privacy import scope
+from ..ai.vision import MAX_SIDE
 from ..config import LOCAL_DIR
 from ..db import session
 from ..paths import uni_path
 from .chunking import chunk_pages
 from .extract import Page
 
-MODEL = "sonnet"
 BATCH_PAGES = 5
 DPI = 130
 MAX_DOC_PAGES = 40  # oltre è materiale culturale (es. il report EDVAC): non vale la spesa
@@ -75,29 +77,31 @@ def pending() -> list[dict]:
 
 
 def _transcribe(path, n_pages: int) -> list[dict]:
-    out, tmp = [], CACHE / "tmp"
-    tmp.mkdir(parents=True, exist_ok=True)
-    doc = pymupdf.open(path)
-    try:
+    out = []
+    # Le immagini possono contenere dati personali invisibili all'estrazione testuale.
+    with scope(kind="personal_notes", private=True), pymupdf.open(path) as doc:
         for start in range(0, n_pages, BATCH_PAGES):
             content: list[dict] = []
             for i in range(start, min(start + BATCH_PAGES, n_pages)):
-                png = tmp / f"p{i}.png"
-                doc[i].get_pixmap(dpi=DPI).save(png)
-                content += [{"type": "text", "text": f"Pagina {i + 1}:"}, claude_runner.image_block(png)]
-            out += claude_runner.run(SYSTEM, content, SCHEMA, model=MODEL).data["pagine"]
-    finally:
-        doc.close()
+                page = doc[i]
+                scale = min(DPI / 72, MAX_SIDE / max(page.rect.width, page.rect.height))
+                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale))
+                data = base64.b64encode(pixmap.tobytes("jpeg", jpg_quality=85)).decode("ascii")
+                content += [{"type": "text", "text": f"Pagina {i + 1}:"},
+                            {"type": "image", "media_type": "image/jpeg", "data": data}]
+            out += run_json_content(SYSTEM, content, SCHEMA, require_images=True).data["pagine"]
     return out
 
 
-def process_doc(d: dict) -> int:
+def process_doc(d: dict) -> int | None:
     """OCR del documento (salvo cache con lo stesso sha256) e sostituzione dei suoi chunk. Ritorna i chunk nuovi.
-    RateLimited e altri errori salgono a chi chiama."""
+    Ritorna None quando manca un modello locale con vista."""
     from .indexer import replace_chunks
-    pages = None
     if cached_pages(d["sha256"]) is None:
-        pages = _transcribe(uni_path(d["path"]), d["n_pages"])
+        try:
+            pages = _transcribe(uni_path(d["path"]), d["n_pages"])
+        except VisionBlockedByPrivacy:
+            return None
         CACHE.mkdir(parents=True, exist_ok=True)
         tmp = cache_path(d["sha256"]).with_suffix(".part")
         tmp.write_text(json.dumps(pages, ensure_ascii=False), encoding="utf-8")
@@ -113,10 +117,14 @@ def process_doc(d: dict) -> int:
 def run_pending(limit: int | None = None, on_item=print) -> dict:
     """Giro a mano (`studyhub ocr`): OCR dei PDF che servono, poi le unità di studio dei corsi toccati."""
     from ..study.bank import sync_units
-    done, failed, courses = 0, [], set()
+    done, failed, deferred, courses = 0, [], [], set()
     for d in pending()[:limit]:
         try:
             n = process_doc(d)
+            if n is None:
+                deferred.append(d["path"])
+                on_item(f"rinviato_privacy {d['path']}: modello locale con vista indisponibile")
+                continue
             courses.add(d["course_id"])
             done += 1
             on_item(f"ok {d['path']} ({n} chunk)")
@@ -130,4 +138,4 @@ def run_pending(limit: int | None = None, on_item=print) -> dict:
             sync_units(cid)
         except Exception as e:  # noqa: BLE001
             failed.append(f"unità corso {cid}: {e}")
-    return {"letti": done, "errori": failed, "restano": len(pending())}
+    return {"letti": done, "errori": failed, "rinviato_privacy": deferred, "restano": len(pending())}

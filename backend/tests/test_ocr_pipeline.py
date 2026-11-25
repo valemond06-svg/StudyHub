@@ -1,13 +1,14 @@
 """P1.4: i PDF scansionati passano dall'OCR dentro la coda unica (priorità 5) e alimentano chunk e unità di studio.
 
-Niente rete e niente Claude: `ocr._transcribe` e `claude_runner.run` sono sostituiti.
+Niente rete e niente Claude: `ocr._transcribe` e i provider di `llm` sono sostituiti.
 """
 from __future__ import annotations
 
 import pymupdf
 import pytest
 
-from studyhub.ai import claude_runner, jobs
+from studyhub.ai import claude_runner, jobs, llm
+from studyhub.ai.privacy import scope
 from studyhub.ingest import indexer, ocr
 from studyhub.study import bank
 
@@ -224,7 +225,8 @@ def test_job_ocr_crea_unita_e_rate_limited_rimette_in_coda(db, ambiente, monkeyp
 
     def limite(*a, **k):
         raise claude_runner.RateLimited("finestra piena")
-    monkeypatch.setattr(claude_runner, "run", limite)         # _transcribe vero: la prima chiamata a Claude fallisce
+    monkeypatch.setenv("STUDYHUB_PRIVACY_MODE", "strict")
+    monkeypatch.setattr(llm, "_local", limite)
     jid = jobs._insert(db, d["id"], jobs.OCR_PRIORITY, "ocr")
     db.commit()
     jobs._process_job(jobs._next_job())
@@ -239,3 +241,41 @@ def test_job_ocr_crea_unita_e_rate_limited_rimette_in_coda(db, ambiente, monkeyp
     assert dict(db.execute("SELECT * FROM ai_jobs WHERE id=?", (jid,)).fetchone())["status"] == "fatto"
     assert db.execute("SELECT COUNT(*) FROM study_units WHERE course_id=?", (corso["id"],)).fetchone()[0] == 1
     assert db.execute("SELECT COUNT(*) FROM chunks WHERE doc_id=?", (d["id"],)).fetchone()[0] > 0
+
+
+@pytest.mark.parametrize(("mode", "private"), [("local_only", False), ("permissive", True), ("strict", False)])
+@pytest.mark.parametrize("vision_available", [False, True])
+def test_job_ocr_con_privacy_usa_solo_vision_locale(db, ambiente, monkeypatch, mode, private, vision_available):
+    _corso_con_pdf(db, ambiente, testo=False)
+    doc = _doc(db, "scansione.pdf")
+    jid = jobs._insert(db, doc["id"], jobs.OCR_PRIORITY, "ocr")
+    db.commit()
+    monkeypatch.setenv("STUDYHUB_PRIVACY_MODE", mode)
+    monkeypatch.setattr(llm, "provider_order", lambda: ["claude", "gemini"])
+    monkeypatch.setattr(indexer, "embed_pending", lambda: 0)
+    seen = []
+
+    def vietato(*args, **kwargs):
+        pytest.fail("Provider esterno invocato per l'OCR privato")
+
+    def local(system, text, schema, quality, *, content, validated):
+        seen.extend(block for block in content if block["type"] == "image")
+        assert validated
+        if not vision_available:
+            raise llm.NoVision("Nessun modello con vista")
+        pages = [{"numero": i, "testo": TESTO_OCR} for i in range(1, doc["n_pages"] + 1)]
+        return llm.LLMResult({"pagine": pages}, "local", "test", 0, images_sent=len(seen))
+
+    monkeypatch.setattr(claude_runner, "run", vietato)
+    monkeypatch.setattr(llm, "claude_run", vietato)
+    monkeypatch.setattr(claude_runner, "run", vietato)
+    monkeypatch.setattr(llm, "_gemini", vietato)
+    monkeypatch.setattr(llm, "_local", local)
+    with scope(private=private):
+        jobs._process_job(jobs._next_job())
+
+    row = db.execute("SELECT status, finished_at FROM ai_jobs WHERE id=?", (jid,)).fetchone()
+    assert len(seen) == doc["n_pages"]
+    assert row["status"] == ("fatto" if vision_available else "rinviato_privacy")
+    assert row["finished_at"]
+    assert (ocr.cached_pages(doc["sha256"]) is not None) == vision_available

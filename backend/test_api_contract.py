@@ -166,7 +166,7 @@ for method, path, auth_req, csrf_req, desc in ENDPOINTS:
             results["fail"] += 1
             try:
                 err = r.json()
-            except:
+            except ValueError:
                 err = r.text[:200]
             results["errors"].append(f"500: {method} {path} ({desc}) - {err}")
             print(f"❌ {method} {path} - 500 Server Error")

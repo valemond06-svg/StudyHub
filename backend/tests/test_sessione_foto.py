@@ -9,6 +9,7 @@ from PIL import Image
 
 from conftest import inserisci_corso
 from studyhub.ai import vision
+from studyhub.ai.privacy import current_scope
 from studyhub.db import session
 from studyhub.study import session as sess
 from test_session_quiz import _argomento, _domanda, senza_lezioni_in_background  # noqa: F401
@@ -51,9 +52,10 @@ def _modello(monkeypatch, images_sent=1, punteggio=0.9):
     visto = SimpleNamespace(content=None)
 
     def falso(system, content, schema, quality="accurato"):
+        assert current_scope()["private"] and "exam_answers" in current_scope()["kinds"]
         visto.content = content
         return SimpleNamespace(data={"punteggio": punteggio, "feedback_md": "letto bene", "criteri_ok": [True, False]},
-                               images_sent=images_sent, provider="claude", model="m", duration_s=0.1)
+                               images_sent=images_sent, provider="local", model="m", duration_s=0.1)
     monkeypatch.setattr(sess, "run_json_content", falso)
     return visto
 
@@ -116,8 +118,12 @@ def test_domanda_a_scelta_rifiutata(client, sid, monkeypatch):
     assert r.status_code == 400
 
 
-def test_non_si_risponde_due_volte(client, sid, monkeypatch):
+def test_reinvio_foto_restituisce_lo_stesso_esito(client, sid, monkeypatch):
     _modello(monkeypatch)
     i = _idx(sid, "esercizio")
-    assert client.post(f"/api/study/sessions/{sid}/photo", json={"idx": i, "images": [_png()]}).status_code == 200
-    assert client.post(f"/api/study/sessions/{sid}/photo", json={"idx": i, "images": [_png()]}).status_code == 400
+    first = client.post(f"/api/study/sessions/{sid}/photo", json={"idx": i, "images": [_png()]})
+    repeated = client.post(f"/api/study/sessions/{sid}/photo", json={"idx": i, "images": [_png()]})
+    assert first.status_code == repeated.status_code == 200
+    assert first.json() == repeated.json()
+    with session() as db:
+        assert db.execute("SELECT COUNT(*) FROM study_attempts").fetchone()[0] == 1

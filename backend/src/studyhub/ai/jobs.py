@@ -242,6 +242,9 @@ def _do_ocr(job: dict) -> None:
         return
     doc = dict(row)
     n = ocr.process_doc(doc)
+    if n is None:
+        _finish(job["id"], "rinviato_privacy", "Modello locale con vista indisponibile")
+        return
     _finish(job["id"], "fatto", f"{doc['path']} · {n} chunk")
     try:
         sync_units(doc["course_id"])

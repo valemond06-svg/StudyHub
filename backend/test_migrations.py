@@ -5,9 +5,6 @@ from pathlib import Path
 import sys
 sys.path.insert(0, 'src')
 
-# Apply monkeypatch approach like in conftest.py
-from unittest.mock import patch
-
 def make_settings_mock(db_path):
     from studyhub.config import Settings
     original_db_path = Settings.db_path

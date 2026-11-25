@@ -7,10 +7,8 @@ os.environ['STUDYHUB_API_TOKEN'] = 'test-api-token-12345'
 from fastapi.testclient import TestClient
 from studyhub.api.app import app
 from studyhub.paths import uni_path
-from studyhub.config import settings
 from pathlib import Path
 import tempfile
-import sqlite3
 
 client = TestClient(app, raise_server_exceptions=False)
 

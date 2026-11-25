@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from hashlib import sha256
 
 from fsrs import Card, Rating
 
 from ..ai.claude_runner import ClaudeError
 from ..ai.llm import run_json, run_json_content
+from ..ai.privacy import scope
 from ..ai.vision import MAX_PHOTOS_PER_ANSWER, check_data_urls, photo_notice, prepare_images
 from ..db import session
 from .flashcards import _iso, scheduler
@@ -52,6 +54,14 @@ def _public(it: dict) -> dict:
     out["options"] = json.loads(it["options"]) if it.get("options") else None
     out["n_criteria"] = len(json.loads(it["rubric"] or "[]"))
     return out
+
+
+def _public_entry(entry: dict, item: dict | None = None) -> dict:
+    public = {k: v for k, v in entry.items() if k != "_answer"}
+    public["done"] = bool(entry.get("done"))
+    if item is not None:
+        public["question"] = _public(item)
+    return public
 
 
 def build_queue(course_id: int, minutes: int, focus_topic: int | None = None) -> tuple[list[dict], dict]:
@@ -170,21 +180,32 @@ def get(sid: int) -> dict:
     with session() as db:
         s, q = _load(db, sid)
         item_ids = [e["item"] for e in q["entries"] if e["t"] == "domanda"]
-        topic_ids = {e["topic"] for e in q["entries"] if e["t"] == "scheda"}
+        lesson_ids = {e["topic"] for e in q["entries"] if e["t"] == "scheda"}
         items = {r["id"]: dict(r) for r in db.execute(
             f"SELECT * FROM study_items WHERE id IN ({','.join('?' * len(item_ids)) or 'NULL'})", item_ids)}
-        topic_ids |= {it["topic_id"] for it in items.values()}
+        topic_ids = lesson_ids | {it["topic_id"] for it in items.values()}
         topics = {r["id"]: dict(r) for r in db.execute(
             f"SELECT id, name, weight, summary_md, lecture_id, t_start, doc_id, page FROM study_topics "
             f"WHERE id IN ({','.join('?' * len(topic_ids)) or 'NULL'})", list(topic_ids))}
+        learned = {r[0] for r in db.execute(
+            f"SELECT topic_id FROM study_lessons WHERE completed_at IS NOT NULL "
+            f"AND topic_id IN ({','.join('?' * len(lesson_ids)) or 'NULL'})", list(lesson_ids))}
     entries = []
     for e in q["entries"]:
-        x = dict(e)
-        if e["t"] == "domanda":
-            x["question"] = _public(items[e["item"]])
+        x = _public_entry(e, items[e["item"]] if e["t"] == "domanda" else None)
+        if e["t"] == "scheda" and e["topic"] in learned:
+            x["done"] = True
         entries.append(x)
+    resume_index = None
+    phase = "completata"
+    if not s["ended_at"]:
+        resume_index = next((idx for idx, e in enumerate(entries) if not e["done"]), None)
+        if resume_index is not None:
+            entry = entries[resume_index]
+            phase = "rivelata" if entry.get("revealed") else entry["t"]
     return {"id": sid, "course_id": s["course_id"], "minutes": s["minutes"], "started_at": s["started_at"],
-            "ended_at": s["ended_at"], "xp": s["xp"], "entries": entries, "topics": topics}
+            "ended_at": s["ended_at"], "xp": s["xp"], "entries": entries, "topics": topics,
+            "resume_index": resume_index, "phase": phase}
 
 
 def _rating(score: float, confidence: int | None) -> Rating:
@@ -200,7 +221,8 @@ def _grade_ai(it: dict, answer: str) -> tuple[float, str, list]:
     text = (f"Domanda ({it['kind']}):\n{it['prompt_md']}\n\nSoluzione di riferimento:\n{it['answer_md']}\n\n"
             + ("Criteri:\n" + "\n".join(f"{i + 1}. {c}" for i, c in enumerate(rubric)) + "\n\n" if rubric else "")
             + f"Risposta dello studente:\n{answer}")
-    res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
+    with scope(kind="exam_answers", private=True):
+        res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
     return _parse_grade(res.data)
 
 
@@ -235,9 +257,10 @@ def _grade_photo(it: dict, text: str, images: list[str], course: str | None) -> 
     head = ((f"Corso: {course}\n" if course else "")
             + f"Domanda ({it['kind']}):\n{it['prompt_md']}\n\nSoluzione di riferimento:\n{it['answer_md']}\n\n{crit}"
             + f"Risposta dello studente (testo): {text or '(nessun testo)'}\nFoto dello svolgimento allegate: {len(pronte)}.")
-    res = run_json_content(PHOTO_GRADE_SYSTEM, [{"type": "text", "text": head}, *pronte,
-                                                {"type": "text", "text": "\nCorreggi secondo lo schema."}],
-                           GRADE_SCHEMA, quality="veloce")
+    with scope(kind="exam_answers", private=True):
+        res = run_json_content(PHOTO_GRADE_SYSTEM, [{"type": "text", "text": head}, *pronte,
+                                                   {"type": "text", "text": "\nCorreggi secondo lo schema."}],
+                               GRADE_SCHEMA, quality="veloce")
     read = getattr(res, "images_sent", 0)
     if not read:  # nessun modello con vista: giudicare solo dal testo sarebbe ingiusto, e non va spacciato per lettura
         raise ClaudeError("Le foto non sono state lette: nessun modello con vista è disponibile ora. Riprova più tardi "
@@ -258,7 +281,8 @@ def reveal(sid: int, idx: int) -> dict:
     """Soluzione e criteri subito dopo aver risposto (la correzione AI arriva qualche secondo dopo).
     Da qui in poi la risposta a quella domanda non si può più cambiare."""
     with session() as db:
-        s, q = _load(db, sid)
+        db.execute("BEGIN IMMEDIATE")
+        _, q = _load(db, sid)
         entry = _entry(q, idx)
         if entry["t"] != "domanda":
             raise ValueError("Non è una domanda.")
@@ -269,14 +293,28 @@ def reveal(sid: int, idx: int) -> dict:
     return {"answer_md": it["answer_md"], "rubric": json.loads(it["rubric"] or "[]"), "source": src}
 
 
+def _saved_answer(entry: dict, fingerprint: str) -> dict | None:
+    if entry["t"] != "domanda":
+        raise ValueError("Non è una domanda.")
+    if not entry.get("done"):
+        return None
+    saved = entry.get("_answer")
+    if saved and saved["fingerprint"] == fingerprint:
+        return saved["result"]
+    raise ValueError("Questa domanda è già stata corretta.")
+
+
 def answer(sid: int, idx: int, payload: dict) -> dict:
     """payload: choice (multipla/vero_falso) | text | self_criteria (lista di bool) | self_score;
     confidence 1-3; seconds."""
+    answer_fields = ("choice", "text", "images", "self_criteria", "self_score", "confidence")
+    submitted = json.dumps([payload.get(key) for key in answer_fields], ensure_ascii=True)
+    fingerprint = sha256(submitted.encode()).hexdigest()
     with session() as db:
         s, q = _load(db, sid)
         entry = _entry(q, idx)
-        if entry["t"] != "domanda" or entry.get("done"):
-            raise ValueError("Questa domanda è già stata corretta.")
+        if (saved := _saved_answer(entry, fingerprint)) is not None:
+            return saved
         it = dict(db.execute("SELECT * FROM study_items WHERE id=?", (entry["item"],)).fetchone())
     conf = payload.get("confidence")
     rubric = json.loads(it["rubric"] or "[]")
@@ -311,27 +349,36 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
             raw = float(payload.get("self_score") or 0)
         score = min(SELF_CAP, raw)
     rating = _rating(score, conf)
-    card = Card.from_json(it["fsrs"]) if it["fsrs"] else Card()
-    card, _ = scheduler.review_card(card, rating)
     gained = round(10 * KIND_WEIGHT.get(it["kind"], 1) * it["difficulty"] * score)
     if conf == 3 and score >= 0.85 or conf == 1 and score < 0.5:
         gained += 3  # sapevi di sapere (o di non sapere): la calibrazione si premia
-    if entry.get("boss") and score >= 0.7:
-        gained *= 2
+    # La correzione AI può richiedere tempo. Rileggiamo coda e carta sotto il lock di scrittura.
     with session() as db:
-        db.execute("UPDATE study_items SET fsrs=?, due=? WHERE id=?", (card.to_json(), _iso(card.due), it["id"]))
+        db.execute("BEGIN IMMEDIATE")
+        _, q = _load(db, sid)
+        entry = _entry(q, idx)
+        if (saved := _saved_answer(entry, fingerprint)) is not None:
+            return saved
+        if entry.get("boss") and score >= 0.7:
+            gained *= 2
+        fsrs = db.execute("SELECT fsrs FROM study_items WHERE id=?", (it["id"],)).fetchone()[0]
+        card, _ = scheduler.review_card(Card.from_json(fsrs) if fsrs else Card(), rating)
+        next_due = _iso(card.due)
+        db.execute("UPDATE study_items SET fsrs=?, due=? WHERE id=?", (card.to_json(), next_due, it["id"]))
         db.execute("""INSERT INTO study_attempts (item_id, session_id, score, confidence, answer, feedback_md, graded_by,
                       seconds, created_at) VALUES (?,?,?,?,?,?,?,?,?)""",
                    (it["id"], sid, score, conf, given, feedback, graded_by, payload.get("seconds"), _now()))
-        entry.update(done=True, score=score)
-        retry = score < 0.5 and not entry.get("retry")
-        if retry:  # la sbagliata torna in fondo: va recuperata, non solo letta
-            q["entries"].append({"t": "domanda", "item": it["id"], "retry": True})
+        requeued = None
+        if score < 0.5 and not entry.get("retry"):
+            retry_entry = {"t": "domanda", "item": it["id"], "retry": True}
+            requeued = {"idx": len(q["entries"]), **_public_entry(retry_entry, it)}
+            q["entries"].append(retry_entry)
+        result = {"score": score, "correct": it["correct"], "answer_md": it["answer_md"], "rubric": rubric,
+                  "criteria_ok": crit_ok, "feedback_md": feedback, "graded_by": graded_by, "xp": gained,
+                  "retry": requeued is not None, "requeued": requeued, "next_due": next_due, "source": _source(db, it)}
+        entry.update(done=True, score=score, _answer={"fingerprint": fingerprint, "result": result})
         db.execute("UPDATE study_sessions SET queue=?, xp=xp+? WHERE id=?", (json.dumps(q), gained, sid))
-        src = _source(db, it)
-    return {"score": score, "correct": it["correct"], "answer_md": it["answer_md"], "rubric": rubric,
-            "criteria_ok": crit_ok, "feedback_md": feedback, "graded_by": graded_by, "xp": gained, "retry": retry,
-            "next_due": _iso(card.due), "source": src}
+        return result
 
 
 def answer_photo(sid: int, idx: int, payload: dict) -> dict:

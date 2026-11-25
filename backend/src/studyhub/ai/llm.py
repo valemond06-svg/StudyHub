@@ -224,6 +224,10 @@ class NoVision(ClaudeError):
     """Nessun server locale raggiungibile sa leggere le immagini."""
 
 
+class VisionBlockedByPrivacy(NoVision):
+    """La policy richiede la visione locale, al momento indisponibile."""
+
+
 class _HostDown(Exception):
     """Il server non risponde (rete, 5xx, chiave rifiutata): vale la pena provare un'altra macchina."""
 
@@ -583,19 +587,18 @@ def run_json(system: str, text: str, schema: dict, quality: str = "accurato", ki
         kind: Tipo di job per privacy (es. "exam_answers", "transcript", "personal_notes")
         private: Forza modalità privata (solo provider locali)
     """
-    errors = []
-    for prov in provider_order():
+    decision = check_external_allowed("claude", text, kind=kind, private=private)
+    providers = provider_order() if decision.allowed else ["local"]
+    errors = [] if decision.allowed else [decision.reason]
+    if not decision.allowed:
+        log_provider_selection("claude", decision)
+    for prov in providers:
         try:
             if prov == "local":
                 return _local(system, text, schema, quality)
             if prov == "gemini":
                 return _gemini(system, text, schema, quality, kind=kind, private=private)
-            # freellm rimosso: StudyHub non usa FreeLLMAPI (security/hygiene)
-            # Privacy check per Claude (provider esterno)
-            decision = check_external_allowed("claude", text, kind=kind, private=private)
             log_provider_selection("claude", decision, text)
-            if not decision.allowed:
-                raise ClaudeError(f"Privacy filter blocked Claude: {decision.reason}")
             res = claude_run(system, [{"type": "text", "text": text}], schema, model=CLAUDE_MODELS[quality])
             return LLMResult(res.data, "claude", res.model, res.duration_s)
         except (ClaudeError, RateLimited, OSError) as e:
@@ -603,33 +606,42 @@ def run_json(system: str, text: str, schema: dict, quality: str = "accurato", ki
     raise ClaudeError(" · ".join(errors))
 
 
-def run_json_content(system: str, content: list[dict], schema: dict, quality: str = "accurato", kind: str | None = None, private: bool = False) -> LLMResult:
+def run_json_content(system: str, content: list[dict], schema: dict, quality: str = "accurato",
+                     kind: str | None = None, private: bool = False, *, require_images: bool = False) -> LLMResult:
     """Come run_json ma con contenuto misto: blocchi {"type": "text", "text"} e {"type": "image", "media_type", "data"}.
 
     Le foto vanno solo a un modello con vista: server locale che le legge (rilevato da /props o /v1/models, altrimenti
     si prova e si ripiega) oppure Claude. Gemini via agy non le riceve. Se nessuno può, la chiamata si rifà con il solo
-    testo e `images_sent` resta 0: chi chiama DEVE dirlo all'utente, le foto non sono state lette."""
+    testo e `images_sent` resta 0: chi chiama DEVE dirlo all'utente, le foto non sono state lette.
+    Con `require_images` l'ultimo errore di visione risale al chiamante senza ripiegare sul testo."""
     images = [b for b in content if b.get("type") == "image"]
     text = "\n\n".join(b["text"] for b in content if b.get("type") == "text")
     if not images:
+        if require_images:
+            raise NoVision("Nessuna immagine da leggere.")
         return run_json(system, text, schema, quality, kind=kind, private=private)
     content = _validated_vision_content(content)
-    for prov in provider_order():
+    decision = check_external_allowed("claude", text, kind=kind, private=private)
+    providers = provider_order() if decision.allowed else ["local"]
+    if not decision.allowed:
+        log_provider_selection("claude", decision)
+    vision_error = None
+    for prov in providers:
         try:
             if prov == "local":
                 return _local(system, text, schema, quality, content=content, validated=True)
             if prov == "claude":
-                # Privacy check per contenuto con immagini
-                decision = check_external_allowed("claude", text, kind=kind, private=private)
                 log_provider_selection("claude", decision, text)
-                if not decision.allowed:
-                    raise ClaudeError(f"Privacy filter blocked Claude (with images): {decision.reason}")
                 blocks = [{"type": "image", "source": {"type": "base64", "media_type": b["media_type"], "data": b["data"]}}
                           if b.get("type") == "image" else b for b in content]
                 res = claude_run(system, blocks, schema, model=CLAUDE_MODELS[quality])
                 return LLMResult(res.data, "claude", res.model, res.duration_s, images_sent=len(images))
-        except (ClaudeError, RateLimited, OSError):
-            continue  # NoVision, host caduto, quota: si prova il successivo
+        except (ClaudeError, OSError) as e:
+            vision_error = e  # NoVision, host caduto, quota: si prova il successivo
+    if require_images:
+        if not decision.allowed and isinstance(vision_error, NoVision):
+            raise VisionBlockedByPrivacy(decision.reason) from vision_error
+        raise vision_error or NoVision("Nessun provider con vista disponibile.")
     res = run_json(system, text, schema, quality, kind=kind, private=private)
     res.images_sent = 0
     return res

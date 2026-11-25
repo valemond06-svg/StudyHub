@@ -206,3 +206,8 @@ def load_settings() -> Settings:
 
 
 settings = load_settings()
+
+
+def ui_dist_path() -> Path:
+    """Percorso della build React, relativo alla cartella del progetto se non assoluto."""
+    return (APP_DIR / (os.environ.get("STUDYHUB_UI_DIST") or "studyhub-frontend/dist")).resolve()

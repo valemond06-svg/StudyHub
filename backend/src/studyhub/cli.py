@@ -263,10 +263,11 @@ def ai_lesson(
 
 @app.command("ocr")
 def ocr_cmd(limit: int = typer.Option(None, help="Massimo di PDF da leggere in questo giro")):
-    """Legge con Claude (visione) i PDF scansionati o senza testo e ne crea le unità di studio. Usa la finestra Pro."""
+    """Legge i PDF scansionati o senza testo nel rispetto della privacy e ne crea le unità di studio."""
     from .ingest.ocr import run_pending
     r = run_pending(limit, on_item=console.print)
-    console.print(f"Letti: {r['letti']} · restano: {r['restano']} · errori: {len(r['errori'])}")
+    console.print(f"Letti: {r['letti']} · restano: {r['restano']} · rinviati per privacy: {len(r['rinviato_privacy'])} "
+                  f"· errori: {len(r['errori'])}")
     for e in r["errori"]:
         console.print(f"  [red]✗[/] {e}")
 
