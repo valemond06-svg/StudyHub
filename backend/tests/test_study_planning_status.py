@@ -203,8 +203,9 @@ def test_system_status_distingue_errori_reali_e_non_espone_segreti(client, db, m
     db.execute("""INSERT INTO sync_runs (course_id, finished_at, new_files, updated_files, errors)
                   VALUES (1, '2026-11-25T12:00:00', 3, 2, ?)""", (json.dumps([marker]),))
     db.execute("""INSERT INTO ai_jobs (kind, target_id, status, message, finished_at)
-                  VALUES ('lecture_notes', 1, 'errore', ?, '2026-11-25T12:00:00')""",
-               ("Claude Code subscription rejected: payment past due " + marker,))
+                  VALUES ('lecture_notes', 1, 'errore', ?, ?)""",
+               ("Claude Code subscription rejected: payment past due " + marker,
+                datetime.now().isoformat(timespec="seconds")))
     db.commit()
     health.record("gemini", health.classify("Gemini: 429 quota; token=" + marker))
 
@@ -250,6 +251,23 @@ def test_system_status_distingue_errori_reali_e_non_espone_segreti(client, db, m
     check_panopto.assert_called_once_with(delivery_id, refresh=False, timeout=3, follow_redirects=False)
     run_restic.assert_called_once_with(["--no-lock", "stats", "--mode", "raw-data", "--json"],
                                      str(repo), 4, create_password=False)
+
+
+def test_rifiuto_vecchio_torna_da_verificare_ma_quello_recente_resta(monkeypatch):
+    monkeypatch.setattr(claude_runner, "_claude_exe", lambda: "claude")
+    vecchio = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    recente = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    locale_vecchio = (datetime.now() - timedelta(days=2)).isoformat(timespec="seconds")
+    assert health.cloud_status("claude", {"status": "subscription_rejected", "checked_at": vecchio})["status"] == "unverified"
+    assert health.cloud_status("claude", {"status": "login_required", "checked_at": vecchio})["status"] == "unverified"
+    assert health.cloud_status("claude", {"status": "subscription_rejected", "checked_at": recente})["status"] == (
+        "subscription_rejected")
+    errore = [{"message": "claude: subscription past due", "finished_at": locale_vecchio}]
+    assert health.cloud_status("claude", {}, errore)["status"] == "unverified"
+    # un rifiuto vecchio non nasconde una finestra Pro ancora chiusa
+    finestra = {"status": "rejected", "resets_at": datetime.now().timestamp() + 600}
+    assert health.cloud_status("claude", {"status": "subscription_rejected", "checked_at": vecchio},
+                               usage=finestra)["status"] == "quota_exceeded"
 
 
 def test_diagnostica_cloud_registra_errore_e_ripresa_di_gemini(client, monkeypatch):

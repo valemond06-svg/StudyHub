@@ -72,6 +72,20 @@ def _timestamp(value) -> str | None:
     return None
 
 
+# Un rifiuto di abbonamento/login si aggiorna solo alla chiamata successiva: se nessun lavoro usa il provider
+# per giorni, l'esito vecchio resterebbe esposto come falso allarme. Oltre questa età torna «da verificare».
+STALE_NEGATIVE_S = 24 * 3600
+
+
+def _age_s(checked_at: str | None) -> float | None:
+    if not checked_at:
+        return None
+    moment = datetime.fromisoformat(checked_at)
+    if moment.tzinfo is None:  # gli esiti di ai_jobs sono in ora locale senza fuso
+        moment = moment.astimezone()
+    return time.time() - moment.timestamp()
+
+
 def cloud_status(name: str, observed: dict, errors=(), *, usage: dict | None = None) -> dict:
     from . import claude_runner, llm
 
@@ -96,6 +110,10 @@ def cloud_status(name: str, observed: dict, errors=(), *, usage: dict | None = N
                 if candidate != "error":
                     code, checked_at = candidate, _timestamp(error["finished_at"])
                     break
+    if code in {"subscription_rejected", "login_required"}:
+        age = _age_s(checked_at)
+        if age is not None and age > STALE_NEGATIVE_S:
+            code = "unverified"
     if name == "claude":
         usage = usage or {}
         reset = usage.get("resets_at")
