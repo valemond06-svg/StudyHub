@@ -4,6 +4,7 @@ import io
 import json
 import sys
 import urllib.error
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -52,15 +53,19 @@ def test_chiave_vuota_se_non_configurata(ambiente):
 def test_ordine_di_lettura_della_chiave(ambiente, monkeypatch):
     from studyhub.config import settings
 
-    # Use monkeypatch to redirect APPDATA to test temp directory
-    test_config_dir = ambiente / "brain-llm"
-    test_config_dir.mkdir()
-    monkeypatch.setenv("APPDATA", str(ambiente))
+    # Il file si cerca in %APPDATA%/brain-llm su Windows e in ~/.config/brain-llm ovunque.
+    if sys.platform == "win32":
+        test_config_dir = ambiente / "brain-llm"
+        monkeypatch.setenv("APPDATA", str(ambiente))
+    else:
+        test_config_dir = ambiente / ".config" / "brain-llm"
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: ambiente))
+    test_config_dir.mkdir(parents=True)
 
     f = test_config_dir / "api-key"
     f.write_text("  dal-file \n", encoding="utf-8")
     # Need to clear env to test file
-    for var in ("STUDYHUB_LOCAL_LLM_KEY", "LOCAL_LLM_API_KEY"):
+    for var in ("STUDYHUB_LOCAL_LLM_KEY", "LOCAL_LLM_API_KEY", "STUDYHUB_LLM_KEY"):
         monkeypatch.delenv(var, raising=False)
     settings.extra.pop("local_llm_key", None)
     assert llm.get_local_llm_key() == "dal-file"
