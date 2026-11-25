@@ -56,12 +56,18 @@ def delete_exam(exam_id: int) -> None:
 
 def upcoming_exams() -> list[dict]:
     with session() as db:
-        rows = db.execute("""SELECT e.*, c.fullname AS course FROM exams e JOIN courses c ON c.id=e.course_id
-                             WHERE e.done=0 AND e.date >= date('now','localtime') ORDER BY e.date""").fetchall()
+        return calendar(db, date.today())
+
+
+def calendar(db, start: date) -> list[dict]:
+    rows = db.execute(
+        """SELECT e.*, c.fullname AS course FROM exams e JOIN courses c ON c.id=e.course_id
+           WHERE e.done=0 AND e.date>=? ORDER BY e.date, e.id""", (start.isoformat(),),
+    )
     out = []
     for r in rows:
         d = dict(r)
-        d["days_left"] = (date.fromisoformat(d["date"]) - date.today()).days
+        d["days_left"] = (date.fromisoformat(d["date"]) - start).days
         out.append(d)
     return out
 

@@ -9,6 +9,7 @@ import json
 import re
 from dataclasses import dataclass
 from html import unescape
+from uuid import UUID
 
 import httpx
 from playwright.sync_api import sync_playwright
@@ -152,8 +153,7 @@ class Panopto:
 
     def delivery_info(self, s: PanoptoSession) -> dict:
         for attempt in range(2):
-            r = self.http.post("/Panopto/Pages/Viewer/DeliveryInfo.aspx", data={
-                "deliveryId": s.id, "responseType": "json", "isEmbed": "false", "refreshAuthCookie": "true"})
+            r = self._delivery_request(s.id, refresh=True)
             data = r.json()
             if "Delivery" in data:
                 return data
@@ -162,6 +162,12 @@ class Panopto:
                 continue
             raise PanoptoAuthError(data.get("ErrorMessage", "DeliveryInfo fallita"))
         raise PanoptoAuthError("DeliveryInfo fallita")
+
+    def _delivery_request(self, delivery_id: str, refresh: bool, **options) -> httpx.Response:
+        return self.http.post("/Panopto/Pages/Viewer/DeliveryInfo.aspx", data={
+            "deliveryId": delivery_id, "responseType": "json", "isEmbed": "false",
+            "refreshAuthCookie": "true" if refresh else "false",
+        }, **options)
 
     @staticmethod
     def streams(info: dict) -> list[Stream]:
@@ -183,3 +189,30 @@ class Panopto:
             if r.status_code == 200 and "-->" in r.text:
                 return r.text
         return None
+
+
+def login_status(delivery_id: str | None) -> str:
+    """Verifica i cookie salvati su una registrazione nota, senza rinnovarli."""
+    client = None
+    try:
+        client = Panopto(MoodleSession({}, ""))
+        if not client.http.cookies.get(".ASPXAUTH"):
+            return "missing"
+        if not delivery_id:
+            return "unverified"
+        response = client._delivery_request(str(UUID(delivery_id)), refresh=False, timeout=3, follow_redirects=False)
+        if response.is_redirect or response.status_code in (401, 403):
+            return "expired"
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, dict):
+            if data.get("LoginRedirect"):
+                return "expired"
+            if data.get("Delivery"):
+                return "authenticated"
+        return "unverified"
+    except (httpx.HTTPError, OSError, ValueError, TypeError):
+        return "unreachable"
+    finally:
+        if client is not None:
+            client.close()

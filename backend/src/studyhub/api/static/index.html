@@ -892,6 +892,7 @@ async function runSearch() {
 async function openSource(s) {
   if (s.lecture_id != null && s.t_start != null) { setView("lessons", { lecture: s.lecture_id, t: s.t_start }); }
   else if (s.kind === "pdf") openViewer(s.doc_id, s.page || 1, s.title);
+  else if (s.type === "note") window.open(s.url_hint, "_blank", "noopener");
   else window.open(`/api/docs/${s.doc_id}/file`, "_blank", "noopener");
 }
 

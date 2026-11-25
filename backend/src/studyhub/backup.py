@@ -5,6 +5,7 @@ Password gestita tramite keyring/fallback file in ~/.studyhub/secrets/restic.pas
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -62,9 +63,9 @@ EXCLUDES = [
 ]
 
 
-def _get_env() -> Dict[str, str]:
+def _get_env(create_password: bool = True) -> Dict[str, str]:
     """Environment per restic con password da file."""
-    if not PASS_FILE.exists():
+    if create_password and not PASS_FILE.exists():
         PASS_FILE.parent.mkdir(parents=True, exist_ok=True)
         PASS_FILE.write_text(pysecrets.token_urlsafe(32), encoding="utf-8")
         try:
@@ -85,14 +86,14 @@ def _repo(name: str) -> str:
     return REPOS[name]
 
 
-def _run(args: List[str], repo: str, timeout: int = 7200) -> subprocess.CompletedProcess:
+def _run(args: List[str], repo: str, timeout: int = 7200, *, create_password: bool = True) -> subprocess.CompletedProcess:
     """Esegue restic con retry su errori di rete per repo remoti."""
     extra = []
     if repo.startswith("sftp:"):
         extra = ["-o", "sftp.args=-o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o BatchMode=yes"]
     return subprocess.run(
         [RESTIC, *extra, "-r", repo, *args],
-        env=_get_env(),
+        env=_get_env(create_password),
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -226,6 +227,27 @@ def list_snapshots(targets: List[str] = None) -> Dict[str, str]:
         r = _run(["snapshots", "--compact"], repo, 300)
         out[name] = r.stdout if r.returncode == 0 else f"error: {r.stderr[-300:]}"
     return out
+
+
+def repository_space() -> dict:
+    """Spazio del repository locale senza inizializzarlo o acquisire lock di restic."""
+    path = Path(_repo("local"))
+    result = {"status": "not_configured", "repository_bytes": None, "free_bytes": None, "capacity_bytes": None}
+    try:
+        if not (path / "config").is_file():
+            return result
+        disk = shutil.disk_usage(path)
+        result.update(status="unavailable", free_bytes=disk.free, capacity_bytes=disk.total)
+        if not PASS_FILE.is_file():
+            return result
+        stats = _run(["--no-lock", "stats", "--mode", "raw-data", "--json"], str(path), 4, create_password=False)
+        if stats.returncode == 0:
+            size = json.loads(stats.stdout)["total_size"]
+            if type(size) is int and size >= 0:
+                result.update(status="available", repository_bytes=size)
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+        result["status"] = "unavailable"
+    return result
 
 
 def restore_latest(target_repo: str, restore_dir: Path, target_paths: List[str] = None) -> Dict[str, Any]:

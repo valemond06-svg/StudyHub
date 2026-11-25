@@ -427,6 +427,69 @@ MIGRATIONS = [
     ON ai_jobs(kind, target_id)
     WHERE status IN ('in_coda', 'in_corso');
     """,
+    """
+    CREATE TABLE notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        lecture_id INTEGER REFERENCES lectures(id) ON DELETE SET NULL,
+        topic_id INTEGER REFERENCES study_topics(id) ON DELETE SET NULL,
+        doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        timestamp_s REAL CHECK (timestamp_s >= 0),
+        page INTEGER CHECK (page >= 1),
+        body TEXT NOT NULL,
+        tags TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX notes_course_updated ON notes(course_id, updated_at DESC);
+    CREATE VIRTUAL TABLE notes_fts USING fts5(
+        tags, body, content='notes', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN
+        INSERT INTO notes_fts(rowid, tags, body) VALUES (new.id, new.tags, new.body);
+    END;
+    CREATE TRIGGER notes_ad AFTER DELETE ON notes BEGIN
+        INSERT INTO notes_fts(notes_fts, rowid, tags, body) VALUES ('delete', old.id, old.tags, old.body);
+    END;
+    CREATE TRIGGER notes_au AFTER UPDATE OF tags, body ON notes BEGIN
+        INSERT INTO notes_fts(notes_fts, rowid, tags, body) VALUES ('delete', old.id, old.tags, old.body);
+        INSERT INTO notes_fts(rowid, tags, body) VALUES (new.id, new.tags, new.body);
+    END;
+
+    ALTER TABLE flashcards ADD COLUMN doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL;
+    ALTER TABLE flashcards ADD COLUMN page INTEGER CHECK (page >= 1);
+    ALTER TABLE flashcards ADD COLUMN attempt_id INTEGER REFERENCES study_attempts(id) ON DELETE SET NULL;
+    CREATE UNIQUE INDEX flashcards_attempt ON flashcards(attempt_id) WHERE attempt_id IS NOT NULL;
+    CREATE INDEX flashcards_active_due ON flashcards(due) WHERE suspended=0;
+    CREATE INDEX reviews_card ON reviews(card_id);
+    CREATE INDEX study_attempts_session ON study_attempts(session_id);
+
+    CREATE TABLE focus_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        task TEXT,
+        started_at TEXT NOT NULL,
+        planned_seconds INTEGER NOT NULL CHECK (planned_seconds > 0),
+        ends_at TEXT NOT NULL,
+        stopped_at TEXT,
+        actual_seconds INTEGER CHECK (actual_seconds >= 0),
+        kind TEXT NOT NULL CHECK (kind IN ('focus', 'pausa'))
+    );
+    CREATE INDEX focus_course_started ON focus_sessions(course_id, started_at);
+    CREATE UNIQUE INDEX focus_one_active ON focus_sessions((1)) WHERE stopped_at IS NULL;
+
+    CREATE TABLE availability (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        hours_by_weekday TEXT NOT NULL,
+        days_off TEXT NOT NULL
+    );
+
+    CREATE TABLE provider_health (
+        provider TEXT PRIMARY KEY CHECK (provider IN ('gemini', 'claude')),
+        status TEXT NOT NULL,
+        checked_at TEXT NOT NULL
+    );
+    """,
 ]
 
 # Versione storica che aggiunge priority e tenta di creare lo stesso indice.

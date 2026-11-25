@@ -104,12 +104,12 @@ def _auth_headers(base: str) -> dict:
 
 def _probe(base: str) -> bool:
     """Controllo di salute: /health, e se il server non lo espone /v1/models. Timeout breve."""
+    _auth_failed.discard(base)
     for path in ("/health", "/v1/models"):
         try:
             req = urllib.request.Request(base + path, headers=_auth_headers(base))
             with urllib.request.urlopen(req, timeout=HEALTH_TIMEOUT_S) as r:
                 if r.status == 200:
-                    _auth_failed.discard(base)
                     return True
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
@@ -547,6 +547,18 @@ def _gemini(system: str, text: str, schema: dict, quality: str, kind: str | None
     exe = _agy_exe()
     if not exe:
         raise ClaudeError("Antigravity (agy) non trovato.")
+    from . import health
+
+    try:
+        result = _gemini_request(exe, system, text, schema, quality)
+    except (ClaudeError, OSError) as e:
+        health.record("gemini", health.classify(str(e), limited=isinstance(e, RateLimited)))
+        raise
+    health.record("gemini", "available")
+    return result
+
+
+def _gemini_request(exe: str, system: str, text: str, schema: dict, quality: str) -> LLMResult:
     AGY_CWD.mkdir(parents=True, exist_ok=True)
     model = GEMINI_MODELS[quality]
     prompt = (f"{system}\n\nNON usare strumenti, file, terminale o web: rispondi direttamente con il JSON "
@@ -570,7 +582,7 @@ def _gemini(system: str, text: str, schema: dict, quality: str, kind: str | None
         if ev.get("event") == "result":
             result = ev.get("result") or {}
     if not result or result.get("status") != "SUCCESS":
-        err = (result or {}).get("error") or proc.stderr[-500:] or "nessuna risposta"
+        err = str((result or {}).get("error") or proc.stderr[-500:] or "nessuna risposta")
         if "quota" in err.lower() or "limit" in err.lower():
             raise RateLimited(f"Gemini: {err[:300]}")
         raise ClaudeError(f"Gemini: {err[:500]}")

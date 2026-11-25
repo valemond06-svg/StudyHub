@@ -144,9 +144,12 @@ def _load_token() -> str | None:
     return None
 
 
-def _session_valid(sess: MoodleSession) -> bool:
+def _session_valid(sess: MoodleSession, timeout: float | None = None) -> bool:
     with sess.http() as c:
-        r = c.get("/my/", follow_redirects=False)
+        options = {} if timeout is None else {"timeout": timeout}
+        r = c.get("/my/", follow_redirects=False, **options)
+    if timeout is not None and r.status_code >= 500:
+        r.raise_for_status()
     return r.status_code == 200
 
 
@@ -154,11 +157,18 @@ def _token_valid(token: str | None) -> bool:
     if not token:
         return False
     try:
-        r = httpx.post(f"{settings.moodle_url}/webservice/rest/server.php", timeout=30, data={
-            "wstoken": token, "wsfunction": "core_webservice_get_site_info", "moodlewsrestformat": "json"})
-        return r.status_code == 200 and "userid" in r.json()
+        return _token_probe(token, 30)
     except Exception:
         return False
+
+
+def _token_probe(token: str, timeout: float) -> bool:
+    r = httpx.post(f"{settings.moodle_url}/webservice/rest/server.php", timeout=timeout, data={
+        "wstoken": token, "wsfunction": "core_webservice_get_site_info", "moodlewsrestformat": "json"})
+    if r.status_code >= 500:
+        r.raise_for_status()
+    data = r.json() if r.status_code == 200 else None
+    return isinstance(data, dict) and "userid" in data
 
 
 def _load_session() -> dict | None:
@@ -177,6 +187,21 @@ def _load_session() -> dict | None:
         except Exception:
             pass
     return None
+
+
+def login_status() -> str:
+    """Controlla le credenziali salvate con richieste brevi, senza avviare il browser."""
+    try:
+        data = _load_session()
+        if isinstance(data, dict) and isinstance(data.get("cookies"), dict) and data["cookies"]:
+            if _session_valid(MoodleSession(data["cookies"], data.get("sesskey") or ""), timeout=3):
+                return "authenticated"
+        token = _load_token()
+        if token and _token_probe(token, 3):
+            return "token_only"
+        return "expired" if data or token else "missing"
+    except (httpx.HTTPError, OSError, ValueError, TypeError):
+        return "unreachable"
 
 
 def get_session(interactive: bool = False, token_only_ok: bool = False) -> MoodleSession:

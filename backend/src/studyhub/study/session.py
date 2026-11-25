@@ -190,6 +190,10 @@ def get(sid: int) -> dict:
         learned = {r[0] for r in db.execute(
             f"SELECT topic_id FROM study_lessons WHERE completed_at IS NOT NULL "
             f"AND topic_id IN ({','.join('?' * len(lesson_ids)) or 'NULL'})", list(lesson_ids))}
+        errors = [dict(r) for r in db.execute(
+            """SELECT a.id AS attempt_id, a.item_id, a.score, i.prompt_md
+               FROM study_attempts a JOIN study_items i ON i.id=a.item_id
+               WHERE a.session_id=? AND a.score < 0.5 ORDER BY a.id""", (sid,))]
     entries = []
     for e in q["entries"]:
         x = _public_entry(e, items[e["item"]] if e["t"] == "domanda" else None)
@@ -205,7 +209,7 @@ def get(sid: int) -> dict:
             phase = "rivelata" if entry.get("revealed") else entry["t"]
     return {"id": sid, "course_id": s["course_id"], "minutes": s["minutes"], "started_at": s["started_at"],
             "ended_at": s["ended_at"], "xp": s["xp"], "entries": entries, "topics": topics,
-            "resume_index": resume_index, "phase": phase}
+            "resume_index": resume_index, "phase": phase, "errors": errors}
 
 
 def _rating(score: float, confidence: int | None) -> Rating:
@@ -365,15 +369,15 @@ def answer(sid: int, idx: int, payload: dict) -> dict:
         card, _ = scheduler.review_card(Card.from_json(fsrs) if fsrs else Card(), rating)
         next_due = _iso(card.due)
         db.execute("UPDATE study_items SET fsrs=?, due=? WHERE id=?", (card.to_json(), next_due, it["id"]))
-        db.execute("""INSERT INTO study_attempts (item_id, session_id, score, confidence, answer, feedback_md, graded_by,
+        attempt_id = db.execute("""INSERT INTO study_attempts (item_id, session_id, score, confidence, answer, feedback_md, graded_by,
                       seconds, created_at) VALUES (?,?,?,?,?,?,?,?,?)""",
-                   (it["id"], sid, score, conf, given, feedback, graded_by, payload.get("seconds"), _now()))
+                   (it["id"], sid, score, conf, given, feedback, graded_by, payload.get("seconds"), _now())).lastrowid
         requeued = None
         if score < 0.5 and not entry.get("retry"):
             retry_entry = {"t": "domanda", "item": it["id"], "retry": True}
             requeued = {"idx": len(q["entries"]), **_public_entry(retry_entry, it)}
             q["entries"].append(retry_entry)
-        result = {"score": score, "correct": it["correct"], "answer_md": it["answer_md"], "rubric": rubric,
+        result = {"attempt_id": attempt_id, "score": score, "correct": it["correct"], "answer_md": it["answer_md"], "rubric": rubric,
                   "criteria_ok": crit_ok, "feedback_md": feedback, "graded_by": graded_by, "xp": gained,
                   "retry": requeued is not None, "requeued": requeued, "next_due": next_due, "source": _source(db, it)}
         entry.update(done=True, score=score, _answer={"fingerprint": fingerprint, "result": result})
@@ -407,7 +411,7 @@ def finish(sid: int) -> dict:
         db.execute("UPDATE study_sessions SET ended_at=COALESCE(ended_at, ?), ready_after=? WHERE id=?",
                    (_now(), ov["ready_exam"], sid))
         wrong = [dict(r) for r in db.execute(
-            """SELECT i.id, i.prompt_md, i.lecture_id, i.t_start, i.doc_id, i.page, t.name AS topic
+            """SELECT i.id, MIN(a.id) AS attempt_id, i.prompt_md, i.lecture_id, i.t_start, i.doc_id, i.page, t.name AS topic
                FROM study_attempts a JOIN study_items i ON i.id=a.item_id JOIN study_topics t ON t.id=i.topic_id
                WHERE a.session_id=? AND a.score < 0.5 GROUP BY i.id""", (sid,))]
     return {"answered": len(done), "correct": sum(1 for e in done if e["score"] >= 0.7),

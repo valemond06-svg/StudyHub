@@ -3,101 +3,54 @@ from __future__ import annotations
 
 import json
 import logging
-import secrets
 import subprocess
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import lru_cache
+from math import ceil
 from pathlib import Path
 from threading import Lock
+from time import monotonic
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, Security
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
-from fastapi.security import APIKeyHeader, APIKeyCookie
 from pydantic import BaseModel, ConfigDict
 from starlette.datastructures import Headers
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request as StarletteRequest
 from starlette.types import Message, Receive, Scope, Send
 
 from ..config import ui_dist_path
 from ..db import session
 from ..paths import uni_path
-from .csrf import CSRFMiddleware, csrf_protect
+from .auth import get_current_token
+from .csrf import CSRFMiddleware, csrf_protect, validate_csrf
 from .log_redaction import install_log_redaction
+from .study_routes import router as study_router
 
-# Rate limiting per IP: {ip: {"count": int, "time": float}}
-_setup_rate_limit = {}
-_setup_lock = Lock()
-# 1 request per minute rate limit on /api/setup/* (drift_handling=False per prefissare abusi a esordio)
 _SETUP_RATE_LIMIT_SECONDS = 60
-
-# API Token authentication
-api_key_header = APIKeyHeader(name="Authorization", auto_error=False, scheme_name="Bearer")
-api_key_cookie = APIKeyCookie(name="api_token", auto_error=False)
+_setup_rate_limit: dict[tuple[str, str], float] = {}
+_setup_lock = Lock()
 
 
-async def get_current_token(
-    authorization: str | None = Security(api_key_header),
-    api_token_cookie: str | None = Security(api_key_cookie),
-) -> str:
-    """Validate API token from Authorization header or cookie.
-
-    Raises:
-        HTTPException: 401 if token is missing or invalid.
-    """
-    # Get token dynamically to pick up env changes (important for tests)
-    from ..config import get_or_create_api_token
-    expected_token = get_or_create_api_token()
-
-    # Check Authorization header: "Bearer <token>"
-    if authorization:
-        if authorization.startswith("Bearer "):
-            token = authorization[7:]  # Remove "Bearer " prefix
-            if secrets.compare_digest(token, expected_token):
-                return token
-
-    # Check cookie
-    if api_token_cookie:
-        if secrets.compare_digest(api_token_cookie, expected_token):
-            return api_token_cookie
-
-    # For browser UI, also set the cookie on first response if Authorization header is provided
-    # This is handled by the caller
-
-    raise HTTPException(
-        status_code=401,
-        detail="Authentication required. Provide Authorization: Bearer <token> header or api_token cookie."
-    )
-
-
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Rate limiting on /api/setup/* endpoints."""
-
-    async def dispatch(self, request: StarletteRequest, call_next):
-        # Rate limiting on /api/setup/*
-        if "/api/setup/" in request.url.path and request.method in ("GET", "POST"):
-            remote_ip = request.headers.get("x-forwarded-for", request.client.host) if request.client else "unknown"
-
-            with _setup_lock:
-                now = datetime.now().timestamp()
-                if remote_ip not in _setup_rate_limit:
-                    _setup_rate_limit[remote_ip] = {"count": 1, "time": now}
-                else:
-                    entry = _setup_rate_limit[remote_ip]
-                    entry["count"] += 1
-                    # Sliding window: remove requests older than rate limit window
-                    while entry["time"] < now - _SETUP_RATE_LIMIT_SECONDS:
-                        entry["count"] -= 1
-                        entry["time"] += _SETUP_RATE_LIMIT_SECONDS
-                    # If still over limit, reject
-                    if entry["count"] > 1:  # More than 1 request in the window
-                        raise HTTPException(429, "Rate limit exceeded. Try again later.")
-
-        response = await call_next(request)
-        return response
+async def setup_rate_limit(
+    request: Request,
+    _token: str = Depends(get_current_token),
+    _csrf: None = Depends(csrf_protect),
+) -> None:
+    """Una richiesta per finestra, per indirizzo client ed endpoint di setup."""
+    remote_ip = request.client.host if request.client else "unknown"
+    key = (remote_ip, request.url.path)
+    with _setup_lock:
+        now = monotonic()
+        for expired in [k for k, deadline in _setup_rate_limit.items() if deadline <= now]:
+            del _setup_rate_limit[expired]
+        if key in _setup_rate_limit:
+            raise HTTPException(
+                429, "Troppe richieste di configurazione. Riprova fra poco.",
+                headers={"Retry-After": str(ceil(_setup_rate_limit[key] - now))},
+            )
+        _setup_rate_limit[key] = now + _SETUP_RATE_LIMIT_SECONDS
 
 
 STATIC = Path(__file__).parent / "static"
@@ -147,15 +100,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-CSRF-Token", "X-Requested-With"],
-    expose_headers=["X-CSRF-Token"],
+    expose_headers=["X-CSRF-Token", "Retry-After"],
 )
 
 # CSRF Middleware - sets csrf_token cookie on all responses
 app.add_middleware(CSRFMiddleware)
-
-# Rate limiting middleware (kept for /api/setup/*)
-app.add_middleware(RateLimitMiddleware)
-
 
 def _json(path: Path, default):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
@@ -319,7 +268,7 @@ def api_search(q: str, course_id: int | None = None, year: int | None = None, li
     if ids is None and year is not None:
         with session() as db:
             ids = [r[0] for r in db.execute("SELECT id FROM courses WHERE year_of_study=?", (year,))]
-    return search(q, ids, min(limit, 50))
+    return search(q, ids, max(0, min(limit, 50)), include_notes=True)
 
 
 def _document(doc_id: int) -> dict:
@@ -504,6 +453,8 @@ def card_review(card_id: int, body: Review, _csrf: None = Depends(csrf_protect),
         return flashcards.review(card_id, body.rating)
     except KeyError:
         raise HTTPException(404)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @app.get("/api/flashcards/anki.tsv")
@@ -569,10 +520,22 @@ def lecture_quizzes(lecture_id: int, token: str = Depends(get_current_token)):
     return quiz.list_for_lecture(lecture_id)
 
 
+class NewLectureQuiz(BaseModel):
+    n: int | None = None
+
+
 @app.post("/api/lectures/{lecture_id}/quiz")
-def lecture_quiz_new(lecture_id: int, n: int = 10, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+def lecture_quiz_new(
+    lecture_id: int,
+    n: int | None = None,
+    body: NewLectureQuiz | None = None,
+    _csrf: None = Depends(csrf_protect),
+    token: str = Depends(get_current_token),
+):
     from ..study import quiz
-    return _ai_call(quiz.generate, lecture_id, max(4, min(n, 20)))
+
+    count = n if n is not None else body.n if body and body.n is not None else 10
+    return _ai_call(quiz.generate, lecture_id, max(4, min(count, 20)))
 
 
 @app.get("/api/quizzes/{quiz_id}")
@@ -830,7 +793,7 @@ def setup_status(token: str = Depends(get_current_token)):
 
 
 @app.post("/api/setup/login")
-def setup_login(_csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+def setup_login(_limit: None = Depends(setup_rate_limit)):
     """Apre la finestra di Chromium per il login SSO: le credenziali le scrivi tu, lì."""
     global _login_proc
     if _login_proc is None or _login_proc.poll() is not None:
@@ -840,7 +803,7 @@ def setup_login(_csrf: None = Depends(csrf_protect), token: str = Depends(get_cu
 
 
 @app.post("/api/setup/courses")
-def setup_courses(_csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+def setup_courses(_limit: None = Depends(setup_rate_limit)):
     from ..sync.auth import LoginRequired, get_session
     from ..sync.catalog import refresh_catalog
     from ..sync.moodle import Moodle
@@ -856,7 +819,7 @@ def setup_courses(_csrf: None = Depends(csrf_protect), token: str = Depends(get_
 
 
 @app.post("/api/setup/fullrun")
-def setup_fullrun(_csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+def setup_fullrun(_limit: None = Depends(setup_rate_limit)):
     """Avvia (o riprende) l'elaborazione completa in un processo a sé: continua anche chiudendo l'app."""
     from .. import fullrun
     from ..config import APP_DIR
@@ -1068,7 +1031,7 @@ def lecture_topics(lecture_id: int, token: str = Depends(get_current_token)):
 
 
 @app.get("/api/study/topics/{topic_id}/lesson")
-def study_lesson(topic_id: int, prepare: bool = True):
+def study_lesson(topic_id: int, request: Request, prepare: bool = True, token: str = Depends(get_current_token)):
     """La lezione interattiva dell'argomento; se manca la mette in coda (Gemini) e risponde subito."""
     from ..study import lesson
     try:
@@ -1076,14 +1039,19 @@ def study_lesson(topic_id: int, prepare: bool = True):
     except KeyError:
         raise HTTPException(404)
     if prepare and out["status"] in (None, "errore"):
+        if request.headers.get("sec-fetch-site") != "same-origin" and not validate_csrf(request):
+            raise HTTPException(403, "La preparazione della lezione richiede una richiesta dalla stessa origine o un token CSRF.")
         lesson.request([topic_id])
         out = lesson.get(topic_id)
     return out
 
 
 @app.post("/api/study/topics/{topic_id}/lesson/done")
-def study_lesson_done(topic_id: int):
+def study_lesson_done(
+    topic_id: int, token: str = Depends(get_current_token), _csrf: None = Depends(csrf_protect),
+):
     from ..study import lesson
+    _need("topic", topic_id)
     lesson.complete(topic_id)
     return {"ok": True}
 
@@ -1373,6 +1341,9 @@ def legacy(request: Request):
 @lru_cache(maxsize=1)
 def _warn_missing_ui(dist: Path) -> None:
     logging.getLogger(__name__).warning("Build React assente in %s, uso la UI legacy sulla radice", dist)
+
+
+app.include_router(study_router)
 
 
 @app.api_route("/{rel:path}", methods=["GET", "HEAD"], include_in_schema=False)

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ..config import LOCAL_DIR
 from ..filelock import LockTimeout, file_lock
+from . import health
 
 ALLOWED_MODELS = {"sonnet", "haiku"}
 USAGE_FILE = LOCAL_DIR / "claude_usage.json"
@@ -107,7 +108,13 @@ def run(system: str, content: list[dict], schema: dict, model: str = "sonnet") -
         with file_lock(LOCK_FILE, f"claude {model} pid {os.getpid()}", timeout=LOCK_WAIT_S):
             # il budget si controlla dentro il lock: chi aspettava vede l'utilizzo aggiornato da chi ha finito
             check_budget()
-            return _run_locked(system, content, schema, model)
+            try:
+                result = _run_locked(system, content, schema, model)
+            except (ClaudeError, OSError) as e:
+                health.record("claude", health.classify(str(e), limited=isinstance(e, RateLimited)))
+                raise
+            health.record("claude", "available")
+            return result
     except LockTimeout as e:
         raise RateLimited(f"Claude occupato da un'altra elaborazione ({e}): riprovo più tardi.")
 
@@ -147,6 +154,10 @@ def _run_locked(system: str, content: list[dict], schema: dict, model: str) -> C
             resets = resets or time.time() + 30 * 60
         _save_usage({"utilization": util, "resets_at": resets, "status": rate.get("status"), "checked_at": time.time()})
         if blocked:
+            message = str((result or {}).get("result") or proc.stderr)
+            reason = health.classify(message)
+            if reason in {"subscription_rejected", "login_required"}:
+                raise ClaudeError(health.MESSAGES[reason])
             raise RateLimited("Limite della finestra Claude Pro raggiunto.")
     if not result:
         raise ClaudeError(f"Nessun risultato da Claude: {proc.stderr[-800:] or proc.stdout[-800:]}")
