@@ -95,17 +95,31 @@ describe("Lab: niente dati finti", () => {
 })
 
 describe("Corsi: filtri funzionanti, nessun link a /corsi/nuevo", () => {
-  it("filtra attivi, non attivi e superati", async () => {
+  it("filtra per stato di corsi.yaml (da seguire, arretrati, futuri, superati) con prontezza onesta", async () => {
     vi.mocked(api.getCourses).mockResolvedValue([
-      { id: 1, fullname: "Analisi", year_of_study: 1, passed: false, active: 1, priority: 1, folder: "a", lectures: 20, ready: 18 },
-      { id: 2, fullname: "Fisica", year_of_study: 1, passed: false, active: 0, priority: 0, folder: "b", lectures: 0, ready: 0 },
-      { id: 3, fullname: "Geometria", year_of_study: null as any, passed: true, active: 0, priority: 0, folder: "c", lectures: 0, ready: 0 },
+      { id: 1, fullname: "Analisi", year_of_study: 1, passed: false, active: 1, priority: 1, folder: "a", lectures: 20, ready: 18, stage: "corrente" },
+      { id: 2, fullname: "Fisica", year_of_study: 1, passed: false, active: 0, priority: 0, folder: "b", lectures: 0, ready: 0, stage: "futuro" },
+      { id: 3, fullname: "Geometria", year_of_study: null as any, passed: true, active: 0, priority: 0, folder: "c", lectures: 0, ready: 0, stage: "archivio" },
+      { id: 4, fullname: "Algebra", year_of_study: 1, passed: false, active: 1, priority: 0, folder: "d", lectures: 0, ready: 0, stage: "arretrato" },
+      { id: 5, fullname: "Statistica", year_of_study: 2, passed: false, active: 1, priority: 0, folder: "e", lectures: 0, ready: 0, stage: "corrente" },
     ])
-    vi.mocked(api.getStudyCourses).mockResolvedValue([{ id: 1, name: "Analisi", ready_exam: 0.003 }])
+    vi.mocked(api.getStudyCourses).mockResolvedValue([
+      { id: 1, name: "Analisi", ready_exam: 0.003, n_items: 100, tried_items: 2 },
+      { id: 5, name: "Statistica", ready_exam: 0.41, n_items: 50, tried_items: 30, coverage: 0.6, exam: { id: 9, course_id: 5, course: "Statistica", date: "2026-12-01", kind: "scritto", done: false, days_left: 6 } },
+    ])
     wrap(<Corsi />, "/corsi")
     expect(await screen.findByText("Analisi")).toBeDefined()
     expect(screen.queryByText("Fisica")).toBeNull()
-    expect(screen.getByText("0%")).toBeDefined()
+    expect(screen.queryByText("Algebra")).toBeNull()
+    // Statistica ha l'appello più vicino: prima; Analisi ha 2 risposte: niente percentuale piena
+    const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)
+    expect(titles).toEqual(["Statistica", "Analisi"])
+    expect(screen.getByText("dati insufficienti")).toBeDefined()
+    expect(screen.getByText("41%")).toBeDefined()
+    fireEvent.click(screen.getByRole("button", { name: /Arretrati/ }))
+    expect(await screen.findByText("Algebra")).toBeDefined()
+    fireEvent.click(screen.getByRole("button", { name: /Futuri e archivio/ }))
+    expect(await screen.findByText("Fisica")).toBeDefined()
     fireEvent.click(screen.getByRole("button", { name: /Superati/ }))
     expect(await screen.findByText("Geometria")).toBeDefined()
     expect(screen.getByText("Anno n.d.")).toBeDefined()

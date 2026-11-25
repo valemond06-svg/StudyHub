@@ -21,6 +21,8 @@ const Piano = lazy(() => import("@/pages/Piano").then((m) => ({ default: m.Piano
 const Quaderno = lazy(() => import("@/pages/Quaderno").then((m) => ({ default: m.Quaderno })))
 const FlashcardPage = lazy(() => import("@/pages/Flashcard").then((m) => ({ default: m.FlashcardPage })))
 const Impara = lazy(() => import("@/pages/Impara").then((m) => ({ default: m.Impara })))
+const Documento = lazy(() => import("@/pages/Documento").then((m) => ({ default: m.Documento })))
+const Benvenuto = lazy(() => import("@/pages/Benvenuto").then((m) => ({ default: m.Benvenuto })))
 
 interface ErrorBoundaryProps {
   children: ReactNode
@@ -98,6 +100,8 @@ function useCsrfToken() {
   useEffect(() => {
     // Una sola chiamata a /api/csrf (anche con StrictMode): token CSRF e cookie api_token per audio/slide
     void ensureCsrfToken()
+    // La ripresa delle sessioni ora sta sul server (GET /api/study/{id}/sessions/open): via la vecchia copia locale.
+    try { window.localStorage.removeItem("studyhub-session") } catch { /* storage non disponibile */ }
   }, [])
 }
 
@@ -184,6 +188,12 @@ function App() {
               } />
               <Route path="/impara/:topicId" element={
                 <Suspense fallback={<Loading />}><Impara /></Suspense>
+              } />
+              <Route path="/documento/:docId" element={
+                <Suspense fallback={<Loading />}><Documento /></Suspense>
+              } />
+              <Route path="/benvenuto" element={
+                <Suspense fallback={<Loading />}><Benvenuto /></Suspense>
               } />
               <Route path="/simulazione/:id" element={
                 <Suspense fallback={<Loading />}><SimulazioneRunner /></Suspense>

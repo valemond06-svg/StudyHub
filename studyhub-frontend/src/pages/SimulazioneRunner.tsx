@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
@@ -22,7 +22,16 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { MathMarkdown } from "@/components/ui/math-markdown"
 import { PhotoUpload } from "@/components/camera/PhotoUpload"
-import { api } from "@/lib/api"
+import { api, describeError } from "@/lib/api"
+import {
+  clearDraft,
+  elapsedMinutes,
+  loadDraft,
+  newDraft,
+  remainingSeconds as remainingSeconds_,
+  saveDraft,
+  type SimDraft,
+} from "@/lib/sim-draft"
 import type { Simulation, ExamQuestion, SimulationGrading } from "@/types"
 import { cn } from "@/lib/utils"
 
@@ -31,6 +40,8 @@ interface StudentAnswerState {
   scelta: number | null
   immagini: string[]
 }
+
+const EMPTY_ANSWER: StudentAnswerState = { testo: "", scelta: null, immagini: [] }
 
 export function SimulazioneRunner() {
   const { id } = useParams<{ id: string }>()
@@ -66,94 +77,92 @@ export function SimulazioneRunner() {
 
   const totalMinutes = simData?.durata_min || simData?.duration_min || 60
   const totalSeconds = Math.round(totalMinutes * 60)
-  const simulationId = simData?.id
+  const simKey = id ?? ""
 
-  // State: timer
-  const [remainingSeconds, setRemainingSeconds] = useState<number>(totalSeconds)
-  const hasTimeRemaining = remainingSeconds > 0
-
-  // Answers state: mapped by question index
-  const [answers, setAnswers] = useState<Record<number, StudentAnswerState>>({})
-
-  // UI state
-  const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0)
+  // Bozza con scadenza assoluta: il tempo scorre anche a pagina chiusa; allo zero si consegna da sola.
+  const [draft, setDraft] = useState<SimDraft | null>(() => (id ? loadDraft(id) : null))
+  const [now, setNow] = useState(() => Date.now())
+  const [storageWarning, setStorageWarning] = useState<string | null>(null)
+  const answers = useMemo(() => draft?.answers ?? {}, [draft])
+  const selectedQuestionIndex = draft?.selected ?? 0
+  const remainingSeconds = draft ? remainingSeconds_(draft.deadline, now) : totalSeconds
   const [showConfirmModal, setShowConfirmModal] = useState(false)
   const [gradingResult, setGradingResult] = useState<SimulationGrading | null>(null)
+  const [submittedElapsed, setSubmittedElapsed] = useState<number | null>(null)
+  const autoSubmitted = useRef(false)
 
-  // Synchronize timer duration once simulation data arrives
+  const updateDraft = useCallback((fn: (d: SimDraft) => SimDraft) => {
+    if (!draft) return
+    const next = fn(draft)
+    const saved = saveDraft(simKey, next)
+    setStorageWarning(!saved.ok
+      ? "Il browser non riesce a salvare la bozza: non ricaricare la pagina."
+      : saved.photosDropped ? "Le foto sono troppo grandi per la bozza: restano solo in questa scheda, non ricaricarla." : null)
+    setDraft(next)
+  }, [draft, simKey])
+
+  const start = () => {
+    const d = newDraft(totalSeconds)
+    autoSubmitted.current = false
+    saveDraft(simKey, d)
+    setDraft(d)
+    setNow(Date.now())
+  }
+
+  const running = Boolean(draft) && !gradingResult
   useEffect(() => {
-    if (simulationId !== undefined) setRemainingSeconds(totalSeconds)
-  }, [simulationId, totalSeconds])
-
-  // Countdown timer effect
-  useEffect(() => {
-    if (simulationId === undefined || !hasTimeRemaining || gradingResult) return
-
-    const interval = window.setInterval(() => {
-      setRemainingSeconds((prev) => Math.max(0, prev - 1))
-    }, 1000)
-
+    if (!running) return
+    const interval = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(interval)
-  }, [simulationId, hasTimeRemaining, gradingResult])
+  }, [running])
 
-  // Submit Mutation
   const submitMutation = useMutation({
-    mutationFn: async (elapsedSeconds: number) => {
+    mutationFn: async (d: SimDraft) => {
       if (!id) throw new Error("ID simulazione mancante")
       const formattedAnswers = rawQuestions.map((q, idx) => {
-        const a = answers[idx] || { testo: "", scelta: null, immagini: [] }
+        const a = d.answers[idx] || { testo: "", scelta: null, immagini: [] }
         return {
           testo: a.testo ? a.testo.trim() : null,
           scelta: q.tipo === "multipla" ? a.scelta : null,
           immagini: a.immagini || [],
         }
       })
-      return api.submitSimulation(id, formattedAnswers, elapsedSeconds / 60)
+      return api.submitSimulation(id, formattedAnswers, elapsedMinutes(d))
     },
-    onSuccess: (data: SimulationGrading, elapsedSeconds) => {
-      setRemainingSeconds(totalSeconds - elapsedSeconds)
+    onSuccess: (data: SimulationGrading, d) => {
+      setSubmittedElapsed(Math.round(Math.min(Date.now(), d.deadline) - d.startedAt) / 1000)
       setGradingResult(data)
       setShowConfirmModal(false)
+      clearDraft(simKey)
       queryClient.invalidateQueries({ queryKey: ["examProfile", simData?.course_id] })
       queryClient.invalidateQueries({ queryKey: ["simulation", id] })
     },
   })
 
-  // Handlers for question answers
-  const handleTextChange = (idx: number, val: string) => {
-    setAnswers((prev) => ({
-      ...prev,
-      [idx]: {
-        ...(prev[idx] || { scelta: null, immagini: [] }),
-        testo: val,
-      },
-    }))
-  }
+  // Consegna automatica allo zero (anche se riapri la pagina dopo la scadenza).
+  const { mutate: submitDraft, isPending: submitting } = submitMutation
+  useEffect(() => {
+    if (!draft || gradingResult || submitting || autoSubmitted.current || !rawQuestions.length) return
+    if (remainingSeconds > 0) return
+    autoSubmitted.current = true
+    submitDraft(draft)
+  }, [draft, gradingResult, submitting, remainingSeconds, rawQuestions.length, submitDraft])
 
-  const handleChoiceChange = (idx: number, optIdx: number) => {
-    setAnswers((prev) => ({
-      ...prev,
-      [idx]: {
-        ...(prev[idx] || { testo: "", immagini: [] }),
-        scelta: optIdx,
-      },
-    }))
-  }
-
-  const handlePhotosChange = (idx: number, photos: string[]) => {
-    setAnswers((prev) => ({
-      ...prev,
-      [idx]: {
-        ...(prev[idx] || { testo: "", scelta: null }),
-        immagini: photos,
-      },
-    }))
-  }
+  const setAnswer = (idx: number, patch: Partial<StudentAnswerState>) => updateDraft((d) => ({
+    ...d,
+    answers: { ...d.answers, [idx]: { ...(d.answers[idx] ?? EMPTY_ANSWER), ...patch } },
+  }))
+  const handleTextChange = (idx: number, val: string) => setAnswer(idx, { testo: val })
+  const handleChoiceChange = (idx: number, optIdx: number) => setAnswer(idx, { scelta: optIdx })
+  const handlePhotosChange = (idx: number, photos: string[]) => setAnswer(idx, { immagini: photos })
+  const setSelectedQuestionIndex = (fn: number | ((prev: number) => number)) =>
+    updateDraft((d) => ({ ...d, selected: typeof fn === "function" ? fn(d.selected ?? 0) : fn }))
 
   // Formatting helpers
   const formatTime = (totalSecs: number) => {
-    const mins = Math.floor(totalSecs / 60)
-    const secs = totalSecs % 60
+    const s = Math.max(0, Math.round(totalSecs))
+    const mins = Math.floor(s / 60)
+    const secs = s % 60
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
   }
 
@@ -264,7 +273,7 @@ export function SimulazioneRunner() {
                     {isPassed ? "Prova Superata" : "Prova Non Superata"}
                   </Badge>
                   <span className="text-xs text-neutral-400 font-mono">
-                    Durata: {formatTime(totalSeconds - remainingSeconds)}
+                    Durata: {formatTime(submittedElapsed ?? 0)}
                   </span>
                 </div>
 
@@ -493,9 +502,9 @@ export function SimulazioneRunner() {
             variant="outline"
             onClick={() => {
               setGradingResult(null)
-              setAnswers({})
-              setSelectedQuestionIndex(0)
-              setRemainingSeconds(totalSeconds)
+              setDraft(null)
+              setSubmittedElapsed(null)
+              submitMutation.reset()
             }}
             className="rounded-xl gap-2"
           >
@@ -503,6 +512,44 @@ export function SimulazioneRunner() {
             <span>Rifai questa simulazione</span>
           </Button>
         </div>
+      </div>
+    )
+  }
+
+  // --- ISTRUZIONI: IL TIMER PARTE SOLO DA "INIZIA" ---
+  if (!draft) {
+    const title = simData.titolo || simData.title || "Simulazione d'esame"
+    return (
+      <div className="max-w-2xl mx-auto space-y-5 pb-12">
+        <Button variant="ghost" size="sm" onClick={() => navigate(`/corsi/${simData.course_id}?tab=esame#simulazioni`)} className="gap-2 text-xs">
+          <ArrowLeft className="h-4 w-4" /> Torna al corso
+        </Button>
+        <Card>
+          <CardHeader className="space-y-1">
+            <h1 className="text-2xl font-bold text-neutral-900 dark:text-neutral-50">{title}</h1>
+            <p className="text-sm text-neutral-500 dark:text-neutral-400">
+              {totalMinutes} minuti · {rawQuestions.length} quesiti · {totalPoints} punti
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            {simData.istruzioni_md && (
+              <section aria-label="Istruzioni della prova" className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
+                <h2 className="mb-2 font-semibold">Istruzioni</h2>
+                <MathMarkdown content={simData.istruzioni_md} />
+              </section>
+            )}
+            <ul className="list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-300">
+              <li>Il tempo parte quando premi «Inizia la prova» e scorre anche se chiudi o ricarichi la pagina.</li>
+              <li>Le risposte si salvano da sole in una bozza su questo computer.</li>
+              <li>Allo scadere del tempo la prova si consegna automaticamente, così com'è.</li>
+              <li>La correzione la fa l'AI con i criteri del profilo d'esame, solo alla consegna.</li>
+            </ul>
+            {rawQuestions.length === 0 && <p role="alert" className="text-error-600">Questa simulazione non ha quesiti.</p>}
+            <Button size="lg" className="w-full min-h-12 gap-2" disabled={rawQuestions.length === 0} onClick={start}>
+              <Clock className="h-4 w-4" /> Inizia la prova ({totalMinutes} min)
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -518,28 +565,21 @@ export function SimulazioneRunner() {
   return (
     <div className="max-w-4xl mx-auto space-y-5 pb-16">
       {/* Top Sticky Header with Timer & Actions */}
-      <div className="sticky top-0 z-20 backdrop-blur-md bg-white/90 dark:bg-neutral-950/90 py-3.5 px-4 rounded-2xl border border-neutral-200/90 dark:border-neutral-800 shadow-md flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
+      <div className="sticky top-14 z-20 backdrop-blur-md bg-white/90 dark:bg-neutral-950/90 py-3 px-3 sm:px-4 rounded-2xl border border-neutral-200/90 dark:border-neutral-800 shadow-md flex flex-wrap items-center justify-between gap-2 sm:gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              if (
-                window.confirm(
-                  "Sei sicuro di voler uscire? I progressi non consegnati andranno persi."
-                )
-              ) {
-                navigate(-1)
-              }
-            }}
+            onClick={() => navigate(`/corsi/${simData.course_id}?tab=esame#simulazioni`)}
             className="h-8 px-2 rounded-lg text-neutral-500 hover:text-neutral-900"
-            title="Esci dalla simulazione"
+            title="Esci: la bozza resta salvata e il tempo continua a scorrere"
+            aria-label="Esci dalla simulazione (la bozza resta salvata, il tempo continua)"
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
 
-          <div>
-            <h1 className="text-sm sm:text-base font-bold text-neutral-900 dark:text-neutral-50 truncate max-w-[200px] sm:max-w-xs md:max-w-md">
+          <div className="min-w-0">
+            <h1 className="text-sm sm:text-base font-bold text-neutral-900 dark:text-neutral-50 truncate">
               {simData.titolo || simData.title || "Simulazione d'Esame"}
             </h1>
             <p className="text-2xs text-neutral-500">
@@ -574,6 +614,15 @@ export function SimulazioneRunner() {
           </Button>
         </div>
       </div>
+
+      {submitMutation.error && (
+        <div role="alert" className="rounded-2xl border border-error-300 bg-error-50 p-4 text-sm dark:border-error-800 dark:bg-error-900/20">
+          <p className="font-medium">{remainingSeconds === 0 ? "Tempo scaduto, ma la consegna non è riuscita." : "Consegna non riuscita."}</p>
+          <p className="mt-1">{describeError(submitMutation.error)} La bozza è salvata.</p>
+          <Button size="sm" className="mt-2" onClick={() => submitMutation.mutate(draft)}>Riprova la consegna</Button>
+        </div>
+      )}
+      {storageWarning && <p role="status" className="text-sm text-warning-700 dark:text-warning-300">{storageWarning}</p>}
 
       {/* Questions Navigation Carousel / Pills */}
       <div className="flex items-center gap-2 overflow-x-auto py-1 px-1 scrollbar-none">
@@ -660,6 +709,7 @@ export function SimulazioneRunner() {
                       <button
                         key={optIdx}
                         type="button"
+                        disabled={remainingSeconds === 0}
                         onClick={() => handleChoiceChange(selectedQuestionIndex, optIdx)}
                         className={cn(
                           "w-full text-left p-4 rounded-2xl border transition-all flex items-start gap-3",
@@ -700,6 +750,8 @@ export function SimulazioneRunner() {
                   </div>
                   <textarea
                     rows={5}
+                    disabled={remainingSeconds === 0}
+                    aria-label="Risposta digitata"
                     value={activeAnswer.testo || ""}
                     onChange={(e) =>
                       handleTextChange(selectedQuestionIndex, e.target.value)
@@ -717,6 +769,7 @@ export function SimulazioneRunner() {
                       handlePhotosChange(selectedQuestionIndex, photos)
                     }
                     maxPhotos={4}
+                    disabled={remainingSeconds === 0}
                     label="Foto dei calcoli su quaderno (OCR & Vision AI)"
                   />
                 </div>
@@ -765,7 +818,7 @@ export function SimulazioneRunner() {
       )}
 
       {/* Confirmation Submit Modal */}
-      {showConfirmModal && (
+      {showConfirmModal && remainingSeconds > 0 && (
         <div
           role="dialog"
           aria-modal="true"
@@ -806,7 +859,7 @@ export function SimulazioneRunner() {
 
               <Button
                 type="button"
-                onClick={() => submitMutation.mutate(totalSeconds - remainingSeconds)}
+                onClick={() => draft && submitMutation.mutate(draft)}
                 disabled={submitMutation.isPending}
                 className="flex-1 rounded-xl h-10 text-xs font-semibold bg-accent-600 hover:bg-accent-700 text-white shadow-md gap-1.5"
               >

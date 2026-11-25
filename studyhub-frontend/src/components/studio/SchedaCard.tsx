@@ -63,9 +63,9 @@ export function SchedaCard({ topic, topicId, courseId, position, total, onDone }
         ? <MathMarkdown content={topic.summary_md} className="text-sm sm:text-base" />
         : <p className="text-sm text-neutral-500">La scheda di sintesi di questo argomento non è ancora pronta: studialo dalla fonte, poi passa alle domande.</p>}
       {href && (
-        href.startsWith("/api/")
-          ? <a href={href} target="_blank" rel="noreferrer" className="mt-4 inline-block text-sm text-accent-600 dark:text-accent-400 underline underline-offset-2">Apri la fonte (PDF)</a>
-          : <Link to={href} className="mt-4 inline-block text-sm text-accent-600 dark:text-accent-400 underline underline-offset-2">Rivedi il punto della lezione</Link>
+        <Link to={href} className="mt-4 inline-block text-sm text-accent-600 dark:text-accent-400 underline underline-offset-2">
+          {topic?.lecture_id ? "Rivedi il punto della lezione" : "Apri la fonte (PDF)"}
+        </Link>
       )}
       {error && (
         <div role="alert" className="mt-4 rounded-xl border border-error-300 bg-error-50 dark:bg-error-900/20 p-3 text-sm">

@@ -135,7 +135,7 @@ describe("Quaderno e flashcard", () => {
       }
     })
     mount(<FlashcardPage />, "/flashcard?corso=7")
-    expect((await screen.findByRole("link", { name: "Documento a pagina 12" })).getAttribute("href")).toBe(f.card.url_hint)
+    expect((await screen.findByRole("link", { name: "Documento a pagina 12" })).getAttribute("href")).toBe("/documento/40?pagina=12")
     fireEvent.click(screen.getByRole("button", { name: "Sospendi" }))
     expect(await screen.findByText("Sospesa")).toBeDefined()
     expect(calls).toContainEqual({ route: "PATCH /api/flashcards/10", body: { suspended: true } })

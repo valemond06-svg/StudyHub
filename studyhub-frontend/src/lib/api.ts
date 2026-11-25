@@ -11,6 +11,7 @@ import type {
   StorageStatus,
 } from "@/types"
 import { toSearchResponse, type SearchResponse } from "@/lib/search"
+import type { CourseDocuments } from "@/lib/documents"
 import {
   normalizeSession,
   type AnswerPayload,
@@ -255,6 +256,10 @@ export const api = {
   getCourseLectures: (id: number) =>
     request<any[]>(`/api/courses/${id}/lectures`).then((rows) => rows.map(enhanceLecture)),
   getNotesIndex: (id: number) => request<number[]>(`/api/courses/${id}/notes-index`),
+  getCourseDocuments: (id: number, category?: string) =>
+    request<CourseDocuments>(`/api/courses/${id}/documents${q({ category })}`),
+  getCourseAnnouncements: (id: number, last = 10) =>
+    request<{ items: string[] }>(`/api/courses/${id}/announcements${q({ last })}`),
 
   // Lectures (il JSON grezzo va passato a toLectureMedia in lib/lecture-media.ts)
   getLecture: (id: number) => request<any>(`/api/lectures/${id}`),
@@ -325,12 +330,24 @@ export const api = {
   createSession: (course_id: number, minutes: number = 45, focus_topic?: number) =>
     request<any>(`/api/study/${course_id}/sessions`, { method: "POST", body: JSON.stringify({ minutes, focus_topic }) }).then(normalizeSession),
   getSession: (id: number) => request<any>(`/api/study/sessions/${id}`).then(normalizeSession),
+  /** Sessione aperta più recente del corso (la ripresa sta sul server, non nel browser). null se non ce n'è (204). */
+  getOpenSession: (courseId: number) =>
+    request<any>(`/api/study/${courseId}/sessions/open`).then((raw) => (raw ? normalizeSession(raw) : null)),
+  abandonSession: (id: number) =>
+    request<any>(`/api/study/sessions/${id}/abandon`, { method: "POST" }).then(normalizeSession),
+  /** Scheda letta: la voce della coda viene segnata fatta sul server. */
+  seenSession: (id: number, idx: number) =>
+    request<{ ok: boolean; done: boolean }>(`/api/study/sessions/${id}/seen/${idx}`, { method: "POST" }),
   answerSession: (id: number, answer: AnswerPayload) =>
     request<AnswerResult>(`/api/study/sessions/${id}/answer`, { method: "POST", body: JSON.stringify(answer) }),
   photoSession: (id: number, photo: PhotoPayload) =>
     request<AnswerResult>(`/api/study/sessions/${id}/photo`, { method: "POST", body: JSON.stringify(photo) }),
-  revealSession: (id: number, idx: number) =>
-    request<RevealResult>(`/api/study/sessions/${id}/reveal/${idx}`, { method: "POST" }),
+  /** Mostra la soluzione. La sicurezza dichiarata qui prevale su quella inviata con l'autovalutazione. */
+  revealSession: (id: number, idx: number, body?: { confidence?: number; seconds?: number }) =>
+    request<RevealResult>(`/api/study/sessions/${id}/reveal/${idx}`, {
+      method: "POST",
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    }),
   finishSession: (id: number) =>
     request<FinishResult>(`/api/study/sessions/${id}/finish`, { method: "POST" }),
   /** Scheda letta: segna la lezione dell'argomento come completata (nessuna AI). */
@@ -383,6 +400,8 @@ export const api = {
   // Setup
   getSetupStatus: () => request<SetupStatus>(`/api/setup`),
   setupLogin: () => request<{ started: boolean }>(`/api/setup/login`, { method: "POST" }),
+  setupCourses: () => request<{ courses: number; active: number }>(`/api/setup/courses`, { method: "POST" }),
+  setupFullrun: () => request<{ started: boolean }>(`/api/setup/fullrun`, { method: "POST" }),
   getFullrunStatus: () => request<any>(`/api/fullrun`),
 
   // UI version

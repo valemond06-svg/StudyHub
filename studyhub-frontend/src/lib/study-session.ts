@@ -1,5 +1,6 @@
 // Logica pura della sessione di studio guidata, allineata a backend/src/studyhub/study/session.py.
 // La coda è quella del server, nell'ordine del server: niente bucket a tempo, si avanza per voce.
+import { documentHref } from "@/lib/documents"
 
 export type QuestionKind = "multipla" | "vero_falso" | "richiamo" | "aperta" | "esercizio"
 
@@ -68,6 +69,9 @@ export interface RevealResult {
   answer_md: string
   rubric: string[]
   source?: SourceRef
+  /** sicurezza dichiarata al momento del reveal (1-3), se salvata */
+  confidence?: number | null
+  revealed_at?: string | null
 }
 
 export interface AnswerResult {
@@ -322,7 +326,7 @@ export function sourceHref(courseId: number, src: Partial<SourceRef> | undefined
     const t = src.t_start ? `&t=${Math.floor(src.t_start)}` : ""
     return `/corsi/${courseId}?lezione=${src.lecture_id}${t}`
   }
-  if (src.doc_id) return `/api/docs/${src.doc_id}/file${src.page ? `#page=${src.page}` : ""}`
+  if (src.doc_id) return documentHref(src.doc_id, src.page)
   return null
 }
 

@@ -12,10 +12,6 @@ ORIGIN = "http://127.0.0.1:8765"
 @pytest.fixture
 def browser(ambiente, monkeypatch):
     dist = ambiente / "dist"
-    static = ambiente / "legacy"
-    static.mkdir()
-    (static / "index.html").write_text("<h1>Legacy __UI_VERSION__</h1>", encoding="utf-8")
-    monkeypatch.setattr(api, "STATIC", static)
     monkeypatch.setattr(jobs, "start_if_needed", lambda: None)
     monkeypatch.setenv("STUDYHUB_UI_DIST", str(dist))
     api._warn_missing_ui.cache_clear()
@@ -30,7 +26,7 @@ def test_react_dist_serves_assets_files_and_spa_routes(browser):
     (dist / "assets" / "app-123.js").write_text("console.log('react')", encoding="utf-8")
     (dist / "manifest.webmanifest").write_text("{}", encoding="utf-8")
 
-    for path in ("/", "/index.html", "/studio/1", "/corsi/1", "/studio/1.0"):
+    for path in ("/", "/index.html", "/studio/1", "/corsi/1", "/studio/1.0", "/legacy", "/documento/4"):
         response = client.get(path)
         assert response.status_code == 200
         assert response.text == "<div id='react-root'></div>"
@@ -43,34 +39,32 @@ def test_react_dist_serves_assets_files_and_spa_routes(browser):
     for path in ("/assets/missing.js", "/api", "/api/missing", "/media/missing", "/video/missing"):
         assert client.get(path).status_code == 404
 
-    legacy = client.get("/legacy")
-    assert legacy.status_code == 200 and "<h1>Legacy " in legacy.text and "__UI_VERSION__" not in legacy.text
-    assert legacy.headers["cache-control"] == "no-cache"
 
-
-def test_missing_dist_logs_and_serves_legacy_on_root(browser, caplog):
+def test_missing_dist_explains_how_to_install(browser, caplog):
     client, dist = browser
     assert not dist.exists()
     with caplog.at_level(logging.WARNING, logger=api.__name__):
         root = client.get("/")
-    assert root.status_code == 200 and root.text == client.get("/legacy").text
+    assert root.status_code == 503
+    assert "installa.ps1" in root.text and "<h1>" in root.text
     assert root.headers["cache-control"] == "no-cache"
     assert "Build React assente" in caplog.text
+    assert client.get("/corsi/3").status_code == 503
+    for path in ("/assets/app.js", "/api/missing", "/favicon.ico"):
+        assert client.get(path).status_code == 404
 
 
-def test_root_uses_dist_and_legacy_uses_shipped_html(client, ambiente, monkeypatch):
+def test_legacy_ui_is_retired(client, ambiente, monkeypatch):
+    assert not (api.STATIC / "index.html").exists()
     dist = ambiente / "react-dist"
     dist.mkdir()
     react = '<div id="root"></div><script type="module" src="/assets/app.js"></script>'
     (dist / "index.html").write_text(react, encoding="utf-8")
     monkeypatch.setenv("STUDYHUB_UI_DIST", str(dist))
 
-    root = client.get("/")
-    legacy = client.get("/legacy")
-    assert root.status_code == legacy.status_code == 200
-    assert root.text == react
-    assert legacy.text == (api.STATIC / "index.html").read_text(encoding="utf-8").replace("__UI_VERSION__", api._ui_version())
-    assert client.head("/legacy").headers["content-length"] == legacy.headers["content-length"]
+    assert client.get("/").text == react
+    assert client.get("/legacy").text == react  # una rotta React qualsiasi: la vecchia UI non c'è più
+    assert client.get("/api/version").json() == {"ui": str(int((dist / "index.html").stat().st_mtime))}
 
 
 def test_react_deep_link_bootstraps_same_origin_api_and_csrf(browser):

@@ -26,7 +26,7 @@ Ogni POST di setup accetta una richiesta autenticata ogni 60 secondi per indiriz
 | `GET /api/study/{course_id}` | Legge padronanza e preparazione. `prepare.status` vale `da preparare`, `in_corso` o `pronta`. `prepare.order_pending` indica che l'ordine didattico va aggiornato. |
 | `POST /api/study/{course_id}/prepare` | Avvia in background la preparazione del materiale e l'aggiornamento dell'ordine didattico. Funziona anche quando è richiesto il solo ordinamento. Accetta `{"limit": 3}` oppure `?limit=3` per limitare le unità da analizzare. |
 | `POST /api/study/{course_id}/sessions` | Avvia una sessione. Accetta `minutes` e `focus_topic` facoltativi. |
-| `GET /api/study/{course_id}/sessions/open` | Restituisce la sessione aperta più recente del corso, nello stesso formato del GET per ID. Risposta `404` quando il corso non ha sessioni aperte. |
+| `GET /api/study/{course_id}/sessions/open` | Restituisce la sessione aperta più recente del corso, nello stesso formato del GET per ID. Risposta `204` senza corpo quando il corso non ha sessioni aperte (caso normale), `404` se il corso non esiste. |
 | `GET /api/study/sessions/{sid}` | Restituisce la coda con `entries`, `resume_index`, `phase`, `status` ed eventuali `errors`. |
 | `POST /api/study/sessions/{sid}/seen/{idx}` | Segna la voce `scheda` come letta nella sessione. Risponde con `{"ok": true, "done": true}` anche sui retry. Un indice non valido o una voce di altro tipo restituiscono `400`. |
 | `POST /api/study/sessions/{sid}/reveal/{idx}` | Restituisce soluzione, criteri, fonte, `confidence` e `revealed_at`. Accetta un corpo facoltativo con `confidence` da 1 a 3 e `seconds` per il tempo trascorso prima di vedere la soluzione. I retry conservano la prima rivelazione. |
@@ -128,4 +128,15 @@ Il payload contiene solo dati diagnostici ammessi e omette credenziali, token, c
 
 `GET /api/ai/pannello` espone gli stessi dati in `providers`. `cluster` mantiene lo stato usato dal pannello e riporta URL e modello del provider locale.
 
-La radice `/` serve la build React quando è disponibile. `/legacy` serve la UI statica inclusa nel backend. Se manca la build, anche `/` serve la UI legacy.
+## Corsi: stato, materiali e avvisi
+
+| Metodo e percorso | Contratto |
+| --- | --- |
+| `GET /api/courses`, `GET /api/courses/{id}` | Includono `stage` da `corsi.yaml` (`corrente`, `arretrato`, `futuro`, `archivio`). |
+| `GET /api/study` | Ogni corso include anche `stage`, `coverage` (quota di domande provate) e `tried_items` (domande provate almeno una volta): sotto 10 la UI mostra «dati insufficienti» invece della percentuale. |
+| `GET /api/courses/{id}/documents` | `{categories: [{category, count}], documents: [{id, title, name, kind, n_pages, category, exam_date}]}` dalla classificazione `doc_tags`, senza duplicati. Filtro facoltativo `category` (i conteggi restano di tutto il corso). `404` se il corso non esiste. |
+| `GET /api/courses/{id}/announcements` | `{items: [markdown]}` con gli ultimi avvisi Moodle (dal più recente), letti da `moodle/_avvisi.md`. `last` da 1 a 30, predefinito 10. |
+
+## Interfaccia
+
+La radice `/` e ogni rotta non API servono la build React (`studyhub-frontend/dist`, o `STUDYHUB_UI_DIST`). La vecchia UI statica e le rotte `/legacy` e `/vendor/*` sono state ritirate. Se manca la build, le rotte dell'interfaccia rispondono `503` con una pagina che chiede di eseguire `installa.ps1`.

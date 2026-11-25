@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import type { BlockKind, PlanBlock, Source } from "@/lib/api-study"
+import { documentHref } from "@/lib/documents"
 
 export const blockLabels: Record<BlockKind, string> = {
   theory: "Lettura appunti",
@@ -25,7 +26,7 @@ export function blockHref(block: PlanBlock) {
 
 export function studySource(courseId: number, source: Source, seconds?: number | null) {
   if (source.lecture_id) return `/corsi/${courseId}?lezione=${source.lecture_id}${seconds != null ? `&t=${seconds}` : ""}`
-  if (source.doc_id) return `/api/docs/${source.doc_id}/file${source.page != null ? `#page=${source.page}` : ""}`
+  if (source.doc_id) return documentHref(source.doc_id, source.page)
   return null
 }
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { Flame, Award, BookOpen, TrendingUp, AlertCircle, ChevronRight, Loader2, RefreshCw, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,9 +11,11 @@ import { AIAlerts } from "@/components/home/AIAlerts"
 import { OggiStudy } from "@/components/home/OggiStudy"
 import { api } from "@/lib/api"
 import { summarizeAIProblems } from "@/lib/ai-health"
-import { averageReadiness, processedMaterial, readinessByCourse, readinessVariant, READY_THRESHOLD } from "@/lib/readiness"
+import { averageReadiness, MIN_TRIED_ITEMS, processedMaterial, readinessInfo, READY_THRESHOLD } from "@/lib/readiness"
+import { filterCourses } from "@/lib/courses"
+import { ReadinessBadge } from "@/components/study/ReadinessBadge"
 import { dedupeNotifications } from "@/lib/notifications"
-import type { AIStatusResponse, Course, PlanData, NotificationItem, StudyCourseOverview, AIPanelData } from "@/types"
+import type { AIStatusResponse, Course, PlanData, NotificationItem, StudyCourseOverview, AIPanelData, SetupStatus } from "@/types"
 import { cn, safeFormatDistance } from "@/lib/utils"
 
 function getLevelInfo(totalXP: number) {
@@ -84,6 +86,7 @@ export function Home() {
     refetchInterval: 60_000,
   })
   const aiProblems = summarizeAIProblems(aiStatus, aiPanel)
+  const { data: setup } = useQuery<SetupStatus>({ queryKey: ["setup"], queryFn: api.getSetupStatus, staleTime: 5 * 60_000 })
 
   const markRead = useMutation({
     mutationFn: api.markNotificationsRead,
@@ -106,17 +109,20 @@ export function Home() {
     plan?.week_progress?.label ??
     (plan?.week_progress ? `${plan.week_progress.completed}/${plan.week_progress.total}` : "0/7")
 
-  // Corsi attivi (stessa definizione della pagina Corsi), i prioritari in testa.
-  const activeCourses = courses
-    .filter((c) => Boolean(c.active) && !c.passed)
-    .sort((a, b) => b.priority - a.priority)
-  const priorityCount = activeCourses.filter((c) => c.priority > 0).length
-  // Prontezza reale: padronanza stimata all'esame (mastery) da /api/study
-  const readiness = readinessByCourse(studyCourses)
+  // Corsi da seguire (stato "corrente" in corsi.yaml) con l'appello più vicino in testa; gli arretrati a parte.
+  const studyById = new Map(studyCourses.map((s) => [s.id, s]))
+  const daysToExam = new Map(studyCourses.map((s) => [s.id, s.exam?.days_left ?? null]))
+  const activeCourses = filterCourses(courses, "seguo", daysToExam)
+  const backlogCourses = filterCourses(courses, "arretrati", daysToExam)
+  const infoById = new Map(courses.map((c) => [c.id, readinessInfo(studyById.get(c.id))]))
 
-  const knownReadiness = activeCourses.map((c) => readiness.get(c.id)).filter((v): v is number => v !== undefined)
+  // Prontezza media solo sui corsi con abbastanza risposte: il resto è "dati insufficienti", non 0% e non 100%.
+  const reliable = activeCourses.map((c) => infoById.get(c.id)!).filter((i) => i.reliable && i.pct !== null)
+  const knownReadiness = reliable.map((i) => i.pct!)
   const avgReadiness = averageReadiness(knownReadiness)
   const readyForExam = knownReadiness.filter((v) => v >= READY_THRESHOLD).length
+  const insufficient = activeCourses.length - reliable.length
+  const startHere = activeCourses.slice(0, 3)
 
   // Novità reali da /api/notifications, senza ripetizioni
   const groupedNews = dedupeNotifications(notifications)
@@ -160,15 +166,59 @@ export function Home() {
             Oggi
           </h1>
           {!!activeCourses.length && <p className="text-neutral-500 dark:text-neutral-400 mt-1">
-            {activeCourses.length} corsi attivi{priorityCount ? ` (${priorityCount} prioritari)` : ""} · Prontezza media {avgReadiness === null ? "n.d." : `${avgReadiness}%`}
+            {activeCourses.length} corsi da seguire{backlogCourses.length ? ` · ${backlogCourses.length} arretrati` : ""} · Prontezza media {avgReadiness === null ? "dati insufficienti" : `${avgReadiness}% su ${reliable.length} corsi misurati`}
           </p>}
         </div>
       </div>
 
+      {setup && !setup.ready && (
+        <div role="status" className="flex flex-col gap-2 rounded-xl border border-warning-300 bg-warning-50 p-4 text-sm dark:border-warning-800 dark:bg-warning-900/20 sm:flex-row sm:items-center sm:justify-between">
+          <span>L'installazione non è completa: {setup.checks.filter((c) => c.required && !c.ok).map((c) => c.label).join(", ")}.</span>
+          <Button size="sm" asChild><Link to="/benvenuto">Completa il primo avvio</Link></Button>
+        </div>
+      )}
+
+      {!loading && !hasError && startHere.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg">Da dove partire oggi</CardTitle>
+            <p className="text-sm text-neutral-500 dark:text-neutral-400">I corsi che segui adesso, dall'appello più vicino.</p>
+          </CardHeader>
+          <CardContent>
+            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+              {startHere.map((course) => {
+                const study = studyById.get(course.id)
+                const info = infoById.get(course.id)!
+                const days = study?.exam?.days_left
+                return (
+                  <li key={course.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <Link to={`/corsi/${course.id}`} className="font-medium break-words hover:underline">{course.fullname}</Link>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                        {days != null ? `Appello tra ${days} ${days === 1 ? "giorno" : "giorni"}` : "Nessun appello in calendario"}
+                        {info.reliable ? ` · ${info.tried} domande provate` : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <ReadinessBadge info={info} />
+                      <Button size="sm" asChild><Link to={`/studio/${course.id}?duration=25`}>Allenati 25 min</Link></Button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       <OggiStudy />
       {loadingState}
       {errorState}
-      {!loading && !hasError && !activeCourses.length && <p className="text-sm text-neutral-500 dark:text-neutral-400">Nessun corso attivo nel catalogo.</p>}
+      {!loading && !hasError && !activeCourses.length && (
+        <p className="text-sm text-neutral-500 dark:text-neutral-400">
+          Nessun corso da seguire nel catalogo. <Link className="underline" to="/benvenuto">Configura i corsi</Link> o metti <code>stato: corrente</code> in corsi.yaml.
+        </p>
+      )}
       {!loading && !hasError && activeCourses.length > 0 && <>
       <AIAlerts problems={aiProblems} />
 
@@ -204,16 +254,23 @@ export function Home() {
                   />
                 </svg>
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-2xl font-bold text-neutral-950 dark:text-neutral-50">{avgReadiness === null ? "n.d." : `${avgReadiness}%`}</span>
+                  <span className={cn("font-bold text-neutral-950 dark:text-neutral-50 text-center", avgReadiness === null ? "text-xs italic font-normal px-2" : "text-2xl")}>
+                    {avgReadiness === null ? "dati insufficienti" : `${avgReadiness}%`}
+                  </span>
                 </div>
               </div>
               <div className="space-y-1">
-                <p className="text-sm text-neutral-500 dark:text-neutral-400">Con dati di studio</p>
-                <p className="text-xl font-semibold">{knownReadiness.length}</p>
+                <p className="text-sm text-neutral-500 dark:text-neutral-400">Corsi misurati</p>
+                <p className="text-xl font-semibold">{reliable.length} di {activeCourses.length}</p>
                 <p className="text-sm text-neutral-500 dark:text-neutral-400">Pronti per l'esame</p>
                 <p className="text-xl font-semibold text-success-600">{readyForExam}</p>
               </div>
             </div>
+            {insufficient > 0 && (
+              <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
+                {insufficient} {insufficient === 1 ? "corso ha" : "corsi hanno"} meno di {MIN_TRIED_ITEMS} risposte: la loro prontezza non è ancora misurabile.
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -338,18 +395,18 @@ export function Home() {
           <CardTitle className="flex items-center justify-between">
             <span className="flex items-center gap-2">
               <BookOpen className="h-5 w-5" />
-              Corsi attivi
+              Corsi da seguire
             </span>
             <Badge variant="outline">{activeCourses.length}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
           {activeCourses.length === 0 ? (
-            <p className="text-neutral-500 dark:text-neutral-400 text-center py-4">Nessun corso attivo.</p>
+            <p className="text-neutral-500 dark:text-neutral-400 text-center py-4">Nessun corso da seguire.</p>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {activeCourses.map((course) => {
-                const pct = readiness.get(course.id) ?? null
+                const info = infoById.get(course.id)!
                 const material = processedMaterial(course)
                 const exam = courseExamByCourseId.get(course.id)
                 const planCourse = planCourseByCourseId.get(course.id)
@@ -371,13 +428,11 @@ export function Home() {
                           {planCourse?.days_left != null && ` · appello tra ${planCourse.days_left} giorni`}
                         </p>
                       </div>
-                      <Badge variant={readinessVariant(pct)} title="Prontezza all'esame (padronanza stimata)">
-                        {pct === null ? "n.d." : `${pct}%`}
-                      </Badge>
+                      <ReadinessBadge info={info} />
                     </div>
                     <Separator className="my-3" />
                     <div className="flex items-center justify-between">
-                      <Progress value={pct ?? 0} className="flex-1 h-1.5" />
+                      <Progress value={info.reliable ? info.pct ?? 0 : 0} className="flex-1 h-1.5" />
                       {material.total > 0 && (
                         <span className="ml-3 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap" title="Lezioni con audio o trascrizione">
                           materiale {material.done}/{material.total}
@@ -393,6 +448,19 @@ export function Home() {
                   </button>
                 )
               })}
+            </div>
+          )}
+          {backlogCourses.length > 0 && (
+            <div className="mt-5 border-t border-neutral-100 pt-4 dark:border-neutral-800">
+              <h3 className="mb-2 text-sm font-medium text-neutral-500 dark:text-neutral-400">Arretrati (in secondo piano)</h3>
+              <ul className="space-y-1 text-sm">
+                {backlogCourses.map((course) => (
+                  <li key={course.id} className="flex items-center justify-between gap-2">
+                    <Link to={`/corsi/${course.id}`} className="min-w-0 truncate hover:underline">{course.fullname}</Link>
+                    <ReadinessBadge info={infoById.get(course.id)!} />
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </CardContent>

@@ -95,9 +95,11 @@ export function SessionSummary({ result, courseId, duration, focusTopicForNext }
                   {w.topic && <p className="text-xs text-neutral-500 mb-1"><MathInline content={w.topic} /></p>}
                   <MathMarkdown content={w.prompt_md} className="text-sm" />
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {href && (href.startsWith("/api/")
-                      ? <a href={href} target="_blank" rel="noreferrer" className="text-sm text-accent-600 dark:text-accent-400 underline underline-offset-2">Apri la fonte</a>
-                      : <Link to={href} className="text-sm text-accent-600 dark:text-accent-400 underline underline-offset-2">Rivedi a lezione</Link>)}
+                    {href && (
+                      <Link to={href} className="text-sm text-accent-600 dark:text-accent-400 underline underline-offset-2">
+                        {w.lecture_id ? "Rivedi a lezione" : "Apri la fonte"}
+                      </Link>
+                    )}
                     {!cardsUnavailable && (
                       <Button size="sm" variant="outline" className="ml-auto gap-1.5" disabled={state === "pending" || state === "done"} onClick={() => makeCard(w.attempt_id)}>
                         {state === "done" ? <><Check className="h-4 w-4" /> Flashcard creata</> : <><Layers className="h-4 w-4" /> Crea flashcard</>}

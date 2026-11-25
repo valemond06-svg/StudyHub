@@ -4,6 +4,7 @@
  *    semantic: boolean}
  * (backend/src/studyhub/search.py). Lo snippet marca i termini trovati con [[ ]].
  */
+import { documentHref } from "@/lib/documents"
 
 export type SearchGroup = "lezioni" | "documenti" | "appunti" | "codice"
 
@@ -126,8 +127,7 @@ export function searchTarget(hit: SearchHit): SearchTarget {
   if (hit.lectureId !== null && hit.tStart !== null) {
     return { type: "lecture", courseId: hit.courseId, lectureId: hit.lectureId, t: Math.max(0, Math.floor(hit.tStart)) }
   }
-  const page = hit.kind === "pdf" && hit.page ? `#page=${hit.page}` : ""
-  return { type: "document", url: `/api/docs/${hit.docId}/file${page}` }
+  return { type: "document", url: documentHref(hit.docId, hit.kind === "pdf" ? hit.page : null) }
 }
 
 /** "▶ 12:34", "p. 7" o il tipo: dove si trova il risultato. */

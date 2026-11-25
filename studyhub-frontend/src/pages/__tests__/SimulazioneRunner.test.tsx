@@ -1,16 +1,20 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { SimulazioneRunner } from "../SimulazioneRunner"
 import { api } from "@/lib/api"
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    getSimulation: vi.fn(),
-    submitSimulation: vi.fn(),
-  },
-}))
+vi.mock("@/lib/api", async (orig) => {
+  const real = await orig<typeof import("@/lib/api")>()
+  return {
+    ...real,
+    api: {
+      getSimulation: vi.fn(),
+      submitSimulation: vi.fn(),
+    },
+  }
+})
 
 const mockSimulation = {
   id: 12,
@@ -43,156 +47,153 @@ const mockSimulation = {
   attempts: [],
 }
 
-describe("SimulazioneRunner Page", () => {
+const grading = {
+  attempt_id: 1,
+  voto_30: 28,
+  superato: true,
+  commento_md: "Ottima comprensione dei concetti di stabilità e risposta al gradino.",
+  da_ripassare: ["Polinomio ausiliario"],
+  valutazioni: [
+    { indice: 0, punti: 5, feedback_md: "Risposta corretta e precisa." },
+    { indice: 1, punti: 9, feedback_md: "Calcolo corretto, solo una piccola imprecisione sui limiti." },
+  ],
+  soluzioni: [
+    { soluzione_md: "I poli devono avere $\\text{Re}(p) < 0$.", corretta: 0, punti_max: 5 },
+    { soluzione_md: "$y(t) = \\frac{1}{2}(1 - e^{-2t})u(t)$", corretta: -1, punti_max: 10 },
+  ],
+}
+
+const DRAFT_KEY = "studyhub-sim-draft-12"
+
+function renderRunner(client: QueryClient) {
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={["/simulazione/12"]}>
+        <Routes>
+          <Route path="/simulazione/:id" element={<SimulazioneRunner />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe("SimulazioneRunner", () => {
   let queryClient: QueryClient
 
   beforeEach(() => {
     vi.clearAllMocks()
-    queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-      },
-    })
+    window.localStorage.clear()
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   })
+  afterEach(() => vi.useRealTimers())
 
-  it("loads and displays simulation title, timer, and question prompt", async () => {
+  it("mostra le istruzioni prima: il timer parte solo da 'Inizia la prova'", async () => {
     vi.mocked(api.getSimulation).mockResolvedValueOnce(mockSimulation)
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={["/simulazione/12"]}>
-          <Routes>
-            <Route path="/simulazione/:id" element={<SimulazioneRunner />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    )
-
+    renderRunner(queryClient)
     expect(screen.getByText("Caricamento simulazione d'esame...")).toBeDefined()
+    expect(await screen.findByText("Simulazione Ufficiale Appello Invernale")).toBeDefined()
+    expect(screen.getByText("Risolvere tutti i quesiti con rigore.")).toBeDefined()
+    expect(screen.getByText(/60 minuti · 2 quesiti · 15 punti/)).toBeDefined()
+    expect(screen.queryByText(/Qual è la condizione necessaria/)).toBeNull()
+    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull()
 
-    await waitFor(() => {
-      expect(screen.getByText("Simulazione Ufficiale Appello Invernale")).toBeDefined()
-    })
-
-    // Check timer format MM:SS
-    expect(screen.getByText(/60:00|59:59/)).toBeDefined()
-
-    // Check question 1
+    fireEvent.click(screen.getByRole("button", { name: /Inizia la prova/ }))
+    expect(screen.getByText("60:00")).toBeDefined()
     expect(screen.getByText(/Qual è la condizione necessaria per la stabilità/)).toBeDefined()
-    expect(screen.getByText("Tutti i poli a parte reale strettamente negativa")).toBeDefined()
+    const draft = JSON.parse(window.localStorage.getItem(DRAFT_KEY)!)
+    expect(draft.deadline - draft.startedAt).toBe(3_600_000)
   })
 
-  it("allows selecting multiple-choice option and moving to next question", async () => {
+  it("salva la risposta nella bozza e passa al quesito successivo", async () => {
     vi.mocked(api.getSimulation).mockResolvedValueOnce(mockSimulation)
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={["/simulazione/12"]}>
-          <Routes>
-            <Route path="/simulazione/:id" element={<SimulazioneRunner />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText("Simulazione Ufficiale Appello Invernale")).toBeDefined()
-    })
-
-    // Select option A
-    const optA = screen.getByText("Tutti i poli a parte reale strettamente negativa")
-    fireEvent.click(optA)
-
-    // Navigate to next question
-    const nextBtn = screen.getByText("Prossimo Quesito")
-    fireEvent.click(nextBtn)
-
-    // Question 2 should be displayed
+    renderRunner(queryClient)
+    fireEvent.click(await screen.findByRole("button", { name: /Inizia la prova/ }))
+    fireEvent.click(screen.getByText("Tutti i poli a parte reale strettamente negativa"))
+    fireEvent.click(screen.getByText("Prossimo Quesito"))
     await waitFor(() => {
       expect(screen.getByText("Quesito 2 di 2")).toBeDefined()
       expect(screen.getByPlaceholderText(/Scrivi qui la spiegazione/)).toBeDefined()
     })
+    const draft = JSON.parse(window.localStorage.getItem(DRAFT_KEY)!)
+    expect(draft.answers["0"].scelta).toBe(0)
+    expect(draft.selected).toBe(1)
   })
 
-  it("submits the simulation and renders grading report card", async () => {
+  it("consegna con conferma, mostra la correzione e cancella la bozza", async () => {
     vi.mocked(api.getSimulation).mockResolvedValue(mockSimulation)
-    vi.mocked(api.submitSimulation).mockResolvedValueOnce({
-      attempt_id: 1,
-      voto_30: 28,
-      superato: true,
-      commento_md: "Ottima comprensione dei concetti di stabilità e risposta al gradino.",
-      da_ripassare: ["Polinomio ausiliario"],
-      valutazioni: [
-        { indice: 0, punti: 5, feedback_md: "Risposta corretta e precisa." },
-        { indice: 1, punti: 9, feedback_md: "Calcolo corretto, solo una piccola imprecisione sui limiti." },
-      ],
-      soluzioni: [
-        { soluzione_md: "I poli devono avere $\\text{Re}(p) < 0$.", corretta: 0, punti_max: 5 },
-        { soluzione_md: "$y(t) = \\frac{1}{2}(1 - e^{-2t})u(t)$", corretta: -1, punti_max: 10 },
-      ],
-    })
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={["/simulazione/12"]}>
-          <Routes>
-            <Route path="/simulazione/:id" element={<SimulazioneRunner />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText("Simulazione Ufficiale Appello Invernale")).toBeDefined()
-    })
-
-    // Click submit button in header
-    const submitBtn = screen.getByText("Consegna Esame")
-    fireEvent.click(submitBtn)
-
-    // Confirm dialog appears
+    vi.mocked(api.submitSimulation).mockResolvedValueOnce(grading)
+    renderRunner(queryClient)
+    fireEvent.click(await screen.findByRole("button", { name: /Inizia la prova/ }))
+    fireEvent.click(screen.getByText("Consegna Esame"))
     expect(screen.getByText("Vuoi consegnare la prova?")).toBeDefined()
-
-    // Click confirm
-    const confirmBtn = screen.getByText("Conferma e Consegna")
-    fireEvent.click(confirmBtn)
-
-    // Grading view appears
+    fireEvent.click(screen.getByText("Conferma e Consegna"))
     await waitFor(() => {
       expect(screen.getByText("28")).toBeDefined()
       expect(screen.getByText("Prova Superata")).toBeDefined()
-      expect(screen.getByText("Giudizio del Docente AI")).toBeDefined()
       expect(screen.getByText(/Ottima comprensione dei concetti/)).toBeDefined()
       expect(screen.getByText("Polinomio ausiliario")).toBeDefined()
     })
+    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull()
   })
 
-  it("consegna 50 minuti dopo 3000 secondi di countdown", async () => {
-    queryClient.setQueryData(["simulation", "12"], mockSimulation)
+  it("scadenza assoluta: dopo 3000 s mancano 10:00 e la consegna manda 50 minuti", async () => {
+    let now = 1_000_000_000
+    vi.spyOn(Date, "now").mockImplementation(() => now)
     vi.mocked(api.getSimulation).mockResolvedValue(mockSimulation)
     vi.mocked(api.submitSimulation).mockImplementation(() => new Promise(() => {}))
-    vi.useFakeTimers()
-    try {
-      render(
-        <QueryClientProvider client={queryClient}>
-          <MemoryRouter initialEntries={["/simulazione/12"]}>
-            <Routes>
-              <Route path="/simulazione/:id" element={<SimulazioneRunner />} />
-            </Routes>
-          </MemoryRouter>
-        </QueryClientProvider>,
-      )
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] })
+    queryClient.setQueryData(["simulation", "12"], mockSimulation)
+    renderRunner(queryClient)
+    fireEvent.click(screen.getByRole("button", { name: /Inizia la prova/ }))
+    now += 3_000_000
+    await act(async () => { vi.advanceTimersByTime(1000) })
+    expect(screen.getByText("10:00")).toBeDefined()
+    fireEvent.click(screen.getByText("Consegna Esame"))
+    await act(async () => { fireEvent.click(screen.getByText("Conferma e Consegna")) })
+    expect(api.submitSimulation).toHaveBeenCalledExactlyOnceWith("12", expect.any(Array), 50)
+  })
 
-      await act(async () => vi.advanceTimersByTimeAsync(3_000_000))
-      expect(screen.getByText("10:00")).toBeDefined()
-      fireEvent.click(screen.getByText("Consegna Esame"))
-      await act(async () => {
-        fireEvent.click(screen.getByText("Conferma e Consegna"))
-        await vi.advanceTimersByTimeAsync(0)
-      })
-      expect(api.submitSimulation).toHaveBeenCalledExactlyOnceWith("12", expect.any(Array), 50)
-    } finally {
-      vi.useRealTimers()
-    }
+  it("una ricarica riprende la bozza con il tempo che restava davvero", async () => {
+    const now = Date.now()
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      startedAt: now - 50 * 60_000, deadline: now + 10 * 60_000, selected: 1,
+      answers: { 0: { testo: "", scelta: 2, immagini: [] }, 1: { testo: "y(t) = ...", scelta: null, immagini: [] } },
+    }))
+    vi.mocked(api.getSimulation).mockResolvedValueOnce(mockSimulation)
+    renderRunner(queryClient)
+    expect(await screen.findByText(/10:00|09:59/)).toBeDefined()
+    expect(screen.queryByRole("button", { name: /Inizia la prova/ })).toBeNull()
+    expect(screen.getByText("Quesito 2 di 2")).toBeDefined()
+    expect((screen.getByPlaceholderText(/Scrivi qui la spiegazione/) as HTMLTextAreaElement).value).toBe("y(t) = ...")
+    expect(screen.getByText(/2 di 2 risposte completate/)).toBeDefined()
+  })
+
+  it("allo zero consegna da sola, anche se riapri la pagina dopo la scadenza", async () => {
+    const now = Date.now()
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      startedAt: now - 70 * 60_000, deadline: now - 10 * 60_000, selected: 0,
+      answers: { 0: { testo: "", scelta: 0, immagini: [] } },
+    }))
+    vi.mocked(api.getSimulation).mockResolvedValue(mockSimulation)
+    vi.mocked(api.submitSimulation).mockResolvedValueOnce(grading)
+    renderRunner(queryClient)
+    expect(await screen.findByText("Prova Superata")).toBeDefined()
+    expect(api.submitSimulation).toHaveBeenCalledTimes(1)
+    const [, answers, minutes] = vi.mocked(api.submitSimulation).mock.calls[0]
+    expect(answers[0]).toMatchObject({ scelta: 0 })
+    expect(minutes).toBe(60)
+  })
+
+  it("se la consegna automatica fallisce resta la bozza con 'Riprova la consegna'", async () => {
+    const now = Date.now()
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ startedAt: now - 61 * 60_000, deadline: now - 60_000, selected: 0, answers: {} }))
+    vi.mocked(api.getSimulation).mockResolvedValue(mockSimulation)
+    vi.mocked(api.submitSimulation).mockRejectedValueOnce(new Error("AI non raggiungibile")).mockResolvedValueOnce(grading)
+    renderRunner(queryClient)
+    expect((await screen.findByRole("alert")).textContent).toContain("Tempo scaduto")
+    expect(window.localStorage.getItem(DRAFT_KEY)).not.toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Riprova la consegna" }))
+    expect(await screen.findByText("Prova Superata")).toBeDefined()
+    expect(api.submitSimulation).toHaveBeenCalledTimes(2)
   })
 })

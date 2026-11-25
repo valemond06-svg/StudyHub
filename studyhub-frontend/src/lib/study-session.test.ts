@@ -92,7 +92,7 @@ describe("study-session", () => {
 
   it("link alla fonte: lezione al secondo, PDF alla pagina", () => {
     expect(sourceHref(7, { lecture_id: 9, t_start: 75.6 })).toBe("/corsi/7?lezione=9&t=75")
-    expect(sourceHref(7, { doc_id: 3, page: 12 })).toBe("/api/docs/3/file#page=12")
+    expect(sourceHref(7, { doc_id: 3, page: 12 })).toBe("/documento/3?pagina=12")
     expect(sourceHref(7, {})).toBeNull()
   })
 

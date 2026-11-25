@@ -174,6 +174,7 @@ def overview(course_id: int) -> dict:
     return {
         "course": course, "exam": exam, "topics": topics, "n_items": len(items), "due": due,
         "ready_now": round(ready_now, 3), "ready_exam": round(ready_exam, 3), "coverage": round(coverage, 3),
+        "tried_items": sum(1 for it in items if it["attempts"]),
         "horizon": exam["date"] if exam else (now + timedelta(days=HORIZON_DAYS)).date().isoformat(),
         "grade_estimate": estimated_grade(ready_exam, coverage), "best_sim": sims,
         "overconfidence": None if overconf is None else round(overconf, 2),

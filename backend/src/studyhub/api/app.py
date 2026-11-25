@@ -148,7 +148,7 @@ def _lecture(lecture_id: int) -> dict:
 def courses(token: str = Depends(get_current_token)):
     with session() as db:
         rows = db.execute(
-            """SELECT c.id, c.fullname, c.year_of_study, c.passed, c.active, c.priority, c.folder,
+            """SELECT c.id, c.fullname, c.year_of_study, c.passed, c.active, c.priority, c.folder, c.stage,
                       COUNT(l.id) AS lectures, SUM(l.status IN ('media_ok','trascritta')) AS ready
                FROM courses c LEFT JOIN lectures l ON l.course_id = c.id
                GROUP BY c.id ORDER BY c.active DESC, c.year_of_study DESC, c.priority DESC, c.fullname"""
@@ -160,7 +160,7 @@ def courses(token: str = Depends(get_current_token)):
 def course_detail(course_id: int, token: str = Depends(get_current_token)):
     with session() as db:
         row = db.execute(
-            """SELECT c.id, c.fullname, c.year_of_study, c.passed, c.active, c.priority, c.folder,
+            """SELECT c.id, c.fullname, c.year_of_study, c.passed, c.active, c.priority, c.folder, c.stage,
                       COUNT(l.id) AS lectures, SUM(l.status IN ('media_ok','trascritta')) AS ready
                FROM courses c LEFT JOIN lectures l ON l.course_id = c.id
                WHERE c.id = ? GROUP BY c.id""", (course_id,)
@@ -190,6 +190,48 @@ def notes_index(course_id: int, token: str = Depends(get_current_token)):
     with session() as db:
         return [r[0] for r in db.execute(
             "SELECT DISTINCT target_id FROM ai_outputs WHERE kind='lecture_notes' AND course_id=?", (course_id,))]
+
+
+def _course_row(course_id: int) -> dict:
+    with session() as db:
+        row = db.execute("SELECT id, fullname, folder FROM courses WHERE id=?", (course_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Corso non trovato")
+    return dict(row)
+
+
+@app.get("/api/courses/{course_id}/documents")
+def course_documents(course_id: int, category: str | None = None, token: str = Depends(get_current_token)):
+    """Materiale del corso per categoria (esami passati, soluzioni, formulari...), dalla classificazione di docclass."""
+    _course_row(course_id)
+    with session() as db:
+        categories = [dict(r) for r in db.execute(
+            """SELECT t.category, COUNT(*) AS count FROM doc_tags t JOIN documents d ON d.id=t.doc_id
+               WHERE d.course_id=? AND d.duplicate_of IS NULL GROUP BY t.category ORDER BY 2 DESC, 1""", (course_id,))]
+        where, args = "d.course_id=? AND d.duplicate_of IS NULL", [course_id]
+        if category:
+            where += " AND t.category=?"
+            args.append(category)
+        documents = [dict(r) for r in db.execute(
+            f"""SELECT d.id, d.title, d.path, d.kind, d.n_pages, t.category, t.exam_date
+                FROM doc_tags t JOIN documents d ON d.id=t.doc_id WHERE {where}
+                ORDER BY t.category, t.exam_date DESC, d.path LIMIT 500""", args)]
+    for d in documents:
+        d["name"] = Path(d.pop("path")).name
+    return {"categories": categories, "documents": documents}
+
+
+@app.get("/api/courses/{course_id}/announcements")
+def course_announcements(course_id: int, last: int = 10, token: str = Depends(get_current_token)):
+    """Ultimi avvisi Moodle del docente (dal file moodle/_avvisi.md scritto dal sync), dal più recente."""
+    course = _course_row(course_id)
+    if not course["folder"]:
+        return {"items": []}
+    path = uni_path(course["folder"]) / "moodle" / "_avvisi.md"
+    if not path.is_file():
+        return {"items": []}
+    parts = [p.strip() for p in path.read_text(encoding="utf-8").split("\n\n---\n\n") if p.strip()]
+    return {"items": parts[:max(1, min(last, 30))]}
 
 
 @app.get("/api/lectures/{lecture_id}")
@@ -764,15 +806,17 @@ def study_courses(token: str = Depends(get_current_token)):
     from ..study import bank, mastery
     from ..study.archetype import get_course_archetype
     with session() as db:
-        ids = [r[0] for r in db.execute("""SELECT id FROM courses WHERE active=1 AND folder IS NOT NULL
-                                           ORDER BY priority DESC, year_of_study DESC, fullname""")]
+        rows = db.execute("""SELECT id, stage FROM courses WHERE active=1 AND folder IS NOT NULL
+                             ORDER BY priority DESC, year_of_study DESC, fullname""").fetchall()
+    stages = {r["id"]: r["stage"] for r in rows}
     out = []
-    for cid in ids:
+    for cid in stages:
         ov, pr = mastery.overview(cid), bank.prepare_status(cid)
         nxt = next(((i + 1, t["name"]) for i, t in enumerate(ov["topics"]) if not t["learned"]), None)
         arch = get_course_archetype(cid, ov["course"]["fullname"])
         out.append({
-            "id": cid, "name": ov["course"]["fullname"],
+            "id": cid, "name": ov["course"]["fullname"], "stage": stages[cid],
+            "coverage": ov["coverage"], "tried_items": ov["tried_items"],
             "archetype_id": arch.archetype_id,
             "archetype_title": arch.title,
             "archetype_badge": arch.badge,
@@ -909,11 +953,13 @@ def study_session_get(sid: int, token: str = Depends(get_current_token)):
 
 @app.get("/api/study/{course_id}/sessions/open")
 def study_session_open(course_id: int, token: str = Depends(get_current_token)):
+    """Sessione aperta più recente del corso; 204 senza corpo se non ce n'è (caso normale, non un errore)."""
     from ..study import session as ss
+    _need("course", course_id)
     try:
         return ss.get_open(course_id)
     except KeyError:
-        raise HTTPException(404, "Nessuna sessione aperta per questo corso.")
+        return Response(status_code=204)
 
 
 @app.post("/api/study/sessions/{sid}/abandon")
@@ -1292,23 +1338,12 @@ def notifications_read(_csrf: None = Depends(csrf_protect), token: str = Depends
     return {"ok": True}
 
 
-@app.get("/vendor/{rel:path}")
-def vendor(rel: str):
-    base = (STATIC / "vendor").resolve()
-    target = (base / rel).resolve()
-    if not target.is_relative_to(base) or not target.is_file():
-        raise HTTPException(404)
-    return FileResponse(target)
-
-
 NO_CACHE = {"Cache-Control": "no-cache"}  # il browser ricontrolla sempre: dopo un aggiornamento vedi subito la nuova versione
 
 
 def _ui_version() -> str:
-    for page in (STATIC / "index.html", ui_dist_path() / "index.html"):
-        if page.is_file():
-            return str(int(page.stat().st_mtime))
-    return ""
+    page = ui_dist_path() / "index.html"
+    return str(int(page.stat().st_mtime)) if page.is_file() else ""
 
 
 _clients: dict[str, dict] = {}
@@ -1354,21 +1389,20 @@ def _with_ui_cookie(response: Response) -> Response:
     return response
 
 
-@app.api_route("/legacy", methods=["GET", "HEAD"], include_in_schema=False)
-def legacy(request: Request):
-    page = STATIC / "index.html"
-    if not page.is_file():
-        raise HTTPException(404)
-    version = _ui_version()
-    _clients[request.headers.get("user-agent", "")[:120]] = {"version": "pagina servita " + version,
-                                                              "seen": datetime.now().isoformat(timespec="seconds")}
-    html = page.read_text(encoding="utf-8").replace("__UI_VERSION__", version)
-    return _with_ui_cookie(HTMLResponse(html, headers=NO_CACHE))
+MISSING_UI_HTML = """<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StudyHub: interfaccia da installare</title>
+<style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;line-height:1.5}
+code{background:#eee;padding:.1rem .3rem;border-radius:.25rem}</style></head>
+<body><h1>Interfaccia di StudyHub non installata</h1>
+<p>Il server funziona, ma manca la build dell'interfaccia (<code>studyhub-frontend/dist</code>).</p>
+<p>Esegui <code>installa.ps1</code> nella cartella di StudyHub (oppure <code>npm run build</code> in
+<code>studyhub-frontend</code>), poi ricarica questa pagina.</p></body></html>"""
 
 
 @lru_cache(maxsize=1)
 def _warn_missing_ui(dist: Path) -> None:
-    logging.getLogger(__name__).warning("Build React assente in %s, uso la UI legacy sulla radice", dist)
+    logging.getLogger(__name__).warning("Build React assente in %s: esegui installa.ps1", dist)
 
 
 app.include_router(study_router)
@@ -1392,9 +1426,9 @@ def index(request: Request, rel: str):
             return FileResponse(target, headers=headers)
         if section != "assets" and rel != "favicon.png":
             return _with_ui_cookie(FileResponse(entrypoint, headers=NO_CACHE))
-    elif not rel:
+    elif section != "assets" and "." not in rel.rpartition("/")[2]:
         _warn_missing_ui(dist)
-        return legacy(request)
+        return HTMLResponse(MISSING_UI_HTML, status_code=503, headers=NO_CACHE)
 
     if rel == "favicon.png" and (STATIC / "favicon.png").is_file():
         return FileResponse(STATIC / "favicon.png")

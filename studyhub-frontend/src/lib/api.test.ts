@@ -7,6 +7,34 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("API sessioni (blocco 3)", () => {
+  it("sessions/open: 204 = nessuna sessione aperta (null), 200 = sessione normalizzata", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(Response.json({ id: 31, course_id: 7, entries: [{ t: "scheda", topic: 4 }] }))
+    vi.stubGlobal("fetch", fetch)
+    await expect(api.getOpenSession(7)).resolves.toBeNull()
+    const s = await api.getOpenSession(7)
+    expect(s).toMatchObject({ id: 31, entries: [{ idx: 0, done: false }] })
+    expect(fetch.mock.calls[0][0]).toBe("/api/study/7/sessions/open")
+  })
+
+  it("reveal manda sicurezza e secondi solo se presenti; seen e abandon sono POST", async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(Response.json({ ok: true, done: true, entries: [] })))
+    vi.stubGlobal("fetch", fetch)
+    setCsrfToken("t")
+    await api.revealSession(31, 2, { confidence: 3, seconds: 41.5 })
+    await api.revealSession(31, 2)
+    await api.seenSession(31, 0)
+    await api.abandonSession(31)
+    expect(fetch.mock.calls[0][1].body).toBe(JSON.stringify({ confidence: 3, seconds: 41.5 }))
+    expect(fetch.mock.calls[1][1].body).toBeUndefined()
+    expect(fetch.mock.calls.slice(2).map((c) => [c[0], c[1].method])).toEqual([
+      ["/api/study/sessions/31/seen/0", "POST"], ["/api/study/sessions/31/abandon", "POST"],
+    ])
+  })
+})
+
 describe("API flashcard", () => {
   it("invia il corso nella query dell'import mantenendo CSRF e credenziali", async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ added: 2 }))

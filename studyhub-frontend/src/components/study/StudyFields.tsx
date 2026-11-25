@@ -35,10 +35,13 @@ export function SourceLink({ courseId, source, seconds }: { courseId: number; so
   const href = studySource(courseId, source, seconds)
   if (!href) return null
   const className = "inline-flex items-center gap-1 text-sm font-medium text-accent-600 hover:underline dark:text-accent-400"
-  return source.lecture_id ? (
-    <Link to={href} className={className}><ArrowUpRight className="size-4" />{seconds == null ? "Apri lezione" : `Lezione a ${formatTime(seconds)}`}</Link>
-  ) : (
-    <a href={href} target="_blank" rel="noreferrer" className={className}><ArrowUpRight className="size-4" />{source.page == null ? "Apri documento" : `Documento a pagina ${source.page}`}</a>
+  return (
+    <Link to={href} className={className}>
+      <ArrowUpRight className="size-4" />
+      {source.lecture_id
+        ? (seconds == null ? "Apri lezione" : `Lezione a ${formatTime(seconds)}`)
+        : (source.page == null ? "Apri documento" : `Documento a pagina ${source.page}`)}
+    </Link>
   )
 }
 

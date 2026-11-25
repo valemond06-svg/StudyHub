@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { Studio } from "../Studio"
 import { api, ApiError } from "@/lib/api"
 import { normalizeSession, type AnswerResult, type FinishResult } from "@/lib/study-session"
-import { useSessionStore } from "@/store/session"
 
 vi.mock("@/lib/api", async (orig) => {
   const real = await orig<typeof import("@/lib/api")>()
@@ -15,6 +14,9 @@ vi.mock("@/lib/api", async (orig) => {
     api: {
       getCourse: vi.fn(),
       getSession: vi.fn(),
+      getOpenSession: vi.fn(),
+      abandonSession: vi.fn(),
+      seenSession: vi.fn(),
       createSession: vi.fn(),
       answerSession: vi.fn(),
       photoSession: vi.fn(),
@@ -86,7 +88,8 @@ async function start() {
 beforeEach(() => {
   vi.resetAllMocks()
   window.scrollTo = (() => {}) as typeof window.scrollTo // jsdom non lo implementa
-  useSessionStore.setState({ currentSession: null, todaySessions: [] })
+  vi.mocked(api.getOpenSession).mockResolvedValue(null)
+  vi.mocked(api.seenSession).mockResolvedValue({ ok: true, done: true })
   vi.mocked(api.getCourse).mockResolvedValue({ id: 7, fullname: "Analisi", shortname: "Analisi" } as any)
   vi.mocked(api.finishSession).mockResolvedValue(finished())
   vi.mocked(api.completeTopicLesson).mockResolvedValue({ ok: true })
@@ -104,28 +107,46 @@ describe("Studio: avvio e ripresa", () => {
     await start()
     await screen.findByText("Prima domanda")
     expect(api.createSession).toHaveBeenCalledExactlyOnceWith(7, 25, undefined)
-    expect(useSessionStore.getState().currentSession?.backendId).toBe(28)
+    expect(api.getOpenSession).toHaveBeenCalledWith(7)
   })
 
-  it("dopo la ricarica riprende dalla prima voce non fatta, senza rifare le fatte", async () => {
-    useSessionStore.getState().startSession(7, 45, 28)
-    vi.mocked(api.getSession).mockResolvedValue(session([
+  it("una sessione aperta sul server (anche da un altro browser) si propone: riprendila", async () => {
+    const open = session([
       q(1, "Già fatta uno", "aperta", { done: true }), q(2, "Già fatta due", "aperta", { done: true }), q(3, "Terza da fare"),
-    ], { resume_index: 2 }))
+    ], { resume_index: 2 })
+    vi.mocked(api.getOpenSession).mockResolvedValue(open)
+    vi.mocked(api.getSession).mockResolvedValue(open)
     renderStudio()
+    expect(await screen.findByText("Hai una sessione aperta")).toBeDefined()
+    expect(screen.getByText(/2 di 3 voci fatte/)).toBeDefined()
+    expect(screen.queryByRole("button", { name: "Avvia sessione" })).toBeNull()
+    click(/Riprendi la sessione/)
     expect(await screen.findByText("Terza da fare")).toBeDefined()
+    expect(api.getSession).toHaveBeenCalledWith(28)
     expect(screen.queryByText("Già fatta uno")).toBeNull()
     expect(api.createSession).not.toHaveBeenCalled()
     expect(screen.getByText("3/3")).toBeDefined()
   })
 
-  it("ripresa in fase 'rivelata': torna all'autovalutazione con la soluzione", async () => {
-    useSessionStore.getState().startSession(7, 45, 28)
-    vi.mocked(api.getSession).mockResolvedValue(session([q(1, "Rivelata prima", "aperta", { revealed: true })], { phase: "rivelata" }))
-    vi.mocked(api.revealSession).mockResolvedValue({ answer_md: "Passaggi corretti", rubric: ["Imposta", "Conclude"] })
+  it("'Chiudila' abbandona la sessione aperta e torna alla schermata d'avvio", async () => {
+    vi.mocked(api.getOpenSession).mockResolvedValueOnce(session([q(1, "Vecchia")])).mockResolvedValue(null)
+    vi.mocked(api.abandonSession).mockResolvedValue(session([q(1, "Vecchia")], { ended_at: "2026-11-25T11:00:00" }))
     renderStudio()
+    fireEvent.click(await screen.findByRole("button", { name: "Chiudila" }))
+    expect(await screen.findByRole("button", { name: "Avvia sessione" })).toBeDefined()
+    expect(api.abandonSession).toHaveBeenCalledExactlyOnceWith(28)
+    expect(api.getSession).not.toHaveBeenCalled()
+  })
+
+  it("ripresa in fase 'rivelata' senza sicurezza salvata: la richiede prima di salvare", async () => {
+    const open = session([q(1, "Rivelata prima", "aperta", { revealed: true })], { phase: "rivelata" })
+    vi.mocked(api.getOpenSession).mockResolvedValue(open)
+    vi.mocked(api.getSession).mockResolvedValue(open)
+    vi.mocked(api.revealSession).mockResolvedValue({ answer_md: "Passaggi corretti", rubric: ["Imposta", "Conclude"], confidence: null })
+    renderStudio()
+    fireEvent.click(await screen.findByRole("button", { name: /Riprendi la sessione/ }))
     expect(await screen.findByText("Passaggi corretti")).toBeDefined()
-    expect(api.revealSession).toHaveBeenCalledWith(28, 0)
+    expect(api.revealSession).toHaveBeenCalledWith(28, 0, undefined)
     expect(screen.getByRole("checkbox", { name: "Imposta" })).toBeDefined()
     // dopo la ricarica la sicurezza va richiesta di nuovo, altrimenti non si potrebbe salvare
     expect(screen.getByRole("button", { name: "Salva l'autovalutazione" }).hasAttribute("disabled")).toBe(true)
@@ -138,15 +159,45 @@ describe("Studio: avvio e ripresa", () => {
     expect(vi.mocked(api.answerSession).mock.calls[0][1]).toMatchObject({ idx: 0, self_criteria: [true, false], confidence: 2 })
   })
 
-  it("una scheda letta non si ripropone dopo la ricarica anche se il server non la segna", async () => {
+  it("ripresa in fase 'rivelata' con la sicurezza salvata al reveal: non la richiede", async () => {
+    const open = session([q(1, "Rivelata prima", "aperta", { revealed: true })], { phase: "rivelata" })
+    vi.mocked(api.getOpenSession).mockResolvedValue(open)
+    vi.mocked(api.getSession).mockResolvedValue(open)
+    vi.mocked(api.revealSession).mockResolvedValue({ answer_md: "Passaggi corretti", rubric: [], confidence: 3, revealed_at: "2026-11-25T10:05:00Z" })
+    vi.mocked(api.answerSession).mockResolvedValue(answer({ score: 0.85, graded_by: "io" }))
+    renderStudio()
+    fireEvent.click(await screen.findByRole("button", { name: /Riprendi la sessione/ }))
+    expect(await screen.findByText("Passaggi corretti")).toBeDefined()
+    expect(screen.queryByText("Quanto eri sicuro prima di vedere la soluzione?", { exact: false })).toBeNull()
+    pick("Sì")
+    click("Salva l'autovalutazione")
+    await screen.findByText("Corretta")
+    expect(vi.mocked(api.answerSession).mock.calls[0][1]).toMatchObject({ self_score: 1, confidence: 3 })
+  })
+
+  it("la scheda letta la segna il server (POST /seen), niente copia nel browser", async () => {
     vi.mocked(api.createSession).mockResolvedValue(session([scheda, q(2, "Dopo la scheda")]))
     renderStudio()
     await start()
     expect(await screen.findByRole("heading", { name: "Serie di Laurent" })).toBeDefined()
     click(/Ho letto/)
     expect(await screen.findByText("Dopo la scheda")).toBeDefined()
+    expect(api.seenSession).toHaveBeenCalledExactlyOnceWith(28, 0)
     expect(api.completeTopicLesson).toHaveBeenCalledWith(4)
-    expect(useSessionStore.getState().currentSession?.localDone).toEqual([0])
+    expect(window.localStorage.getItem("studyhub-session")).toBeNull()
+  })
+
+  it("se /seen fallisce la scheda resta lì con l'errore e 'Riprova'", async () => {
+    vi.mocked(api.createSession).mockResolvedValue(session([scheda, q(2, "Dopo la scheda")]))
+    vi.mocked(api.seenSession).mockRejectedValueOnce(new ApiError(409, "La sessione è già terminata."))
+    renderStudio()
+    await start()
+    await screen.findByRole("heading", { name: "Serie di Laurent" })
+    click(/Ho letto/)
+    expect((await screen.findByRole("alert")).textContent).toContain("già terminata")
+    expect(screen.queryByText("Dopo la scheda")).toBeNull()
+    click(/Riprova/)
+    expect(await screen.findByText("Dopo la scheda")).toBeDefined()
   })
 })
 
@@ -184,6 +235,8 @@ describe("Studio: risposte", () => {
     pick("Credo")
     click(/Svolto sul quaderno/)
     expect(await screen.findByText("Il residuo vale 2")).toBeDefined()
+    // la sicurezza e il tempo di risoluzione si salvano già al reveal (prevalgono su quelli dell'autovalutazione)
+    expect(api.revealSession).toHaveBeenCalledExactlyOnceWith(28, 0, { confidence: 2, seconds: expect.any(Number) })
     fireEvent.click(screen.getByRole("checkbox", { name: "Polo semplice" }))
     click("Salva l'autovalutazione")
     await screen.findByText("Parziale")
@@ -352,8 +405,6 @@ describe("Studio: fine sessione", () => {
     click(/Crea flashcard/)
     expect(await screen.findByText(/non è ancora disponibile/)).toBeDefined()
     expect(api.flashcardFromError).toHaveBeenCalledWith(77)
-    expect(useSessionStore.getState().currentSession).toBeNull()
-    expect(useSessionStore.getState().todaySessions).toHaveLength(1)
   })
 
   it("se il salvataggio finale fallisce si può riprovare", async () => {

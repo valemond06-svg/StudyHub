@@ -40,7 +40,8 @@ export interface QuestionCardProps {
   savedResult?: AnswerResult
   submitAnswer: (payload: AnswerPayload) => Promise<AnswerResult>
   submitPhoto: (payload: PhotoPayload) => Promise<AnswerResult>
-  reveal: () => Promise<RevealResult>
+  /** Rivela la soluzione: con sicurezza e secondi la prima volta, senza corpo nella ripresa dopo una ricarica. */
+  reveal: (body?: { confidence: Confidence; seconds: number }) => Promise<RevealResult>
   onSaved: (result: AnswerResult) => void
   onNext: () => void
   isLast: boolean
@@ -90,6 +91,8 @@ export function QuestionCard(props: QuestionCardProps) {
   const [showPhotos, setShowPhotos] = useState(false)
   const [revealed, setRevealed] = useState<RevealResult | null>(null)
   const [resumedAsRevealed] = useState(Boolean(entry.revealed && !entry.done))
+  // Dopo una ricarica in fase "rivelata" la sicurezza arriva dal server; la si chiede solo se non era stata salvata.
+  const [askConfidenceAfterReveal, setAskConfidenceAfterReveal] = useState(false)
   const [revealing, setRevealing] = useState(resumedAsRevealed)
   const [revealError, setRevealError] = useState<string | null>(null)
   const [checks, setChecks] = useState<boolean[] | null>(null)
@@ -101,27 +104,34 @@ export function QuestionCard(props: QuestionCardProps) {
   const stage: "answer" | "self" | "result" = result ? "result" : revealed || revealing || revealError ? "self" : "answer"
 
   const doReveal = useCallback(() => {
-    if (inFlight.current) return
+    if (inFlight.current || confidence === null) return
     inFlight.current = true
     setRevealing(true)
     setRevealError(null)
-    reveal()
+    reveal({ confidence, seconds: measuredSeconds(startedAt, Date.now()) })
       .then((r) => setRevealed(r))
       .catch((err) => { setRevealError(describeError(err, "Impossibile mostrare la soluzione.")); setRevealing(false) })
       .finally(() => { inFlight.current = false })
-  }, [reveal])
+  }, [reveal, confidence, startedAt])
 
-  // Ripresa di una domanda già rivelata (fase "rivelata"): si torna dritti all'autovalutazione.
+  // Ripresa di una domanda già rivelata (fase "rivelata"): si torna dritti all'autovalutazione,
+  // con la sicurezza che il server aveva salvato al momento del reveal.
   const resumedReveal = useRef(false)
   useEffect(() => {
-    if (resumedReveal.current || !entry.revealed || entry.done) return
+    // Solo se la card è nata già rivelata (ricarica): dopo un reveal fatto qui il server ha già risposto.
+    if (resumedReveal.current || !resumedAsRevealed) return
     resumedReveal.current = true
     inFlight.current = true
     reveal()
-      .then((r) => setRevealed(r))
+      .then((r) => {
+        const saved = r.confidence
+        if (saved === 1 || saved === 2 || saved === 3) setConfidence(saved)
+        else setAskConfidenceAfterReveal(true)
+        setRevealed(r)
+      })
       .catch((err) => { setRevealError(describeError(err, "Impossibile mostrare la soluzione.")); setRevealing(false) })
       .finally(() => { inFlight.current = false })
-  }, [entry.revealed, entry.done, reveal])
+  }, [resumedAsRevealed, reveal])
 
   const send = useCallback((submission: Submission) => {
     if (inFlight.current) return
@@ -295,7 +305,7 @@ export function QuestionCard(props: QuestionCardProps) {
       )}
 
       {/* Sicurezza: prima di consegnare o di vedere la soluzione; dopo una ricarica in fase "rivelata" si richiede qui */}
-      {(stage === "answer" || (stage === "self" && (confidence === null || resumedAsRevealed))) && (
+      {(stage === "answer" || (stage === "self" && (confidence === null || askConfidenceAfterReveal))) && (
         <div className="mb-4" role="radiogroup" aria-label="Quanto sei sicuro?">
           <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-2">
             {stage === "answer" ? "Quanto sei sicuro?" : "Quanto eri sicuro prima di vedere la soluzione?"} <span className="text-neutral-400">(tasti 1-3)</span>
@@ -466,9 +476,7 @@ function SourceLink({ courseId, source }: { courseId: number; source?: RevealRes
   const label = source.lecture_id
     ? `Rivedi a lezione${source.lecture ? `: ${source.lecture}` : ""}${source.t_start ? ` (min ${Math.floor(source.t_start / 60)})` : ""}`
     : `Apri il PDF${source.doc ? ` ${source.doc}` : ""}${source.page ? `, pagina ${source.page}` : ""}`
-  return href.startsWith("/api/")
-    ? <a href={href} target="_blank" rel="noreferrer" className="mt-3 inline-block text-sm text-accent-600 dark:text-accent-400 underline underline-offset-2">{label}</a>
-    : <Link to={href} className="mt-3 inline-block text-sm text-accent-600 dark:text-accent-400 underline underline-offset-2">{label}</Link>
+  return <Link to={href} className="mt-3 inline-block text-sm text-accent-600 dark:text-accent-400 underline underline-offset-2">{label}</Link>
 }
 
 function ResultPanel({ result, courseId, isChoice }: { result: AnswerResult; courseId: number; isChoice: boolean }) {

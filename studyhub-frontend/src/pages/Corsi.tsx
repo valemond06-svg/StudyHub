@@ -1,45 +1,41 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useSearchParams } from "react-router-dom"
-import { ChevronRight, BookOpen, Award, TrendingUp, Archive, Layers, Loader2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { ChevronRight, BookOpen, Award, TrendingUp, Archive, Layers, Loader2, History } from "lucide-react"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
+import { ReadinessBadge } from "@/components/study/ReadinessBadge"
 import { api } from "@/lib/api"
-import { processedMaterial, readinessByCourse, readinessVariant } from "@/lib/readiness"
-import { filterCourses, isCourseFilter, type CourseFilter as Filter } from "@/lib/courses"
+import { processedMaterial, readinessInfo } from "@/lib/readiness"
+import { courseStage, filterCourses, parseCourseFilter, STAGE_LABEL, type CourseFilter as Filter } from "@/lib/courses"
 import type { Course, StudyCourseOverview } from "@/types"
 import { cn } from "@/lib/utils"
 
 const FILTERS: Array<{ id: Filter; label: string; icon: typeof BookOpen }> = [
-  { id: "attivi", label: "Attivi", icon: BookOpen },
-  { id: "altri", label: "Non attivi", icon: Archive },
+  { id: "seguo", label: "Da seguire", icon: BookOpen },
+  { id: "arretrati", label: "Arretrati", icon: History },
+  { id: "altri", label: "Futuri e archivio", icon: Archive },
   { id: "superati", label: "Superati", icon: Award },
   { id: "tutti", label: "Tutti", icon: Layers },
 ]
 
 export function Corsi() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const filterParam = searchParams.get("filtro")
-  const filter: Filter = isCourseFilter(filterParam) ? filterParam : "attivi"
+  const filter: Filter = parseCourseFilter(searchParams.get("filtro"))
 
   const { data: courses = [], isLoading } = useQuery<Course[]>({ queryKey: ["courses"], queryFn: api.getCourses })
   const { data: studyCourses = [] } = useQuery<StudyCourseOverview[]>({ queryKey: ["studyCourses"], queryFn: api.getStudyCourses })
-  const readiness = readinessByCourse(studyCourses)
-  const examByCourse = new Map(studyCourses.filter((s) => s.exam).map((s) => [s.id, s.exam!]))
+  const studyById = new Map(studyCourses.map((s) => [s.id, s]))
+  const daysToExam = new Map(studyCourses.map((s) => [s.id, s.exam?.days_left ?? null]))
 
-  const counts: Record<Filter, number> = {
-    attivi: filterCourses(courses, "attivi").length,
-    altri: filterCourses(courses, "altri").length,
-    superati: filterCourses(courses, "superati").length,
-    tutti: courses.length,
-  }
-  const visible = filterCourses(courses, filter)
+  const counts = Object.fromEntries(FILTERS.map((f) => [f.id, filterCourses(courses, f.id).length])) as Record<Filter, number>
+  const visible = filterCourses(courses, filter, daysToExam)
 
   const setFilter = (f: Filter) => {
     const next = new URLSearchParams(searchParams)
-    if (f === "attivi") next.delete("filtro")
+    if (f === "seguo") next.delete("filtro")
     else next.set("filtro", f)
     setSearchParams(next, { replace: true })
   }
@@ -49,7 +45,7 @@ export function Corsi() {
       <div>
         <h1 className="text-3xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">Corsi</h1>
         <p className="text-neutral-500 dark:text-neutral-400 mt-1">
-          {counts.attivi} attivi · {counts.superati} superati · i corsi arrivano dal catalogo Moodle
+          {counts.seguo} da seguire · {counts.arretrati} arretrati · lo stato viene da corsi.yaml
         </p>
       </div>
 
@@ -76,20 +72,23 @@ export function Corsi() {
           <CardContent>
             <BookOpen className="h-12 w-12 mx-auto text-neutral-300 dark:text-neutral-600 mb-4" />
             <p className="text-neutral-500 dark:text-neutral-400">Nessun corso in questo elenco.</p>
+            {courses.length === 0 && <Button asChild className="mt-4"><Link to="/benvenuto">Configura i corsi</Link></Button>}
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visible.map((course) => {
-            const pct = readiness.get(course.id) ?? null
+            const study = studyById.get(course.id)
+            const info = readinessInfo(study)
             const material = processedMaterial(course)
-            const exam = examByCourse.get(course.id)
+            const exam = study?.exam
+            const stage = courseStage(course)
             return (
               <Link key={course.id} to={`/corsi/${course.id}`} className="block min-w-0">
                 <Card className={cn(
                   "h-full overflow-hidden transition-all cursor-pointer",
                   "hover:border-accent-300 hover:shadow-lg dark:hover:border-accent-700",
-                  course.passed && "bg-neutral-50/50 dark:bg-neutral-900/50"
+                  (course.passed || stage === "archivio" || stage === "futuro") && "bg-neutral-50/50 dark:bg-neutral-900/50"
                 )}>
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between gap-3">
@@ -98,20 +97,23 @@ export function Corsi() {
                           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-accent-100 text-accent-700 dark:bg-accent-900/30 dark:text-accent-300">
                             {course.year_of_study ? `${course.year_of_study}° anno` : "Anno n.d."}
                           </span>
-                          {course.passed ? <Badge variant="success" className="gap-1"><Award className="h-3 w-3" />Superato</Badge> : null}
+                          {course.passed
+                            ? <Badge variant="success" className="gap-1"><Award className="h-3 w-3" />Superato</Badge>
+                            : <Badge variant={stage === "corrente" ? "accent" : "outline"}>{STAGE_LABEL[stage]}</Badge>}
                         </div>
                         <h3 className="font-semibold text-lg break-words line-clamp-2">{course.fullname}</h3>
                       </div>
-                      {!course.passed && (
-                        <Badge variant={readinessVariant(pct)} className="whitespace-nowrap shrink-0" title="Prontezza all'esame (padronanza stimata)">
-                          {pct === null ? "n.d." : `${pct}%`}
-                        </Badge>
-                      )}
+                      {!course.passed && study && <ReadinessBadge info={info} className="shrink-0" />}
                     </div>
                   </CardHeader>
                   <Separator />
                   <CardContent className="pt-4 space-y-3">
-                    {!course.passed && <Progress value={pct ?? 0} className="h-1.5" aria-label="Prontezza" />}
+                    {!course.passed && study && (
+                      <>
+                        <Progress value={info.reliable ? info.pct ?? 0 : 0} className="h-1.5" aria-label="Prontezza" />
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2">{info.hint}</p>
+                      </>
+                    )}
                     <div className="flex items-center justify-between gap-2 text-xs text-neutral-500 dark:text-neutral-400">
                       <span className="truncate">
                         {exam?.days_left != null ? `Appello tra ${exam.days_left} giorni` : "Nessun appello in calendario"}

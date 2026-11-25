@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Link } from "react-router-dom"
 import { Brain, HardDrive, Cloud, Key, Palette, Monitor, Sun, Moon, MoonStar, Database, FlaskConical, BookOpen, CheckCircle2, XCircle, Loader2, RefreshCw, Ban, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -155,6 +156,7 @@ export function Impostazioni() {
                   <Key className="h-4 w-4" />{setup?.login_running ? "Login in corso…" : loginCheck?.ok ? "Rifai login Moodle" : "Accedi a Moodle"}
                 </Button>
                 <span className="text-xs text-neutral-500">Apre una finestra del browser: le credenziali le scrivi lì.</span>
+                <Link to="/benvenuto" className="text-sm font-medium text-accent-600 hover:underline dark:text-accent-400">Primo avvio guidato (login, corsi, elaborazione)</Link>
               </div>
             </CardContent>
           </Card>

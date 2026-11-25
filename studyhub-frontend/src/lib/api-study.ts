@@ -265,6 +265,8 @@ export const studyApi = {
   lesson: (id: number) => request<InteractiveLesson>(`/study/topics/${id}/lesson?prepare=false`),
   prepareLesson: (id: number) => request<InteractiveLesson>(`/study/topics/${id}/lesson/prepare`, "POST"),
   completeLesson: (id: number) => request<{ ok: boolean }>(`/study/topics/${id}/lesson/done`, "POST"),
+  askLesson: (id: number, body: { question: string; context: string; mode: "domanda" | "altro_modo" }) =>
+    request<{ answer_md: string }>(`/study/topics/${id}/ask`, "POST", body),
   lectureNotes: (id: number) => request<LectureNotes>(`/lectures/${id}/notes`),
   queueLectureNotes: (id: number) => request<{ queued: number[] }>(`/lectures/${id}/notes`, "POST"),
   lectureNoteJobs: () => request<{ jobs: { id: number; kind: string; target_id: number; status: string; message: string | null }[]; paused_reason: string | null }>("/ai/status"),

@@ -1,3 +1,5 @@
+export type CourseStage = "corrente" | "arretrato" | "futuro" | "archivio"
+
 export interface Course {
   id: number
   fullname: string
@@ -6,6 +8,8 @@ export interface Course {
   active: number
   priority: number
   folder: string | null
+  /** stato da corsi.yaml: corrente (da seguire) | arretrato | futuro | archivio */
+  stage?: CourseStage | null
   /** numero di lezioni del corso (da /api/courses) */
   lectures: number
   /** lezioni con media scaricati o trascritte (status media_ok/trascritta): materiale elaborato, NON preparazione */
@@ -361,6 +365,11 @@ export interface PlanData {
 export interface StudyCourseOverview {
   id: number
   name: string
+  stage?: CourseStage | null
+  /** quota di domande in banca provate almeno una volta (0-1) */
+  coverage?: number
+  /** domande provate almeno una volta: sotto una soglia la prontezza non è affidabile */
+  tried_items?: number
   archetype_id?: string
   archetype_title?: string
   archetype_badge?: string

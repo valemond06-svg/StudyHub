@@ -130,47 +130,20 @@ def test_csrf_bootstrap_emits_one_cookie_and_enables_cookie_only_mutation(ambien
         assert not again.headers.get_list("set-cookie")
 
 
-def test_static_ui_sends_csrf_header_on_post_and_delete(ambiente, monkeypatch):
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js richiesto per eseguire il JavaScript servito da FastAPI")
+def test_cookie_only_browser_sends_csrf_on_post_and_delete(ambiente, monkeypatch):
+    """La vecchia UI statica è stata ritirata: lo stesso contratto (cookie api_token + header X-CSRF-Token
+    sui POST/DELETE) è quello che usa il client React (studyhub-frontend/src/lib/api.ts, coperto da api.test.ts)."""
     monkeypatch.setattr("studyhub.api.app._lecture", Mock())
     monkeypatch.setattr("studyhub.ai.jobs.enqueue", Mock(return_value=[1]))
     monkeypatch.setattr("studyhub.study.session.start", Mock(return_value={"id": 1}))
     monkeypatch.setattr(exam, "delete_exam", Mock())
     with TestClient(app) as browser:
-        html = browser.get("/legacy").text
-        helpers = html[html.index("const getJ ="):html.index("function find(arr")]
-        delete_handlers = [line.strip() for line in html.splitlines()
-                           if 'addEventListener("click"' in line and '$("exDel")?' in line
-                           or 'querySelectorAll("[data-del]")' in line]
-        assert len(delete_handlers) == 2
-        program = f"""
-const document = {{ cookie: "csrf_token={browser.cookies['csrf_token']}" }};
-const requests = [];
-const handlers = [];
-const $ = () => ({{dataset: {{ex: 4}}, addEventListener: (_, fn) => handlers.push(fn)}});
-const body = {{querySelectorAll: () => [{{dataset: {{del: 5}}, set onclick(fn) {{ handlers.push(fn); }}}}]}};
-const cid = 1, loadStudyCourse = () => {{}}, loadToday = () => {{}};
-async function fetch(url, options) {{
-  requests.push([url, options]);
-  return {{ok: true, json: async () => ({{}})}};
-}}
-{helpers}
-{chr(10).join(delete_handlers)}
-(async () => {{
-  await postJ("/api/lectures/1/notes");
-  await postJ("/api/study/1/sessions", {{minutes: 15}});
-  for (const handler of handlers) await handler();
-  console.log(JSON.stringify(requests));
-}})().catch(error => {{ console.error(error); process.exitCode = 1; }});
-"""
-        result = subprocess.run([node], input=program, capture_output=True, text=True, check=True, timeout=15)
-        requests = json.loads(result.stdout)
-        assert len(requests) == 4
-        for url, options in requests:
-            response = browser.request(options["method"], url, headers=options["headers"],
-                                       content=options.get("body"))
+        token = browser.get("/api/csrf").json()["csrf_token"]
+        calls = [("POST", "/api/lectures/1/notes", None), ("POST", "/api/study/1/sessions", {"minutes": 15}),
+                 ("DELETE", "/api/exams/4", None), ("DELETE", "/api/exams/5", None)]
+        for method, url, body in calls:
+            assert browser.request(method, url, json=body).status_code == 403
+            response = browser.request(method, url, json=body, headers={"X-CSRF-Token": token})
             assert response.status_code == 200, (url, response.text)
 
 

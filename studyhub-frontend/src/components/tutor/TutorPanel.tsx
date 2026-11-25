@@ -9,6 +9,7 @@ import { MathMarkdown } from "@/components/ui/math-markdown"
 import { api, describeError } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { safeFormatDistance } from "@/lib/utils"
+import { documentHref } from "@/lib/documents"
 
 /** GET /api/tutor/threads → [{id, course_id, mode, title, created_at, course, n}] */
 interface ThreadRow { id: number; course_id: number | null; mode: string; title: string | null; created_at: string | null; course: string | null; n: number }
@@ -134,7 +135,7 @@ function TutorThread({ threadId, onBack, onDelete }: { threadId: number; onBack:
       }
       return
     }
-    window.open(`/api/docs/${s.doc_id}/file${s.kind === "pdf" && s.page ? `#page=${s.page}` : ""}`, "_blank", "noopener")
+    if (s.doc_id) navigate(documentHref(s.doc_id, s.kind === "pdf" ? s.page : null))
   }
 
   const submit = () => {

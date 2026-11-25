@@ -190,7 +190,7 @@ function PaletteDialog({ onClose, navigate }: { onClose: () => void; navigate: R
     const target = searchTarget(hit)
     onClose()
     if (target.type === "document") {
-      window.open(target.url, "_blank", "noopener")
+      navigate(target.url)
       return
     }
     let courseId = target.courseId

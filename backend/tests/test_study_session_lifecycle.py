@@ -50,7 +50,9 @@ def test_sessione_aperta_recupera_ultima_per_corso_e_consente_abbandono(client, 
     assert abandoned["ended_at"] and abandoned["resume_index"] is None
     assert client.post(f"{url}/abandon").json() == abandoned
     assert client.post(f"{url}/finish").status_code == 409
-    assert client.get(path).status_code == 404
+    none_open = client.get(path)
+    assert none_open.status_code == 204 and none_open.content == b""  # caso normale: niente 404 in console
+    assert client.get("/api/study/999/sessions/open").status_code == 404  # corso inesistente
 
 
 def test_scheda_letta_e_completamento_senza_lezione_generata(client, db, session_data, monkeypatch):

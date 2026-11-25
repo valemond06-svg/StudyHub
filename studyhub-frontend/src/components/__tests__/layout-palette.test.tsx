@@ -73,8 +73,7 @@ describe("Ricerca globale", () => {
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/corsi/25782?lezione=190&t=754"))
   })
 
-  it("apre il PDF alla pagina del risultato", async () => {
-    const open = vi.spyOn(window, "open").mockImplementation(() => null)
+  it("apre il PDF alla pagina del risultato nel visore dell'app", async () => {
     vi.mocked(api.search).mockResolvedValue({
       semantic: false,
       results: [{ id: 12, kind: "pdf", group: "documenti", title: "dispense.pdf", snippet: "", course: null, courseId: null, docId: 8, lectureId: null, page: 7, tStart: null, heading: null, score: 1 }],
@@ -85,7 +84,7 @@ describe("Ricerca globale", () => {
     const hit = await screen.findByText("dispense.pdf")
     expect(screen.getByText(/solo per parole/)).toBeDefined()
     fireEvent.click(hit)
-    expect(open).toHaveBeenCalledWith("/api/docs/8/file#page=7", "_blank", "noopener")
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/documento/8?pagina=7"))
   })
 
   it("mostra in italiano il detail di errore del backend", async () => {

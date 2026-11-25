@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -18,6 +18,12 @@ vi.mock("@/lib/api", async () => {
       generateSimulation: vi.fn(),
       getStudyCourseStats: vi.fn(),
       getStudyChapters: vi.fn(),
+      getExcludedChapters: vi.fn(),
+      setChapterExcluded: vi.fn(),
+      prepareStudy: vi.fn(),
+      stopPrepare: vi.fn(),
+      getCourseDocuments: vi.fn(),
+      getCourseAnnouncements: vi.fn(),
       getFlashcardStats: vi.fn(),
       importFlashcards: vi.fn(),
       exportAnki: vi.fn(),
@@ -70,8 +76,11 @@ beforeEach(() => {
   vi.mocked(api.getCourseLectures).mockResolvedValue([])
   vi.mocked(api.getNotesIndex).mockResolvedValue([])
   vi.mocked(api.getCourseExam).mockResolvedValue({ profile: null, profile_md: null, sims: [] })
-  vi.mocked(api.getStudyCourseStats).mockResolvedValue({ topics: [], ready_exam: 0.003 })
+  vi.mocked(api.getStudyCourseStats).mockResolvedValue({ topics: [], ready_exam: 0.003, n_items: 100, tried_items: 20, coverage: 0.2 })
   vi.mocked(api.getStudyChapters).mockResolvedValue([])
+  vi.mocked(api.getExcludedChapters).mockResolvedValue([])
+  vi.mocked(api.getCourseDocuments).mockResolvedValue({ categories: [], documents: [] })
+  vi.mocked(api.getCourseAnnouncements).mockResolvedValue({ items: [] })
   vi.mocked(api.getFlashcardStats).mockResolvedValue({})
   vi.mocked(api.getPlan).mockResolvedValue({
     today: "2026-11-24", exams: [], tasks: [], courses: [],
@@ -83,8 +92,60 @@ describe("Dettaglio corso", () => {
   it("la prontezza è la padronanza reale, non le lezioni trascritte", async () => {
     renderCourse()
     // 18/20 lezioni trascritte ma ready_exam 0,3%: deve mostrare 0%, non 90%
-    expect(await screen.findByText("0%")).toBeDefined()
+    expect((await screen.findAllByText("0%")).length).toBeGreaterThan(0)
     expect(screen.queryByText("90%")).toBeNull()
+  })
+
+  it("con poche risposte la prontezza è 'dati insufficienti', mai un numero pieno", async () => {
+    vi.mocked(api.getStudyCourseStats).mockResolvedValue({ topics: [], ready_exam: 0.92, n_items: 80, tried_items: 3, coverage: 0.04 })
+    renderCourse()
+    expect((await screen.findAllByText("dati insufficienti")).length).toBeGreaterThan(0)
+    expect(screen.queryByText("92%")).toBeNull()
+  })
+
+  it("prepara il materiale solo dal pulsante e segue lo stato in corso", async () => {
+    const prep = { todo: 4, ready: 1, stopped: null, order_pending: false, lectures_without_notes: 0, errors: [] }
+    const running = { ...prep, status: "in_corso", running: true, current: "Lezione 3" }
+    vi.mocked(api.getStudyCourseStats)
+      .mockResolvedValueOnce({ topics: [], ready_exam: 0, n_items: 0, tried_items: 0, prepare: { ...prep, status: "da preparare", running: false, current: null } })
+      .mockResolvedValue({ topics: [], ready_exam: 0, n_items: 0, tried_items: 0, prepare: running })
+    vi.mocked(api.prepareStudy).mockResolvedValue(running)
+    renderCourse()
+    const button = await screen.findByRole("button", { name: /Prepara il materiale con l'AI/ })
+    expect(api.prepareStudy).not.toHaveBeenCalled()
+    fireEvent.click(button)
+    expect(await screen.findByText(/Sto analizzando: Lezione 3/)).toBeDefined()
+    expect(api.prepareStudy).toHaveBeenCalledExactlyOnceWith(7)
+    expect(screen.getByRole("button", { name: /Ferma/ })).toBeDefined()
+  })
+
+  it("mappa per argomenti con livello e azioni; materiali per categoria nel visore interno", async () => {
+    vi.mocked(api.getStudyCourseStats).mockResolvedValue({
+      ready_exam: 0.2, n_items: 30, tried_items: 12, coverage: 0.4,
+      topics: [
+        { id: 31, name: "Serie di Fourier", chapter: "Fourier", weight: 3, m: 0.8, m_exam: 0.6, n_items: 6, tried: 1, level: 3, level_name: "Solido", hidden: 0 },
+        { id: 32, name: "Trasformata Z", chapter: "Fourier", weight: 1, m: 0, m_exam: 0, n_items: 2, tried: 0, level: 0, level_name: "Mai provato", hidden: 0 },
+      ],
+    })
+    vi.mocked(api.getCourseDocuments).mockResolvedValue({
+      categories: [{ category: "slide", count: 1 }, { category: "appello", count: 1 }],
+      documents: [
+        { id: 40, title: null, name: "Appello_gennaio.pdf", kind: "pdf", n_pages: 3, category: "appello", exam_date: "2026-01-20" },
+        { id: 41, title: "Slide 1", name: "s1.pdf", kind: "pdf", n_pages: 20, category: "slide", exam_date: null },
+      ],
+    })
+    vi.mocked(api.getCourseAnnouncements).mockResolvedValue({ items: ["## Aula cambiata\nDa lunedì aula B."] })
+    renderCourse()
+    fireEvent.click(await screen.findByRole("button", { name: /Serie di Fourier/ }))
+    const tile = screen.getByRole("button", { name: /Serie di Fourier/ }).closest("li")!
+    expect(within(tile).getByRole("link", { name: "Impara" }).getAttribute("href")).toBe("/impara/31")
+    expect(within(tile).getByRole("link", { name: /Allenati 25 min/ }).getAttribute("href")).toBe("/studio/7?topic=31&duration=25")
+    expect(screen.getByText(/Mai provato 1/)).toBeDefined()
+    await openTab("Materiali")
+    // Gli esami passati vengono prima delle slide
+    expect((await screen.findByRole("button", { name: "Esami passati (1)" })).getAttribute("aria-pressed")).toBe("true")
+    expect(screen.getByRole("link", { name: "Appello_gennaio.pdf" }).getAttribute("href")).toBe("/documento/40")
+    expect(await screen.findByText("Aula cambiata")).toBeDefined()
   })
 
   it("genera e rigenera il profilo con il flag corretto; durata 0 = non indicata, pesi senza %", async () => {

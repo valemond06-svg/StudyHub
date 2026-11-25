@@ -89,7 +89,9 @@ describe("Adattatori di attività e fonti", () => {
   })
   it("preserva tempi anche a zero, pagina PDF e campi del ripasso", () => {
     expect(studySource(7, f.note, 0)).toBe("/corsi/7?lezione=9&t=0")
-    expect(studySource(7, f.card)).toBe(f.card.url_hint)
+    // url_hint del backend: /api/docs/40/file#page=12 → visore interno dell'app alla stessa pagina
+    expect(f.card.url_hint).toBe("/api/docs/40/file#page=12")
+    expect(studySource(7, f.card)).toBe("/documento/40?pagina=12")
     expect(sourcePayload(sourceDraft(f.note, 0))).toMatchObject({ lecture_id: 9, timestamp_s: 0 })
     expect(toReviewCard(f.card)).toMatchObject({ id: 10, fronte: f.card.front, retro: f.card.back, due_date: f.card.due })
   })

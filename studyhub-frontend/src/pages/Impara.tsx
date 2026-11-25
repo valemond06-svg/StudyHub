@@ -50,7 +50,34 @@ function StepQuestion({ check, answer, choose }: {
   )
 }
 
-function LessonPractice({ lesson }: { lesson: LessonData }) {
+/** Aiuto sul passo: chiama l'AI solo quando premi un pulsante (come "Spiegamelo in un altro modo" della vecchia UI). */
+function StepHelp({ topicId, context }: { topicId: number; context: string }) {
+  const [question, setQuestion] = useState("")
+  const [asking, setAsking] = useState(false)
+  const ask = useMutation({
+    mutationFn: (body: { mode: "domanda" | "altro_modo"; question: string }) => studyApi.askLesson(topicId, { ...body, context }),
+  })
+  return (
+    <div className="space-y-2 rounded-lg border border-dashed border-neutral-300 p-3 dark:border-neutral-700">
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={ask.isPending} onClick={() => ask.mutate({ mode: "altro_modo", question: "" })}>Spiegamelo in un altro modo</Button>
+        <Button size="sm" variant="ghost" aria-expanded={asking} onClick={() => setAsking(!asking)}>Ho una domanda</Button>
+      </div>
+      {asking && (
+        <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); if (question.trim()) ask.mutate({ mode: "domanda", question: question.trim() }) }}>
+          <input aria-label="La tua domanda sul passo" className="h-9 min-w-0 flex-1 rounded-md border border-neutral-300 bg-white px-3 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Cosa non ti torna?" />
+          <Button size="sm" type="submit" disabled={ask.isPending || !question.trim()}>Chiedi</Button>
+        </form>
+      )}
+      {ask.isPending && <p role="status" className={studyMuted}>Chiedo all'AI…</p>}
+      <StudyError error={ask.error} />
+      {ask.data && <MathMarkdown className="text-sm" content={ask.data.answer_md} />}
+    </div>
+  )
+}
+
+function LessonPractice({ lesson, topicId }: { lesson: LessonData; topicId: number }) {
   const lab = lesson.laboratorio_pratico
   const exam = lesson.archetipo_esame
   const paper = lesson.ponte_carta_penna
@@ -65,6 +92,7 @@ function LessonPractice({ lesson }: { lesson: LessonData }) {
         <p className={studyMuted}>{lab.software}{lab.dataset && ` · ${lab.dataset}`}</p>
         <MathMarkdown content={lab.consegna_md} />
         <pre className="overflow-x-auto rounded-md bg-neutral-100 p-3 text-sm dark:bg-neutral-800">{lab.codice}</pre>
+        <a className="text-sm font-medium text-accent-600 hover:underline dark:text-accent-400" href={`/api/study/topics/${topicId}/artifact`} download>Scarica il file del laboratorio</a>
         <MathMarkdown content={lab.spiegazione_md} />
         {lab.output_atteso && <pre className="overflow-x-auto text-sm">{lab.output_atteso}</pre>}
         {lab.sfida && <section className="space-y-2"><MathMarkdown content={lab.sfida.consegna_md} /><details><summary className="cursor-pointer">Suggerimento</summary><MathMarkdown content={lab.sfida.suggerimento_md} /></details><details><summary className="cursor-pointer">Soluzione</summary><pre className="overflow-x-auto text-sm">{lab.sfida.soluzione_codice}</pre></details></section>}
@@ -111,7 +139,8 @@ function LessonReader({ data, lesson }: { data: InteractiveLesson; lesson: Lesso
             {step.intuizione_md && <MathMarkdown className="rounded-lg bg-neutral-100 p-3 dark:bg-neutral-800" content={step.intuizione_md} />}
             {step.inizio_s != null && <SourceLink courseId={data.topic.course_id} source={data.topic} seconds={step.inizio_s} />}
             {check && <StepQuestion check={check} answer={answer} choose={(value) => setAnswers({ ...answers, [index]: value })} />}
-          </> : <LessonPractice lesson={lesson} />}
+            <StepHelp key={index} topicId={data.topic.id} context={`${step.titolo}\n\n${step.spiegazione_md}`} />
+          </> : <LessonPractice lesson={lesson} topicId={data.topic.id} />}
           <StudyError error={done.error} />
           <div className="flex flex-wrap items-center gap-2">
             {index > 0 && <Button variant="outline" onClick={() => setIndex(index - 1)}>Indietro</Button>}

@@ -6,11 +6,11 @@ import { describe, expect, it } from "vitest"
 import { toLectureMedia, toSlides, toSilences, toTranscript, canOpenLecture, slideIndexAt, silenceEndAt, formatTime } from "./lecture-media"
 import { toSearchResponse, groupSearchHits, searchTarget, splitSnippet, searchWhere } from "./search"
 import { toExamProfile, toExamSims } from "./exam-profile"
-import { readinessByCourse, processedMaterial, averageReadiness } from "./readiness"
+import { readinessByCourse, processedMaterial, averageReadiness, readinessInfo } from "./readiness"
 import { summarizeAIProblems, claudeUsagePct } from "./ai-health"
 import { dedupeNotifications } from "./notifications"
 import { diversifyFeed } from "./feed"
-import { filterCourses } from "./courses"
+import { filterCourses, parseCourseFilter } from "./courses"
 import type { AIPanelData, AIStatusResponse, Course, FeedShort, NotificationItem, StudyCourseOverview } from "@/types"
 
 // GET /api/lectures/190 (forma di app.py::lecture)
@@ -127,8 +127,8 @@ describe("search (GET /api/search)", () => {
   it("apre la lezione al secondo e il PDF alla pagina", () => {
     const [lec, pdf, md] = toSearchResponse(searchJson).results
     expect(searchTarget(lec)).toEqual({ type: "lecture", courseId: 25782, lectureId: 190, t: 754 })
-    expect(searchTarget(pdf)).toEqual({ type: "document", url: "/api/docs/8/file#page=7" })
-    expect(searchTarget(md)).toEqual({ type: "document", url: "/api/docs/9/file" })
+    expect(searchTarget(pdf)).toEqual({ type: "document", url: "/documento/8?pagina=7" })
+    expect(searchTarget(md)).toEqual({ type: "document", url: "/documento/9" })
     expect(searchWhere(lec)).toBe("al minuto 12:34")
     expect(searchWhere(pdf)).toBe("p. 7")
   })
@@ -189,12 +189,35 @@ describe("readiness: mastery reale, non lezioni elaborate", () => {
     expect(averageReadiness([0, 85])).toBe(43)
   })
 
-  it("filtri dei corsi", () => {
-    const cs = [course(1, 0, 0), { ...course(2, 0, 0), active: 0 }, { ...course(3, 0, 0), passed: true }]
-    expect(filterCourses(cs, "attivi").map((c) => c.id)).toEqual([1])
-    expect(filterCourses(cs, "altri").map((c) => c.id)).toEqual([2])
+  it("filtri dei corsi per stato di corsi.yaml, correnti con l'appello più vicino in testa", () => {
+    const cs: Course[] = [
+      { ...course(1, 0, 0), stage: "corrente", fullname: "B" },
+      { ...course(2, 0, 0), active: 0, stage: "futuro" },
+      { ...course(3, 0, 0), passed: true, stage: "archivio" },
+      { ...course(4, 0, 0), stage: "arretrato" },
+      { ...course(5, 0, 0), stage: "corrente", fullname: "A" },
+      { ...course(6, 0, 0), active: 0, stage: "archivio" },
+      { ...course(7, 0, 0), stage: null, fullname: "Z" },
+    ]
+    const days = new Map([[1, 5], [5, 30]])
+    expect(filterCourses(cs, "seguo", days).map((c) => c.id)).toEqual([1, 5, 7])
+    expect(filterCourses(cs, "seguo").map((c) => c.id)).toEqual([5, 1, 7])
+    expect(filterCourses(cs, "arretrati").map((c) => c.id)).toEqual([4])
+    expect(filterCourses(cs, "altri").map((c) => c.id)).toEqual([2, 6])
     expect(filterCourses(cs, "superati").map((c) => c.id)).toEqual([3])
-    expect(filterCourses(cs, "tutti")).toHaveLength(3)
+    expect(filterCourses(cs, "tutti").map((c) => c.id).slice(0, 4)).toEqual([5, 1, 7, 4])
+    expect(parseCourseFilter("attivi")).toBe("seguo")
+  })
+
+  it("prontezza onesta: dati insufficienti con poche risposte", () => {
+    expect(readinessInfo(undefined).label).toBe("n.d.")
+    expect(readinessInfo({ ready_exam: 0, n_items: 0, tried_items: 0 }).label).toBe("nessuna domanda")
+    const few = readinessInfo({ ready_exam: 0.9, n_items: 200, tried_items: 3 })
+    expect(few).toMatchObject({ reliable: false, label: "dati insufficienti", pct: 90 })
+    expect(few.hint).toContain("3 domande su 200")
+    const ok = readinessInfo({ ready_exam: 0.42, n_items: 100, tried_items: 40, coverage: 0.4 })
+    expect(ok).toMatchObject({ reliable: true, label: "42%" })
+    expect(ok.hint).toContain("40 domande provate (40% della banca)")
   })
 })
 

@@ -13,7 +13,14 @@ import { MathMarkdown, MathInline } from "@/components/ui/math-markdown"
 import { api, describeError } from "@/lib/api"
 import { canOpenLecture } from "@/lib/lecture-media"
 import { toExamProfile, toExamSims, EXAM_WEIGHT_LABEL } from "@/lib/exam-profile"
-import { readinessVariant } from "@/lib/readiness"
+import { readinessInfo } from "@/lib/readiness"
+import { ReadinessBadge } from "@/components/study/ReadinessBadge"
+import { CourseVerdict } from "@/components/course/CourseVerdict"
+import { CoursePrepare } from "@/components/course/CoursePrepare"
+import { TopicMap } from "@/components/course/TopicMap"
+import { CourseMaterials } from "@/components/course/CourseMaterials"
+import { CourseExams } from "@/components/course/CourseExams"
+import { CourseArchetype } from "@/components/course/CourseArchetype"
 import { useToast } from "@/hooks/use-toast"
 import type { Course, Lecture, Exam, PlanData, StudyTopic } from "@/types"
 import { cn, safeFormatDistance } from "@/lib/utils"
@@ -56,7 +63,7 @@ export function CorsoDetail() {
   const openFromUrl = Number.isSafeInteger(lectureParam) && lectureParam > 0 ? lectureParam : null
   const materialId = Number(searchParams.get("materiale"))
   const tab = searchParams.get("tab")
-  const selectedTab = openFromUrl ? "lezioni" : tab && ["studia", "lezioni", "esame", "lab"].includes(tab) ? tab : "studia"
+  const selectedTab = openFromUrl ? "lezioni" : tab && ["studia", "lezioni", "materiali", "esame", "lab"].includes(tab) ? tab : "studia"
 
   function selectTab(value: string) {
     const next = new URLSearchParams(searchParams)
@@ -125,8 +132,15 @@ export function CorsoDetail() {
     queryKey: ["study", courseId],
     queryFn: () => api.getStudyCourseStats(courseId),
     enabled: validId,
+    // Mentre la preparazione è in corso (avviata solo dal pulsante) lo stato si aggiorna da solo.
+    refetchInterval: (q) => ((q.state.data as any)?.prepare?.status === "in_corso" ? 5000 : false),
   })
-  const readyExamPct = typeof studyData?.ready_exam === "number" ? Math.round(studyData.ready_exam * 100) : null
+  const readiness = readinessInfo(studyData)
+  const { data: excludedChapters = [] } = useQuery<string[]>({
+    queryKey: ["excludedChapters", courseId],
+    queryFn: () => api.getExcludedChapters(courseId),
+    enabled: validId,
+  })
 
   const { data: chapters = [] } = useQuery<{ name: string; topics: number; weight: number; mastery: number; mastery_exam: number }[]>({
     queryKey: ["studyChapters", courseId],
@@ -270,9 +284,9 @@ export function CorsoDetail() {
           <CardContent className="p-4 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm text-neutral-500 dark:text-neutral-400" title="Padronanza stimata al giorno dell'esame, dalle tue risposte">Prontezza</span>
-              <Badge variant={readinessVariant(readyExamPct)}>{readyExamPct === null ? "n.d." : `${readyExamPct}%`}</Badge>
+              <ReadinessBadge info={readiness} />
             </div>
-            <Progress value={readyExamPct ?? 0} className="h-2" />
+            <Progress value={readiness.reliable ? readiness.pct ?? 0 : 0} className="h-2" />
           </CardContent>
         </Card>
 
@@ -318,7 +332,7 @@ export function CorsoDetail() {
 
       {/* Tabs */}
       <Tabs value={selectedTab} onValueChange={selectTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="studia">
             <BookOpen className="h-4 w-4 sm:mr-2" />
             <span className="sr-only sm:not-sr-only">Studia</span>
@@ -326,6 +340,10 @@ export function CorsoDetail() {
           <TabsTrigger value="lezioni">
             <Play className="h-4 w-4 sm:mr-2" />
             <span className="sr-only sm:not-sr-only">Lezioni</span>
+          </TabsTrigger>
+          <TabsTrigger value="materiali">
+            <FileText className="h-4 w-4 sm:mr-2" />
+            <span className="sr-only sm:not-sr-only">Materiali</span>
           </TabsTrigger>
           <TabsTrigger value="esame">
             <Target className="h-4 w-4 sm:mr-2" />
@@ -339,6 +357,8 @@ export function CorsoDetail() {
 
         {/* TAB: STUDIA */}
         <TabsContent value="studia" className="space-y-6">
+          <CourseVerdict courseId={courseId} data={studyData} />
+          <CoursePrepare courseId={courseId} prepare={studyData?.prepare} />
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -408,40 +428,12 @@ export function CorsoDetail() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex flex-wrap items-center justify-between gap-2">
-                Mappa del corso
-                <Badge variant="outline">{chapters.length} capitoli · {topics.length} argomenti</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {chapters.length > 0 ? (
-                <div className="max-h-96 overflow-y-auto pr-1 space-y-4">
-                  {chapters.map((ch) => (
-                    <div key={ch.name} className="space-y-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-medium text-neutral-950 dark:text-neutral-50 min-w-0 break-words">
-                          <MathInline content={ch.name} />
-                        </span>
-                        <div className="flex items-center gap-3 text-sm shrink-0">
-                          <Badge variant={ch.mastery >= 0.7 ? "success" : ch.mastery >= 0.4 ? "warning" : "default"}>
-                            {Math.round(ch.mastery * 100)}%
-                          </Badge>
-                          <span className="hidden sm:inline text-neutral-500 dark:text-neutral-400">{ch.topics} argomenti</span>
-                        </div>
-                      </div>
-                      <Progress value={Math.round(ch.mastery * 100)} className="h-1.5" />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-neutral-500 dark:text-neutral-400 text-center py-8">
-                  Nessun dato di studio disponibile.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          <TopicMap courseId={courseId} topics={topics} chapters={chapters} excluded={excludedChapters} />
+        </TabsContent>
+
+        {/* TAB: MATERIALI */}
+        <TabsContent value="materiali" className="space-y-6">
+          {selectedTab === "materiali" && <CourseMaterials courseId={courseId} />}
         </TabsContent>
 
         {/* TAB: LEZIONI */}
@@ -528,6 +520,8 @@ export function CorsoDetail() {
 
         {/* TAB: ESAME */}
         <TabsContent value="esame" className="space-y-6">
+          <CourseExams courseId={courseId} exams={exams} />
+          {selectedTab === "esame" && <CourseArchetype courseId={courseId} />}
           <Card>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
               <CardTitle className="flex items-center gap-2">
