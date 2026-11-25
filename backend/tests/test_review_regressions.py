@@ -208,8 +208,13 @@ def test_lecture_notes_privacy_blocks_external_transcript(ambiente, monkeypatch,
     external = Mock(side_effect=AssertionError("trascrizione inviata a Claude"))
     monkeypatch.setattr(llm, "claude_run", external)
     monkeypatch.setattr(lecture_notes, "run", external, raising=False)
-    with pytest.raises(ClaudeError, match="LOCAL_ONLY" if mode == "local_only" else "transcript"):
+    # Con l'esterno vietato dalla privacy si ripiega sul locale: qui è giù, quindi la chiamata fallisce
+    # e (soprattutto) nessuna trascrizione parte verso Claude.
+    local = Mock(side_effect=ClaudeError("locale non raggiungibile"))
+    monkeypatch.setattr(llm, "_local", local)
+    with pytest.raises(ClaudeError, match="locale non raggiungibile"):
         lecture_notes.process(1)
+    local.assert_called_once()
     external.assert_not_called()
 
 
