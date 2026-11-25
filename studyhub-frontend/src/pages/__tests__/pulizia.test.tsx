@@ -1,19 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { Impostazioni } from "../Impostazioni"
 import { Lab } from "../Lab"
 import { Corsi } from "../Corsi"
 import { FlashcardReviewModal } from "@/components/flashcards/FlashcardReviewModal"
 import { api } from "@/lib/api"
+import { system } from "@/lib/__fixtures__/study-api"
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api")
   return {
     ...actual,
     api: {
-      getStorage: vi.fn(), getAIProviders: vi.fn(), getAIStatus: vi.fn(), getAIPanel: vi.fn(), getSetupStatus: vi.fn(),
+      getStorage: vi.fn(), getAIStatus: vi.fn(), getAIPanel: vi.fn(), getSetupStatus: vi.fn(),
       getCourses: vi.fn(), setupLogin: vi.fn(), cancelAIQueue: vi.fn(), exportAnki: vi.fn(), exportAnkiApkg: vi.fn(),
       downloadCoursePdf: vi.fn(), getFlashcardStats: vi.fn(), getDueFlashcards: vi.fn(), getQuizHistory: vi.fn(),
       getTutorThreads: vi.fn(), importFlashcards: vi.fn(), getStudyCourses: vi.fn(), reviewFlashcard: vi.fn(),
@@ -38,12 +39,11 @@ const panel = {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url === "/api/system/status") return Response.json({ ...system, login: { ...system.login, moodle: { status: "missing" } } })
+    return Response.json({ detail: "Fixture mancante" }, { status: 404 })
+  }))
   vi.mocked(api.getStorage).mockResolvedValue({ media_root: null, free_gb: 120.5 })
-  vi.mocked(api.getAIProviders).mockResolvedValue({
-    local: { available: true, healthy: true, url: "http://127.0.0.1:8080" },
-    gemini: { available: true, healthy: true, url: null }, freellm: { available: true, healthy: true, url: null },
-    claude: { available: false, healthy: false, url: null },
-  })
   vi.mocked(api.getAIStatus).mockResolvedValue({ jobs: [], paused_reason: null, usage: { utilization: 0, status: "rejected" }, backlog: { enabled: true, stop_at: 0.7 } })
   vi.mocked(api.getAIPanel).mockResolvedValue(panel as any)
   vi.mocked(api.getSetupStatus).mockResolvedValue({ ready: false, login_running: false, fullrun_running: false, checks: [
@@ -56,12 +56,14 @@ beforeEach(() => {
   vi.mocked(api.getQuizHistory).mockResolvedValue([])
   vi.mocked(api.getTutorThreads).mockResolvedValue([])
 })
+afterEach(() => vi.unstubAllGlobals())
 
 describe("Impostazioni: stati reali, niente valori scritti nel codice", () => {
   it("mostra abbonamento Claude rifiutato, login mancante e media non configurati", async () => {
     wrap(<Impostazioni />)
     expect(await screen.findByText(/abbonamento da verificare/)).toBeDefined()
-    expect(await screen.findByText("Rifiutate")).toBeDefined()
+    expect(await screen.findByText("Abbonamento rifiutato")).toBeDefined()
+    expect(screen.getByText("Accesso mancante")).toBeDefined()
     expect(screen.getByText("Login a Moodle UniVR")).toBeDefined()
     expect(screen.getByText("Non configurato")).toBeDefined()
     expect(document.body.textContent).not.toContain("100.83.194.37")

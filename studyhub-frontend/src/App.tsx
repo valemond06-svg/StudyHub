@@ -4,12 +4,12 @@ import { BrowserRouter, Routes, Route, Navigate, Link } from "react-router-dom"
 import { Toaster } from "@/components/ui/toaster"
 import { MainLayout } from "@/components/layout/MainLayout"
 import { CommandPalette } from "@/components/command-palette"
-import { Home } from "@/pages/Home"
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { queryClient, ensureCsrfToken } from "@/lib/api"
 import { useUIStore } from "@/store/ui"
 
+const Home = lazy(() => import("@/pages/Home").then((m) => ({ default: m.Home })))
 const Corsi = lazy(() => import("@/pages/Corsi").then((m) => ({ default: m.Corsi })))
 const CorsoDetail = lazy(() => import("@/pages/CorsoDetail").then((m) => ({ default: m.CorsoDetail })))
 const Studio = lazy(() => import("@/pages/Studio").then((m) => ({ default: m.Studio })))
@@ -17,6 +17,10 @@ const StudyTok = lazy(() => import("@/pages/StudyTok").then((m) => ({ default: m
 const SimulazioneRunner = lazy(() => import("@/pages/SimulazioneRunner").then((m) => ({ default: m.SimulazioneRunner })))
 const Lab = lazy(() => import("@/pages/Lab").then((m) => ({ default: m.Lab })))
 const Impostazioni = lazy(() => import("@/pages/Impostazioni").then((m) => ({ default: m.Impostazioni })))
+const Piano = lazy(() => import("@/pages/Piano").then((m) => ({ default: m.Piano })))
+const Quaderno = lazy(() => import("@/pages/Quaderno").then((m) => ({ default: m.Quaderno })))
+const FlashcardPage = lazy(() => import("@/pages/Flashcard").then((m) => ({ default: m.FlashcardPage })))
+const Impara = lazy(() => import("@/pages/Impara").then((m) => ({ default: m.Impara })))
 
 interface ErrorBoundaryProps {
   children: ReactNode
@@ -154,7 +158,9 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route element={<MainLayout />}>
-              <Route path="/" element={<Home />} />
+              <Route path="/" element={
+                <Suspense fallback={<Loading />}><Home /></Suspense>
+              } />
               <Route path="/corsi" element={
                 <Suspense fallback={<Loading />}><Corsi /></Suspense>
               } />
@@ -163,6 +169,21 @@ function App() {
               } />
               <Route path="/feed" element={
                 <Suspense fallback={<Loading />}><StudyTok /></Suspense>
+              } />
+              <Route path="/lab/feed" element={
+                <Suspense fallback={<Loading />}><StudyTok /></Suspense>
+              } />
+              <Route path="/piano" element={
+                <Suspense fallback={<Loading />}><Piano /></Suspense>
+              } />
+              <Route path="/quaderno" element={
+                <Suspense fallback={<Loading />}><Quaderno /></Suspense>
+              } />
+              <Route path="/flashcard" element={
+                <Suspense fallback={<Loading />}><FlashcardPage /></Suspense>
+              } />
+              <Route path="/impara/:topicId" element={
+                <Suspense fallback={<Loading />}><Impara /></Suspense>
               } />
               <Route path="/simulazione/:id" element={
                 <Suspense fallback={<Loading />}><SimulazioneRunner /></Suspense>

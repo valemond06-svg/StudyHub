@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Brain, HardDrive, Cloud, Key, Palette, Monitor, Sun, Moon, MoonStar, Cpu, Database, FlaskConical, BookOpen, CheckCircle2, XCircle, Loader2, RefreshCw, Ban, Download } from "lucide-react"
+import { Brain, HardDrive, Cloud, Key, Palette, Monitor, Sun, Moon, MoonStar, Database, FlaskConical, BookOpen, CheckCircle2, XCircle, Loader2, RefreshCw, Ban, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -12,8 +12,9 @@ import { api, describeError } from "@/lib/api"
 import { claudeUsagePct, summarizeAIProblems } from "@/lib/ai-health"
 import { useToast } from "@/hooks/use-toast"
 import { useUIStore } from "@/store/ui"
-import type { AIPanelData, AIProvidersStatus, AIStatusResponse, Course, SetupStatus, StorageStatus } from "@/types"
+import type { AIPanelData, AIStatusResponse, Course, SetupStatus, StorageStatus } from "@/types"
 import { cn } from "@/lib/utils"
+import { SystemStatusPanel } from "@/components/study/SystemStatusPanel"
 
 type Theme = "system" | "light" | "dark" | "oled"
 
@@ -32,7 +33,6 @@ export function Impostazioni() {
   const [pdfCourse, setPdfCourse] = useState<string>("")
 
   const { data: storage } = useQuery<StorageStatus>({ queryKey: ["storage"], queryFn: api.getStorage })
-  const { data: providers } = useQuery<AIProvidersStatus>({ queryKey: ["aiProviders"], queryFn: api.getAIProviders })
   const { data: aiStatus } = useQuery<AIStatusResponse>({ queryKey: ["aiStatus"], queryFn: api.getAIStatus })
   const { data: aiPanel } = useQuery<AIPanelData>({ queryKey: ["aiPanel"], queryFn: api.getAIPanel })
   const { data: setup, isLoading: setupLoading, refetch: refetchSetup } = useQuery<SetupStatus>({
@@ -44,8 +44,6 @@ export function Impostazioni() {
 
   const problems = summarizeAIProblems(aiStatus, aiPanel)
   const usagePct = claudeUsagePct(aiStatus)
-  const claudeStatus = aiStatus?.usage?.status ?? null
-  const claudeOk = claudeStatus ? ["allowed", "allowed_warning"].includes(claudeStatus) : null
   const queued = aiPanel?.coda?.per_stato?.in_coda ?? 0
 
   const loginMutation = useMutation({
@@ -70,7 +68,6 @@ export function Impostazioni() {
     fn().catch((err) => toast({ variant: "destructive", title: `${what} non riuscito`, description: describeError(err) }))
 
   const loginCheck = setup?.checks.find((c) => c.id === "login")
-  const local = providers?.local
 
   return (
     <div className="space-y-6 min-w-0">
@@ -87,6 +84,7 @@ export function Impostazioni() {
         </TabsList>
 
         <TabsContent value="stato" className="space-y-6">
+          <SystemStatusPanel />
           <AIAlerts problems={problems} />
 
           <Card>
@@ -95,10 +93,6 @@ export function Impostazioni() {
               <CardDescription>Dal file d'uso di Claude Code (finestra di 5 ore).</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-sm">Stato richieste</span>
-                <StatusBadge ok={claudeOk} okLabel="Accettate" koLabel={claudeStatus === "rejected" ? "Rifiutate" : `Bloccate (${claudeStatus})`} />
-              </div>
               <div className="flex items-center gap-2">
                 <Progress value={usagePct ?? 0} className="flex-1 h-3" aria-label="Uso della finestra Claude" />
                 <span className="text-sm font-mono text-neutral-500 w-16 text-right">{usagePct === null ? "n.d." : `${usagePct}%`}</span>
@@ -107,17 +101,6 @@ export function Impostazioni() {
                 {aiStatus?.usage?.resets_at ? `Reset finestra alle ${new Date(aiStatus.usage.resets_at * 1000).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}` : "Nessun dato sul reset."}
                 {aiStatus?.backlog ? ` · Arretrati automatici ${aiStatus.backlog.enabled ? "attivi" : "spenti"}, stop al ${Math.round(aiStatus.backlog.stop_at * 100)}%` : ""}
               </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Cpu className="h-5 w-5" />LLM locale</CardTitle>
-              <CardDescription>Server llama.cpp configurato nel backend (config.yaml di StudyHub).</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-mono break-all">{local?.url ?? "non configurato"}</span>
-              <StatusBadge ok={local ? local.healthy : null} okLabel="Raggiungibile" koLabel="Non raggiungibile" />
             </CardContent>
           </Card>
 

@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useSearchParams } from "react-router-dom"
-import { Brain, FlaskConical, HelpCircle, Download, Upload, Flame, Award, Zap, Play, Cpu, Grid3X3, Radio, Compass, BookOpen } from "lucide-react"
+import { Link, useSearchParams } from "react-router-dom"
+import { Brain, FlaskConical, HelpCircle, Download, Upload, Flame, Award, Zap, Play, Cpu, Grid3X3, Radio, Compass, BookOpen, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -13,7 +13,6 @@ import { useToast } from "@/hooks/use-toast"
 import type { Course, Flashcard } from "@/types"
 import { cn, safeFormatDistance } from "@/lib/utils"
 import { FlashcardReviewModal } from "@/components/flashcards/FlashcardReviewModal"
-import { PomodoroTimer } from "@/components/pomodoro/PomodoroTimer"
 import { InteractiveEngine, type EngineType } from "@/components/engines"
 import { TutorPanel } from "@/components/tutor/TutorPanel"
 
@@ -77,6 +76,8 @@ export function Lab() {
       toast({ title: "Flashcard importate", description: `${res?.added ?? 0} nuove carte dagli appunti AI.` })
       void queryClient.invalidateQueries({ queryKey: ["flashcardStats"] })
       void queryClient.invalidateQueries({ queryKey: ["flashcards-due"] })
+      void queryClient.invalidateQueries({ queryKey: ["study-cards"] })
+      void queryClient.invalidateQueries({ queryKey: ["review-today"] })
     },
     onError: (err) => toast({ variant: "destructive", title: "Importazione non riuscita", description: describeError(err) }),
   })
@@ -90,17 +91,22 @@ export function Lab() {
           <h1 className="text-3xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">Lab</h1>
           <p className="text-neutral-500 dark:text-neutral-400 mt-1">Flashcard, quiz, tutor, laboratori grafici, esportazioni</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1 self-start"
-          disabled={importMutation.isPending}
-          onClick={() => importMutation.mutate()}
-          title="Crea flashcard dagli appunti AI delle lezioni"
-        >
-          <Upload className="h-4 w-4" />
-          Importa dagli appunti
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link to={`/lab/feed${courseId ? `?course_id=${courseId}` : ""}`}><Sparkles className="size-4" /> StudyTok</Link>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1 self-start"
+            disabled={importMutation.isPending}
+            onClick={() => importMutation.mutate()}
+            title="Crea flashcard dagli appunti AI delle lezioni"
+          >
+            <Upload className="h-4 w-4" />
+            Importa dagli appunti
+          </Button>
+        </div>
       </div>
 
       <Select value={courseFilter || "all"} onValueChange={(v) => setParam("course", v === "all" ? null : v)}>
@@ -149,7 +155,13 @@ export function Lab() {
                 <p className="text-xs text-neutral-400">Spazio gira la carta · 1-4 voto · Esc esce</p>
               </CardContent>
             </Card>
-            <PomodoroTimer />
+            <Card>
+              <CardHeader><CardTitle>Gestisci flashcard</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-neutral-500 dark:text-neutral-400">Crea carte, modifica testi e fonti o sospendi le carte dal ripasso.</p>
+                <Button variant="outline" asChild><Link to={`/flashcard${courseId ? `?corso=${courseId}` : ""}`}>Apri gestione flashcard</Link></Button>
+              </CardContent>
+            </Card>
           </div>
 
           <Card>
@@ -257,6 +269,7 @@ export function Lab() {
         onSessionComplete={() => {
           void queryClient.invalidateQueries({ queryKey: ["flashcards-due"] })
           void queryClient.invalidateQueries({ queryKey: ["flashcardStats"] })
+          void queryClient.invalidateQueries({ queryKey: ["review-today"] })
         }}
       />
     </div>

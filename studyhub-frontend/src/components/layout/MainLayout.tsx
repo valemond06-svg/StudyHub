@@ -3,6 +3,7 @@ import { Sidebar } from "./Sidebar"
 import { Header } from "./Header"
 import { useUIStore } from "@/store/ui"
 import { cn } from "@/lib/utils"
+import { FocusWidget } from "@/components/study/FocusWidget"
 
 export function MainLayout() {
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed)
@@ -17,10 +18,11 @@ export function MainLayout() {
         )}
       >
         <Header />
-        <main className="p-4 lg:p-6 min-w-0">
+        <main className="min-w-0 p-4 pb-20 lg:p-6 lg:pb-20">
           <Outlet />
         </main>
       </div>
+      <FocusWidget />
     </div>
   )
 }

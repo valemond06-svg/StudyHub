@@ -376,9 +376,9 @@ export function FlashcardReviewModal({
             {/* Card Badge Bar */}
             <div className="w-full flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400 mb-3 px-1">
               <div className="flex items-center gap-2">
-                <Badge variant="outline" className="font-mono text-2xs">
+                {!!currentCard.lecture_id && <Badge variant="outline" className="font-mono text-2xs">
                   Lezione #{currentCard.lecture_id}
-                </Badge>
+                </Badge>}
                 {againCardIds.has(currentCard.id) && (
                   <Badge variant="outline" className="text-2xs bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-800">
                     Da memorizzare
@@ -386,10 +386,10 @@ export function FlashcardReviewModal({
                 )}
               </div>
               <div className="flex items-center gap-3">
-                <span>
+                {currentCard.reps != null && <><span>
                   Ripetizioni: <strong>{currentCard.reps}</strong>
                 </span>
-                <span>•</span>
+                <span>•</span></>}
                 <span>
                   In coda: <strong>{queue.length}</strong>
                 </span>

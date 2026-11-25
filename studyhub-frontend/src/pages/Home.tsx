@@ -1,7 +1,6 @@
-import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
-import { Clock, Flame, Award, BookOpen, TrendingUp, AlertCircle, ChevronRight, Zap, Loader2, RefreshCw, Target, CheckCheck } from "lucide-react"
+import { Flame, Award, BookOpen, TrendingUp, AlertCircle, ChevronRight, Loader2, RefreshCw, CheckCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -9,12 +8,13 @@ import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { AIPanelWidget } from "@/components/home/AIPanelWidget"
 import { AIAlerts } from "@/components/home/AIAlerts"
+import { OggiStudy } from "@/components/home/OggiStudy"
 import { api } from "@/lib/api"
 import { summarizeAIProblems } from "@/lib/ai-health"
 import { averageReadiness, processedMaterial, readinessByCourse, readinessVariant, READY_THRESHOLD } from "@/lib/readiness"
 import { dedupeNotifications } from "@/lib/notifications"
-import type { AIStatusResponse, Course, Exam, PlanData, PlanTask, DueFlashcardsResponse, NotificationItem, StudyCourseOverview, AIPanelData } from "@/types"
-import { cn, safeFormatDistance, safeDaysLeft } from "@/lib/utils"
+import type { AIStatusResponse, Course, PlanData, NotificationItem, StudyCourseOverview, AIPanelData } from "@/types"
+import { cn, safeFormatDistance } from "@/lib/utils"
 
 function getLevelInfo(totalXP: number) {
   // Formula progressiva: 1 livello ogni 500 XP
@@ -32,18 +32,9 @@ function getLevelInfo(totalXP: number) {
   return { level, progress, label, xpInLevel }
 }
 
-const KIND_LABEL: Record<string, string> = {
-  flashcard: "Ripasso",
-  profile: "Profilo esame",
-  quiz: "Quiz",
-  notes: "Appunti",
-  sim: "Simulazione",
-}
-
 export function Home() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [today] = useState(() => new Date())
 
   const {
     data: courses = [],
@@ -67,14 +58,6 @@ export function Home() {
     isError: planError,
     refetch: refetchPlan,
   } = useQuery<PlanData>({ queryKey: ["plan"], queryFn: api.getPlan })
-
-  const {
-    data: due,
-    isPending: dueLoading,
-  } = useQuery<DueFlashcardsResponse>({
-    queryKey: ["flashcards-due"],
-    queryFn: () => api.getDueFlashcards(),
-  })
 
   const {
     data: notifications = [],
@@ -107,7 +90,7 @@ export function Home() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
   })
 
-  const loading = coursesLoading || planLoading || dueLoading || notificationsLoading || studyCoursesLoading
+  const loading = coursesLoading || planLoading || notificationsLoading || studyCoursesLoading
   const hasError = coursesError || planError
 
   // Metriche Gamification reali dai corsi attivi
@@ -131,25 +114,9 @@ export function Home() {
   // Prontezza reale: padronanza stimata all'esame (mastery) da /api/study
   const readiness = readinessByCourse(studyCourses)
 
-  // Appelli in calendario reali: arrivano da /api/plan (upcoming_exams).
-  const upcomingExams = (plan?.exams ?? [])
-    .filter((e: Exam) => e.date && new Date(e.date) > today)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-    .slice(0, 3)
-  const nextExam = upcomingExams[0]
-
   const knownReadiness = activeCourses.map((c) => readiness.get(c.id)).filter((v): v is number => v !== undefined)
   const avgReadiness = averageReadiness(knownReadiness)
   const readyForExam = knownReadiness.filter((v) => v >= READY_THRESHOLD).length
-
-  // Sessione consigliata → primo compito del piano di oggi (/api/plan.tasks).
-  const recommendedTask: PlanTask | undefined = plan?.tasks?.[0]
-  const recommendedCourse = recommendedTask?.course_id
-    ? activeCourses.find((c) => c.id === recommendedTask!.course_id)
-    : undefined
-
-  // Ripassi in scadenza reali: /api/flashcards/due → stats.da_ripassare.
-  const dueCount = due?.stats?.da_ripassare ?? 0
 
   // Novità reali da /api/notifications, senza ripetizioni
   const groupedNews = dedupeNotifications(notifications)
@@ -160,16 +127,13 @@ export function Home() {
   const planCourseByCourseId = new Map((plan?.courses ?? []).map((pc) => [pc.course_id, pc]))
   const courseExamByCourseId = new Map((plan?.exams ?? []).map((e) => [e.course_id, e]))
 
-  if (loading) {
-    return (
+  const loadingState = loading && (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-accent-500" />
       </div>
-    )
-  }
+  )
 
-  if (hasError) {
-    return (
+  const errorState = hasError && (
       <div className="flex flex-col items-center justify-center h-64 gap-4 text-center">
         <div className="p-3 rounded-full bg-destructive-100 dark:bg-destructive-900/30">
           <AlertCircle className="h-8 w-8 text-destructive-600 dark:text-destructive-400" />
@@ -185,26 +149,7 @@ export function Home() {
           Riprova
         </Button>
       </div>
-    )
-  }
-
-  if (!activeCourses.length) {
-    return (
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">Oggi</h1>
-            <p className="text-neutral-500 dark:text-neutral-400 mt-1">Nessun corso attivo</p>
-          </div>
-        </div>
-        <Card>
-          <CardContent className="py-12 text-center text-neutral-500 dark:text-neutral-400">
-            Nessun corso attivo nel catalogo. I corsi arrivano da Moodle: controlla il login in Impostazioni.
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  )
 
   return (
     <div className="space-y-6">
@@ -214,16 +159,20 @@ export function Home() {
           <h1 className="text-3xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
             Oggi
           </h1>
-          <p className="text-neutral-500 dark:text-neutral-400 mt-1">
+          {!!activeCourses.length && <p className="text-neutral-500 dark:text-neutral-400 mt-1">
             {activeCourses.length} corsi attivi{priorityCount ? ` (${priorityCount} prioritari)` : ""} · Prontezza media {avgReadiness === null ? "n.d." : `${avgReadiness}%`}
-          </p>
+          </p>}
         </div>
       </div>
 
+      <OggiStudy />
+      {loadingState}
+      {errorState}
+      {!loading && !hasError && !activeCourses.length && <p className="text-sm text-neutral-500 dark:text-neutral-400">Nessun corso attivo nel catalogo.</p>}
+      {!loading && !hasError && activeCourses.length > 0 && <>
       <AIAlerts problems={aiProblems} />
 
-      {/* Readiness + Next Exam + Streak + Level */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">Prontezza media</CardTitle>
@@ -265,42 +214,6 @@ export function Home() {
                 <p className="text-xl font-semibold text-success-600">{readyForExam}</p>
               </div>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Clock className="h-5 w-5 text-accent-500" />
-              Prossimo appello
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {nextExam ? (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">{nextExam.course}</p>
-                    <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                      {safeFormatDistance(nextExam.date)}
-                    </p>
-                  </div>
-                  <Badge variant="accent">
-                    {nextExam.days_left != null ? nextExam.days_left : (safeDaysLeft(nextExam.date) ?? "—")} giorni
-                  </Badge>
-                </div>
-                <Button
-                  variant="outline"
-                  className="w-full justify-start gap-2"
-                  onClick={() => navigate(`/corsi/${nextExam.course_id}`)}
-                >
-                  <Target className="h-4 w-4" />
-                  Vai al corso
-                </Button>
-              </div>
-            ) : (
-              <p className="text-neutral-500 dark:text-neutral-400 text-center py-4">Nessun appello programmato</p>
-            )}
           </CardContent>
         </Card>
 
@@ -362,59 +275,6 @@ export function Home() {
         isFetching={aiPanelFetching}
         onRefresh={() => refetchAIPanel()}
       />
-
-      {/* Sessione consigliata (dal piano di oggi) */}
-      {recommendedTask && (
-        <Card className="border-accent-200 bg-accent-50/50 dark:border-accent-900/30 dark:bg-accent-950/20">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <Zap className="h-5 w-5 text-accent-500" />
-                Sessione consigliata
-              </CardTitle>
-              <Badge variant="accent">{KIND_LABEL[recommendedTask.kind] ?? recommendedTask.kind}</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-neutral-600 dark:text-neutral-300">
-              <span className="font-medium text-neutral-900 dark:text-neutral-100">{recommendedTask.title}.</span>{" "}
-              {recommendedTask.detail}
-            </p>
-            <Button
-              className="w-full"
-              size="lg"
-              onClick={() => {
-                if (recommendedTask.kind === "flashcard") navigate("/lab?tab=flashcard")
-                else if (recommendedTask.course_id) navigate(`/studio/${recommendedTask.course_id}`)
-                else navigate(`/corsi/${recommendedCourse?.id ?? ""}`)
-              }}
-            >
-              Inizia ora
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Ripassi scaduti (reali da /api/flashcards/due) */}
-      {dueCount > 0 && (
-        <Card className="border-warning-200 bg-warning-50/50 dark:border-warning-900/30 dark:bg-warning-950/20">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-warning-500" />
-              Ripassi in scadenza
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <div>
-              <p className="text-2xl font-bold text-warning-600 dark:text-warning-400">{dueCount}</p>
-              <p className="text-sm text-neutral-500 dark:text-neutral-400">flashcard da ripassare oggi</p>
-            </div>
-            <Button onClick={() => navigate("/lab?tab=flashcard")}>
-              Ripassa ora
-            </Button>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Novità (reali da /api/notifications) */}
       {newItems.length > 0 && (
@@ -537,6 +397,7 @@ export function Home() {
           )}
         </CardContent>
       </Card>
+      </>}
     </div>
   )
 }

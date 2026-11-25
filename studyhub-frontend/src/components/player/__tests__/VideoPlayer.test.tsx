@@ -38,6 +38,22 @@ describe("VideoPlayer Component", () => {
     expect(formatTime(NaN)).toBe("0:00")
   })
 
+  it("apre il quaderno con il timestamp corrente del video", async () => {
+    vi.mocked(api.getLecture).mockResolvedValueOnce({
+      id: 102, course_id: 7, title: "Lezione registrata", duration: 1800,
+      source: "moodle", media_url: "/media/102/video.mp4", video_modes: ["moodle"], default_mode: "moodle",
+      transcript: { segments: [{ start: 90, end: 95, text: "Cambio di base." }] },
+    })
+    const onQuickNote = vi.fn()
+    render(<VideoPlayer lectureId={102} lectureTitle="Lezione registrata" onClose={vi.fn()} onQuickNote={onQuickNote} />)
+    await screen.findByRole("button", { name: "Nota nel quaderno a 0:00" })
+    const video = document.querySelector("video")!
+    video.currentTime = 92.5
+    fireEvent.timeUpdate(video)
+    fireEvent.click(await screen.findByRole("button", { name: "Nota nel quaderno a 1:32" }))
+    expect(onQuickNote).toHaveBeenCalledExactlyOnceWith(92.5)
+  })
+
   it("loads and renders Panopto iframe mode by default when Panopto source is available", async () => {
     const mockPanoptoLecture = {
       id: 101,

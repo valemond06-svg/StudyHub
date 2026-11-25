@@ -1,13 +1,14 @@
 import { useEffect } from "react"
 import { NavLink, useLocation } from "react-router-dom"
-import { BookOpen, Brain, Sparkles, Zap, Settings, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { BookOpen, Brain, CalendarDays, NotebookPen, Zap, Settings, X, ChevronLeft, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useUIStore } from "@/store/ui"
 
 const navigation = [
-  { name: "Home", href: "/", icon: BookOpen },
+  { name: "Oggi", href: "/", icon: BookOpen },
   { name: "Corsi", href: "/corsi", icon: Brain },
-  { name: "StudyTok", href: "/feed", icon: Sparkles },
+  { name: "Piano", href: "/piano", icon: CalendarDays },
+  { name: "Quaderno", href: "/quaderno", icon: NotebookPen },
   { name: "Lab", href: "/lab", icon: Zap },
   { name: "Impostazioni", href: "/impostazioni", icon: Settings },
 ] as const

@@ -74,6 +74,7 @@ export interface VideoPlayerProps {
   lectureTitle: string
   onClose: () => void
   initialTime?: number
+  onQuickNote?: (seconds: number) => void
 }
 
 export interface VideoPlayerHandle {
@@ -178,8 +179,8 @@ export function PanoptoPlayer({
           </span>
         </div>
 
-        {/* Quick jump & Note controls */}
-        <div className="flex items-center gap-1">
+        {/* Quick jump & Note controls (a capo su schermi stretti: a 390 px "Nota" e "Apri nel portale" uscivano dallo schermo) */}
+        <div className="flex flex-wrap items-center gap-1 min-w-0">
           <Button
             variant="ghost"
             size="sm"
@@ -1329,7 +1330,7 @@ export function NotesPanel({
 // ============================================
 
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
-  function VideoPlayer({ lectureId, lectureTitle, onClose, initialTime = 0 }, ref) {
+  function VideoPlayer({ lectureId, lectureTitle, onClose, initialTime = 0, onQuickNote }, ref) {
     // Media & Loading State
     const [mediaData, setMediaData] = useState<LectureMediaData | null>(null)
     const [isLoading, setIsLoading] = useState(true)
@@ -1880,7 +1881,10 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           </div>
 
           {/* Right: Pill Mode Selector & Toolbars */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
+            {onQuickNote && <Button variant="outline" size="sm" onClick={() => onQuickNote(currentTimeRef.current)} aria-label={`Nota nel quaderno a ${formatTime(currentTime)}`}>
+              <FileText className="size-4" /> Quaderno
+            </Button>}
             {/* Elegant Mode Switcher Pill */}
             <div
               className="flex items-center p-1 bg-neutral-900 rounded-full border border-neutral-800 shadow-inner"

@@ -1,5 +1,5 @@
-import { useParams, useNavigate, useSearchParams } from "react-router-dom"
-import { useState } from "react"
+import { Link, useLocation, useParams, useNavigate, useSearchParams } from "react-router-dom"
+import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, Play, BookOpen, FlaskConical, HelpCircle, Target, Zap, Download, Upload, Plus, ListMusic, Image as ImageIcon, Loader2, RotateCcw, Video, FileText, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,8 @@ import { readinessVariant } from "@/lib/readiness"
 import { useToast } from "@/hooks/use-toast"
 import type { Course, Lecture, Exam, PlanData, StudyTopic } from "@/types"
 import { cn, safeFormatDistance } from "@/lib/utils"
+import { LecturePanel } from "@/components/study/LecturePanel"
+import { useFocusDraft } from "@/lib/study-navigation"
 
 type LectureRow = Lecture & { has_notes: boolean }
 
@@ -38,11 +40,13 @@ function sortLectures(rows: LectureRow[]): LectureRow[] {
 export function CorsoDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { hash } = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const courseId = Number(id)
   const validId = Number.isSafeInteger(courseId) && courseId > 0
+  const openFocus = useFocusDraft((state) => state.openFocus)
 
   // Apertura diretta di una lezione al secondo esatto (dalla ricerca): /corsi/7?lezione=190&t=754
   const lectureParam = Number(searchParams.get("lezione"))
@@ -50,6 +54,23 @@ export function CorsoDetail() {
   const [today] = useState(() => new Date().toISOString().slice(0, 10))
   const [playerLecture, setPlayerLecture] = useState<{ id: number; title: string; t: number } | null>(null)
   const openFromUrl = Number.isSafeInteger(lectureParam) && lectureParam > 0 ? lectureParam : null
+  const materialId = Number(searchParams.get("materiale"))
+  const tab = searchParams.get("tab")
+  const selectedTab = openFromUrl ? "lezioni" : tab && ["studia", "lezioni", "esame", "lab"].includes(tab) ? tab : "studia"
+
+  function selectTab(value: string) {
+    const next = new URLSearchParams(searchParams)
+    next.set("tab", value)
+    setSearchParams(next, { replace: true })
+  }
+
+  function toggleMaterial(lectureId: number) {
+    const next = new URLSearchParams(searchParams)
+    next.set("tab", "lezioni")
+    if (materialId === lectureId) next.delete("materiale")
+    else next.set("materiale", String(lectureId))
+    setSearchParams(next, { replace: true })
+  }
 
   const { data: course, isLoading: courseLoading, isError: courseError, refetch: refetchCourse } = useQuery<Course>({
     queryKey: ["course", courseId],
@@ -77,6 +98,14 @@ export function CorsoDetail() {
   })
   const profile = toExamProfile(courseExam?.profile)
   const simulations = toExamSims(courseExam?.sims)
+  useEffect(() => {
+    if (selectedTab === "lezioni" && course && materialId && lectureRows.some((lecture) => lecture.id === materialId)) {
+      document.getElementById(`materiale-${materialId}`)?.scrollIntoView?.({ block: "start" })
+    }
+    if (selectedTab === "esame" && course && hash === "#simulazioni") {
+      document.getElementById("simulazioni")?.scrollIntoView?.({ block: "start" })
+    }
+  }, [selectedTab, materialId, lectureRows, course, courseExam, hash])
   const profileMutation = useMutation({
     mutationFn: (force: boolean) => api.generateExamProfile(courseId, force),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["examProfile", courseId] }),
@@ -117,6 +146,9 @@ export function CorsoDetail() {
       return Promise.all([
         queryClient.invalidateQueries({ queryKey: ["flashcardStats"] }),
         queryClient.invalidateQueries({ queryKey: ["flashcards-due"] }),
+        queryClient.invalidateQueries({ queryKey: ["study-cards"] }),
+        queryClient.invalidateQueries({ queryKey: ["review-today"] }),
+        queryClient.invalidateQueries({ queryKey: ["study-week"] }),
       ])
     },
     onError: (err) => toast({ variant: "destructive", title: "Importazione non riuscita", description: describeError(err) }),
@@ -223,7 +255,8 @@ export function CorsoDetail() {
             </h1>
           </div>
         </div>
-        <div className="flex items-center gap-2 sm:ml-auto">
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          <Button variant="outline" onClick={() => openFocus({ courseId })}>Avvia focus</Button>
           <Button variant="outline" className="gap-1" disabled={pdfMutation.isPending} onClick={() => pdfMutation.mutate()}>
             {pdfMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             Dispensa PDF
@@ -284,7 +317,7 @@ export function CorsoDetail() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue={openFromUrl ? "lezioni" : "studia"} className="space-y-4">
+      <Tabs value={selectedTab} onValueChange={selectTab} className="space-y-4">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="studia">
             <BookOpen className="h-4 w-4 sm:mr-2" />
@@ -359,10 +392,13 @@ export function CorsoDetail() {
                   <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-3">
                     Padronanza {Math.round((nextTopic.m ?? 0) * 100)}% · {nextTopic.n_items ?? 0} domande · Peso {nextTopic.weight}/3
                   </p>
-                  <Button size="sm" className="gap-1" onClick={() => navigate(`/studio/${courseId}?topic=${nextTopic.id}&duration=25`)}>
-                    <Play className="h-3 w-3" />
-                    Prepara una sessione su questo argomento
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" asChild><Link to={`/impara/${nextTopic.id}`}>Impara</Link></Button>
+                    <Button size="sm" className="gap-1" onClick={() => navigate(`/studio/${courseId}?topic=${nextTopic.id}&duration=25`)}>
+                      <Play className="h-3 w-3" />
+                      Prepara una sessione
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <p className="text-neutral-500 dark:text-neutral-400">
@@ -430,7 +466,7 @@ export function CorsoDetail() {
                   {group.items.map((lec) => {
                     const openable = canOpenLecture(lec)
                     return (
-                      <Card key={lec.id} className={cn("transition-shadow", openable && "hover:shadow-md")}>
+                      <Card key={lec.id} id={`materiale-${lec.id}`} className={cn("scroll-mt-20 transition-shadow", openable && "hover:shadow-md")}>
                         <CardContent className="p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex-1 min-w-0">
@@ -476,6 +512,10 @@ export function CorsoDetail() {
                               <span className="text-xs text-neutral-400 shrink-0">Nessuna sorgente</span>
                             )}
                           </div>
+                          <Button variant="ghost" size="sm" className="mt-2" aria-expanded={materialId === lec.id} onClick={() => toggleMaterial(lec.id)}>
+                            {materialId === lec.id ? "Chiudi appunti e quiz" : "Appunti e quiz"}
+                          </Button>
+                          {materialId === lec.id && <LecturePanel key={lec.id} lectureId={lec.id} />}
                         </CardContent>
                       </Card>
                     )
@@ -652,7 +692,7 @@ export function CorsoDetail() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card id="simulazioni" className="scroll-mt-20">
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
               <CardTitle className="flex items-center gap-2">
                 <Zap className="h-5 w-5 text-accent-500" />
@@ -753,6 +793,10 @@ export function CorsoDetail() {
           lectureTitle={activePlayer.title}
           initialTime={activePlayer.t}
           onClose={closePlayer}
+          onQuickNote={(seconds) => {
+            setPlayerLecture(null)
+            navigate(`/quaderno?nuova=1&corso=${courseId}&lezione=${activePlayer.id}&t=${seconds}`)
+          }}
         />
       )}
     </div>
