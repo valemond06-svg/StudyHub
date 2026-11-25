@@ -30,6 +30,28 @@ def test_documents_by_category_skip_duplicates_and_other_courses(client, db):
     assert client.get("/api/courses/99/documents").status_code == 404
 
 
+def test_documents_paginate_the_selected_category_beyond_500(client, db):
+    inserisci_corso(db, 1)
+    for ident in range(1, 502):
+        _doc(db, ident, 1, f"slide_{ident:04}.pdf", "slide")
+    _doc(db, 502, 1, "trascrizione.md", "trascrizione", kind="md")
+    db.commit()
+    url = "/api/courses/1/documents"
+
+    metadata = client.get(url, params={"limit": 0}).json()
+    assert metadata == {"categories": [{"category": "slide", "count": 501},
+                                       {"category": "trascrizione", "count": 1}],
+                        "documents": [], "next_offset": None}
+    first = client.get(url, params={"category": "slide"}).json()
+    assert [d["id"] for d in first["documents"]] == list(range(1, 501))
+    assert first["next_offset"] == 500
+    second = client.get(url, params={"category": "slide", "offset": first["next_offset"]}).json()
+    assert [d["id"] for d in second["documents"]] == [501]
+    assert second["next_offset"] is None and second["categories"] == metadata["categories"]
+    other = client.get(url, params={"category": "trascrizione"}).json()
+    assert [d["id"] for d in other["documents"]] == [502]
+
+
 def test_announcements_read_latest_first_and_tolerate_missing_file(client, db, ambiente):
     inserisci_corso(db, 1)
     inserisci_corso(db, 2, "Fisica")

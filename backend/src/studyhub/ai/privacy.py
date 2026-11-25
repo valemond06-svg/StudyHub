@@ -118,14 +118,11 @@ def analyze_sensitivity(text: str) -> tuple[str, list[str]]:
     if _KEYWORDS_PERSONAL.search(text_lower):
         reasons.append("Dati anagrafici")
 
-    # Low: contenuti didattici universitari generici
-    if _UNIVERSITY_KEYWORDS.search(text_lower):
-        if not reasons:
-            reasons.append("Contenuto didattico universitario")
-        return "low" if not reasons else "medium", reasons
-
     if reasons:
         return "medium", reasons
+
+    if _UNIVERSITY_KEYWORDS.search(text_lower):
+        return "low", ["Contenuto didattico universitario"]
 
     return "none", []
 

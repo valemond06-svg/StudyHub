@@ -189,7 +189,7 @@ function PaletteDialog({ onClose, navigate }: { onClose: () => void; navigate: R
   const openHit = async (hit: SearchHit) => {
     const target = searchTarget(hit)
     onClose()
-    if (target.type === "document") {
+    if (target.type === "document" || target.type === "note") {
       navigate(target.url)
       return
     }
@@ -313,7 +313,7 @@ function PaletteDialog({ onClose, navigate }: { onClose: () => void; navigate: R
                     const index = filteredQuickActions.length + flatHits.indexOf(hit)
                     return (
                       <div
-                        key={hit.id}
+                        key={`${hit.kind}:${hit.id}`}
                         ref={(el) => { itemsRef.current[index] = el }}
                         className={itemClass(selectedIndex === index)}
                         onClick={() => void openHit(hit)}
@@ -360,7 +360,7 @@ function PaletteDialog({ onClose, navigate }: { onClose: () => void; navigate: R
 
               {!isLoading && searching && shownHits.length > 0 && !semantic && (
                 <p className="px-3 pt-2 text-[11px] text-neutral-400">
-                  Ricerca solo per parole: la ricerca per significato (Ollama) non è disponibile.
+                  Risultati della ricerca per parole.
                 </p>
               )}
 

@@ -66,7 +66,7 @@ const grading = {
 const DRAFT_KEY = "studyhub-sim-draft-12"
 
 function renderRunner(client: QueryClient) {
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/simulazione/12"]}>
         <Routes>
@@ -150,7 +150,7 @@ describe("SimulazioneRunner", () => {
     expect(screen.getByText("10:00")).toBeDefined()
     fireEvent.click(screen.getByText("Consegna Esame"))
     await act(async () => { fireEvent.click(screen.getByText("Conferma e Consegna")) })
-    expect(api.submitSimulation).toHaveBeenCalledExactlyOnceWith("12", expect.any(Array), 50)
+    expect(api.submitSimulation).toHaveBeenCalledExactlyOnceWith("12", expect.any(Array), 50, expect.any(String))
   })
 
   it("una ricarica riprende la bozza con il tempo che restava davvero", async () => {
@@ -195,5 +195,27 @@ describe("SimulazioneRunner", () => {
     fireEvent.click(screen.getByRole("button", { name: "Riprova la consegna" }))
     expect(await screen.findByText("Prova Superata")).toBeDefined()
     expect(api.submitSimulation).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(api.submitSimulation).mock.calls[0][3]).toBe(vi.mocked(api.submitSimulation).mock.calls[1][3])
+  })
+
+  it("riapre una consegna automatica in corso con lo stesso ID salvato nella bozza", async () => {
+    const now = Date.now()
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      startedAt: now - 61 * 60_000, deadline: now - 60_000, selected: 0, answers: {},
+    }))
+    vi.mocked(api.getSimulation).mockResolvedValue(mockSimulation)
+    vi.mocked(api.submitSimulation)
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce(grading)
+    const first = renderRunner(queryClient)
+    await waitFor(() => expect(api.submitSimulation).toHaveBeenCalledOnce())
+    const saved = JSON.parse(window.localStorage.getItem(DRAFT_KEY)!)
+    expect(saved.submissionId).toBe(`legacy-${now - 61 * 60_000}`)
+    first.unmount()
+
+    renderRunner(new QueryClient({ defaultOptions: { queries: { retry: false } } }))
+    expect(await screen.findByText("Prova Superata")).toBeDefined()
+    expect(vi.mocked(api.submitSimulation).mock.calls.map((call) => call[3])).toEqual([saved.submissionId, saved.submissionId])
+    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull()
   })
 })

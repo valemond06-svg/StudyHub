@@ -1,6 +1,6 @@
 /**
- * Adapter della ricerca: GET /api/search risponde
- *   {results: [{id, kind, page, t_start, t_end, heading, doc_id, path, title, lecture_id, course, course_id, snippet, score}],
+ * Adapter della ricerca: /api/search risponde
+ *   {results: [{id, kind, page, t_start, t_end, heading, doc_id, note_id, path, title, lecture_id, course, course_id, snippet, score}],
  *    semantic: boolean}
  * (backend/src/studyhub/search.py). Lo snippet marca i termini trovati con [[ ]].
  */
@@ -8,7 +8,7 @@ import { documentHref } from "@/lib/documents"
 
 export type SearchGroup = "lezioni" | "documenti" | "appunti" | "codice"
 
-export interface SearchHit {
+export type SearchHit = {
   /** id del chunk */
   id: number
   kind: string
@@ -17,13 +17,12 @@ export interface SearchHit {
   snippet: string
   course: string | null
   courseId: number | null
-  docId: number
   lectureId: number | null
   page: number | null
   tStart: number | null
   heading: string | null
   score: number
-}
+} & ({ docId: number; noteId: null } | { docId: number | null; noteId: number })
 
 export interface SearchResponse {
   results: SearchHit[]
@@ -65,23 +64,25 @@ export function toSearchHit(raw: unknown): SearchHit | null {
   const r = raw as Record<string, unknown>
   const id = num(r.id)
   const docId = num(r.doc_id)
-  if (id === null || docId === null) return null
   const kind = str(r.kind) ?? "text"
-  return {
+  const noteId = kind === "note" ? num(r.note_id) : null
+  if (id === null) return null
+  const hit = {
     id,
     kind,
     group: groupForKind(kind),
-    title: str(r.title) ?? basename(str(r.path)) ?? `Documento ${docId}`,
+    title: str(r.title) ?? basename(str(r.path)) ?? (noteId === null ? `Documento ${docId}` : "Nota personale"),
     snippet: typeof r.snippet === "string" ? r.snippet : "",
     course: str(r.course),
     courseId: num(r.course_id),
-    docId,
     lectureId: num(r.lecture_id),
     page: num(r.page),
     tStart: num(r.t_start),
     heading: str(r.heading),
     score: num(r.score) ?? 0,
   }
+  if (kind === "note") return noteId === null ? null : { ...hit, docId, noteId }
+  return docId === null ? null : { ...hit, docId, noteId: null }
 }
 
 export function toSearchResponse(raw: unknown): SearchResponse {
@@ -117,6 +118,7 @@ export function splitSnippet(snippet: string): Array<{ text: string; mark: boole
 
 export type SearchTarget =
   | { type: "lecture"; courseId: number | null; lectureId: number; t: number }
+  | { type: "note"; url: string }
   | { type: "document"; url: string }
 
 /**
@@ -124,6 +126,7 @@ export type SearchTarget =
  * trascrizione → player della lezione al secondo esatto; PDF → file alla pagina; altro → file.
  */
 export function searchTarget(hit: SearchHit): SearchTarget {
+  if (hit.noteId !== null) return { type: "note", url: `/quaderno?nota=${hit.noteId}` }
   if (hit.lectureId !== null && hit.tStart !== null) {
     return { type: "lecture", courseId: hit.courseId, lectureId: hit.lectureId, t: Math.max(0, Math.floor(hit.tStart)) }
   }
@@ -132,6 +135,7 @@ export function searchTarget(hit: SearchHit): SearchTarget {
 
 /** "▶ 12:34", "p. 7" o il tipo: dove si trova il risultato. */
 export function searchWhere(hit: SearchHit): string {
+  if (hit.noteId !== null) return "Quaderno"
   if (hit.tStart !== null && hit.group === "lezioni") {
     const s = Math.floor(hit.tStart)
     const h = Math.floor(s / 3600)

@@ -64,6 +64,7 @@ function NoteForm({ note, initial, courses, close }: {
 
 export function Quaderno() {
   const [params, setParams] = useSearchParams()
+  const noteId = Number(params.get("nota")) || undefined
   const [courseId, setCourseId] = useState<number | undefined>(() => Number(params.get("corso")) || undefined)
   const [lectureId, setLectureId] = useState<number | undefined>()
   const [search, setSearch] = useState("")
@@ -76,12 +77,24 @@ export function Quaderno() {
   const courses = useQuery({ queryKey: ["courses"], queryFn: api.getCourses })
   const lectures = useQuery({ queryKey: ["lectures", courseId], queryFn: () => api.getCourseLectures(courseId!), enabled: !!courseId })
   const filters = { course_id: courseId, lecture_id: lectureId, q, tag: tag.trim(), limit: PAGE_SIZE, offset }
-  const list = useQuery({ queryKey: ["study-notes", filters], queryFn: () => studyApi.notes(filters) })
+  const list = useQuery({ queryKey: ["study-notes", filters], queryFn: () => studyApi.notes(filters), enabled: !noteId })
+  const selected = useQuery({ queryKey: ["study-notes", noteId], queryFn: () => studyApi.getNote(noteId!), enabled: !!noteId })
+  const notes = noteId ? (selected.data ? [selected.data] : []) : list.data?.notes
   const remove = useMutation({
     mutationFn: studyApi.deleteNote,
-    onSuccess: async () => { setDeleting(null); await client.invalidateQueries({ queryKey: ["study-notes"] }) },
+    onSuccess: async (_, deletedId) => {
+      setDeleting(null)
+      if (deletedId === noteId) showAllNotes()
+      await client.invalidateQueries({ queryKey: ["study-notes"] })
+    },
   })
   const activeCourses = courses.data ?? []
+  function showAllNotes() {
+    setEditing(null)
+    const next = new URLSearchParams(params)
+    next.delete("nota")
+    setParams(next)
+  }
   function closeEditor() {
     setEditing(null)
     if (params.has("nuova")) {
@@ -95,11 +108,13 @@ export function Quaderno() {
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-3xl font-semibold tracking-tight">Quaderno</h1>
-        <Button disabled={!!editing} onClick={() => setEditing("new")}><Plus className="size-4" /> Nuova nota</Button>
+        {noteId
+          ? <Button variant="outline" onClick={showAllNotes}>Tutte le note</Button>
+          : <Button disabled={!!editing} onClick={() => setEditing("new")}><Plus className="size-4" /> Nuova nota</Button>}
       </div>
       {editing && <NoteForm key={editing === "new" ? "new" : editing.id} note={editing === "new" ? undefined : editing}
         initial={{ courseId, lectureId: Number(params.get("lezione")) || lectureId, seconds: params.has("t") ? Math.max(0, Number(params.get("t")) || 0) : undefined }} courses={activeCourses} close={closeEditor} />}
-      <Card>
+      {!noteId && <Card>
         <CardContent className="space-y-3 pt-5">
           <div className="grid gap-3 sm:grid-cols-3">
             <Field name="Corso"><CoursePicker courses={activeCourses} value={courseId} empty="Tutti i corsi" onChange={(id) => { setCourseId(id); setLectureId(undefined); setOffset(0) }} /></Field>
@@ -116,11 +131,11 @@ export function Quaderno() {
             <Button variant="outline">Cerca</Button>
           </form>
         </CardContent>
-      </Card>
-      <StudyError error={list.error || courses.error || lectures.error || remove.error} />
-      {list.isPending && <p className={studyMuted}>Caricamento note…</p>}
-      {list.data?.notes.length === 0 && <p className={studyMuted}>Nessuna nota corrisponde ai filtri.</p>}
-      {list.data?.notes.map((note) => (
+      </Card>}
+      <StudyError error={(noteId ? selected.error : list.error) || courses.error || lectures.error || remove.error} />
+      {(noteId ? selected.isPending : list.isPending) && <p className={studyMuted}>Caricamento note…</p>}
+      {!noteId && notes?.length === 0 && <p className={studyMuted}>Nessuna nota corrisponde ai filtri.</p>}
+      {notes?.map((note) => (
         <Card key={note.id} className="min-w-0">
           <CardContent className="space-y-3 pt-5">
             <p className={studyMuted}>{activeCourses.find((course) => course.id === note.course_id)?.fullname ?? `Corso ${note.course_id}`}</p>
@@ -141,10 +156,10 @@ export function Quaderno() {
           </CardContent>
         </Card>
       ))}
-      <div className="flex gap-2">
+      {!noteId && <div className="flex gap-2">
         {offset > 0 && <Button variant="outline" onClick={() => setOffset(offset - PAGE_SIZE)}>Note precedenti</Button>}
         {list.data?.notes.length === PAGE_SIZE && <Button variant="outline" onClick={() => setOffset(offset + PAGE_SIZE)}>Altre note</Button>}
-      </div>
+      </div>}
     </div>
   )
 }

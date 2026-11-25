@@ -15,7 +15,7 @@ from threading import Lock
 from time import monotonic
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.datastructures import Headers
@@ -201,7 +201,10 @@ def _course_row(course_id: int) -> dict:
 
 
 @app.get("/api/courses/{course_id}/documents")
-def course_documents(course_id: int, category: str | None = None, token: str = Depends(get_current_token)):
+def course_documents(
+    course_id: int, category: str | None = None, limit: int = Query(500, ge=0, le=500),
+    offset: int = Query(0, ge=0), token: str = Depends(get_current_token),
+):
     """Materiale del corso per categoria (esami passati, soluzioni, formulari...), dalla classificazione di docclass."""
     _course_row(course_id)
     with session() as db:
@@ -215,10 +218,13 @@ def course_documents(course_id: int, category: str | None = None, token: str = D
         documents = [dict(r) for r in db.execute(
             f"""SELECT d.id, d.title, d.path, d.kind, d.n_pages, t.category, t.exam_date
                 FROM doc_tags t JOIN documents d ON d.id=t.doc_id WHERE {where}
-                ORDER BY t.category, t.exam_date DESC, d.path LIMIT 500""", args)]
+                ORDER BY t.category, t.exam_date DESC, d.path, d.id LIMIT ? OFFSET ?""",
+            [*args, limit + 1, offset])] if limit else []
+    next_offset = offset + limit if len(documents) > limit else None
+    documents = documents[:limit]
     for d in documents:
         d["name"] = Path(d.pop("path")).name
-    return {"categories": categories, "documents": documents}
+    return {"categories": categories, "documents": documents, "next_offset": next_offset}
 
 
 @app.get("/api/courses/{course_id}/announcements")
@@ -661,6 +667,19 @@ def exam_add(body: NewExam, _csrf: None = Depends(csrf_protect), token: str = De
         raise HTTPException(400, "Data non valida (AAAA-MM-GG)")
 
 
+@app.put("/api/exams/{exam_id}")
+def exam_update(exam_id: int, body: NewExam, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
+    from ..study import exam
+    _need("course", body.course_id)
+    try:
+        updated = exam.update_exam(exam_id, body.course_id, body.date, body.kind, body.note)
+    except ValueError:
+        raise HTTPException(400, "Data non valida (AAAA-MM-GG)")
+    if not updated:
+        raise HTTPException(404, "Appello non trovato")
+    return {"id": exam_id}
+
+
 @app.delete("/api/exams/{exam_id}")
 def exam_delete(exam_id: int, _csrf: None = Depends(csrf_protect), token: str = Depends(get_current_token)):
     from ..study import exam
@@ -722,6 +741,7 @@ class SimSubmit(BaseModel):
 
     answers: list[dict]
     elapsed_min: float | None = None
+    submission_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 @app.post("/api/sims/{sim_id}/submit")
@@ -730,7 +750,7 @@ def sim_submit(sim_id: int, body: SimSubmit, _csrf: None = Depends(csrf_protect)
     _need("sim", sim_id)
     if not isinstance(body.answers, list):
         raise HTTPException(400, "answers deve essere una lista di risposte")
-    return _ai_call(exam.grade_sim, sim_id, body.answers, body.elapsed_min)
+    return _ai_call(exam.grade_sim, sim_id, body.answers, body.elapsed_min, body.submission_id)
 
 
 # --- StudyTok Feed (Shorts / Micro-Concetti verticali) --------------------------------

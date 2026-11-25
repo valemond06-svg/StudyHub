@@ -256,8 +256,8 @@ export const api = {
   getCourseLectures: (id: number) =>
     request<any[]>(`/api/courses/${id}/lectures`).then((rows) => rows.map(enhanceLecture)),
   getNotesIndex: (id: number) => request<number[]>(`/api/courses/${id}/notes-index`),
-  getCourseDocuments: (id: number, category?: string) =>
-    request<CourseDocuments>(`/api/courses/${id}/documents${q({ category })}`),
+  getCourseDocuments: (id: number, category?: string, limit?: number, offset?: number) =>
+    request<CourseDocuments>(`/api/courses/${id}/documents${q({ category, limit, offset })}`),
   getCourseAnnouncements: (id: number, last = 10) =>
     request<{ items: string[] }>(`/api/courses/${id}/announcements${q({ last })}`),
 
@@ -370,8 +370,8 @@ export const api = {
   generateSimulation: (course_id: number) =>
     request<any>(`/api/courses/${course_id}/exam/sims`, { method: "POST" }),
   getSimulation: (id: string) => request<any>(`/api/sims/${id}`),
-  submitSimulation: (id: string, answers: any[], elapsed_min?: number) =>
-    request<any>(`/api/sims/${id}/submit`, { method: "POST", body: JSON.stringify({ answers, elapsed_min }) }),
+  submitSimulation: (id: string, answers: any[], elapsed_min?: number, submission_id?: string) =>
+    request<any>(`/api/sims/${id}/submit`, { method: "POST", body: JSON.stringify({ answers, elapsed_min, submission_id }) }),
 
   // Feed (StudyTok shorts)
   getFeed: (course_id?: number, limit: number = 30) => request<any>(`/api/feed${q({ course_id, limit })}`),
@@ -381,9 +381,14 @@ export const api = {
   markNotificationsRead: () => request<{ ok: boolean }>(`/api/notifications/read`, { method: "POST" }),
 
   // Search: il backend risponde {results, semantic}
-  search: (text: string, opts: { courseId?: number; year?: number; limit?: number } = {}): Promise<SearchResponse> =>
-    request<unknown>(`/api/search${q({ q: text, course_id: opts.courseId, year: opts.year, limit: opts.limit ?? 20 })}`)
-      .then(toSearchResponse),
+  search: async (text: string, opts: { courseId?: number; year?: number; limit?: number } = {}): Promise<SearchResponse> => {
+    const filters = { q: text, course_id: opts.courseId, year: opts.year, limit: opts.limit ?? 20 }
+    try {
+      return toSearchResponse(await request<unknown>("/api/search", { method: "POST", body: JSON.stringify(filters) }))
+    } catch {
+      return toSearchResponse(await request<unknown>(`/api/search${q(filters)}`))
+    }
+  },
 
   // Storage
   getStorage: () => request<StorageStatus>(`/api/storage`),

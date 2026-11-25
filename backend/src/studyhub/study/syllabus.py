@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 
 from ..ai.llm import run_json
+from ..ai.privacy import scope
 from ..db import session
 from .exam import _syllabus
 
@@ -50,7 +51,8 @@ def order_course(course_id: int, force: bool = False) -> dict:
     with session() as db:
         course = db.execute("SELECT fullname FROM courses WHERE id=?", (course_id,)).fetchone()[0]
         topics = [dict(r) for r in db.execute(
-            """SELECT t.id, t.name, t.day, u.title AS unit FROM study_topics t LEFT JOIN study_units u ON u.id=t.unit_id
+            """SELECT t.id, t.name, t.day, t.ocr_source, u.title AS unit
+               FROM study_topics t LEFT JOIN study_units u ON u.id=t.unit_id
                WHERE t.course_id=? ORDER BY t.day, t.id""", (course_id,))]
         units = [f"{r[0] or '?'} · {r[1]}" for r in db.execute(
             "SELECT day, title FROM study_units WHERE course_id=? ORDER BY day, id", (course_id,))]
@@ -59,7 +61,8 @@ def order_course(course_id: int, force: bool = False) -> dict:
             f"=== Materiali (data · titolo) ===\n" + "\n".join(units[:250]) +
             "\n\n=== Argomenti da ordinare (data di prima comparsa · nome · materiale) ===\n" +
             "\n".join(f"{t['day']} · {t['name']} · {t['unit']}" for t in topics))
-    res = run_json(SYSTEM, text, SCHEMA, quality="accurato")
+    with scope(private=any(t["ocr_source"] for t in topics)):
+        res = run_json(SYSTEM, text, SCHEMA, quality="accurato")
     by_name = {t["name"].strip().lower(): t for t in topics}
     placed: set[int] = set()
     rows: list[tuple] = []

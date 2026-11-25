@@ -58,4 +58,5 @@ export interface CourseDocument {
 export interface CourseDocuments {
   categories: { category: string; count: number }[]
   documents: CourseDocument[]
+  next_offset: number | null
 }

@@ -1,3 +1,4 @@
+import hashlib
 import sqlite3
 
 from studyhub import db as dbmod
@@ -52,3 +53,19 @@ def test_fts_segue_inserimento_e_cancellazione_dei_chunk(ambiente):
         assert conn.execute("SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH 'autovalori'").fetchone()[0] == 1
         conn.execute("DELETE FROM documents WHERE id=1")  # ON DELETE CASCADE -> trigger di cancellazione
         assert conn.execute("SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'autovalori'").fetchone()[0] == 0
+
+
+def test_migration_recovers_ocr_provenance_without_cache(ambiente, monkeypatch):
+    with monkeypatch.context() as old:
+        old.setattr(dbmod, "MIGRATIONS", dbmod.MIGRATIONS[:-1])
+        with dbmod.session() as conn:
+            conn.execute("INSERT INTO documents (id, path, kind, sha256, n_pages) VALUES (1,'a.pdf','pdf','x',2)")
+            for i, suffix in ((1, ":ocr"), (2, "")):
+                source_hash = hashlib.sha256(f"bank-v1|x:{i}-{i}{suffix}".encode()).hexdigest()
+                conn.execute("""INSERT INTO study_units (id, course_id, kind, ref_id, part, page_from, page_to, source_hash)
+                                VALUES (?,1,'documento',1,?,?,?,?)""", (i, i - 1, i, i, source_hash))
+                conn.execute("INSERT INTO study_topics (id, course_id, name, unit_id) VALUES (?,1,?,?)", (i, f"T{i}", i))
+
+    with dbmod.session() as conn:
+        for table in ("study_units", "study_topics"):
+            assert [r[0] for r in conn.execute(f"SELECT ocr_source FROM {table} ORDER BY id")] == [1, 0]

@@ -1,4 +1,7 @@
+import json
 import sqlite3
+
+import pytest
 
 from conftest import inserisci_corso
 from studyhub import doctor
@@ -76,6 +79,26 @@ def _neutralizza_il_resto(monkeypatch):
     monkeypatch.setattr(doctor, "_ollama_models", lambda: None)
     monkeypatch.setattr(doctor, "_claude", lambda: None)
     monkeypatch.setattr(llm, "get_local_llm_url", lambda exclude=(): None)
+
+
+@pytest.mark.parametrize("credential", ["session", "token"])
+def test_setup_riconosce_il_login_salvato_nel_solo_keyring(client, ambiente, monkeypatch, credential):
+    from studyhub.sync import auth
+
+    _neutralizza_il_resto(monkeypatch)
+    monkeypatch.setattr(auth, "SESSION_FILE", ambiente / "no-session.json")
+    monkeypatch.setattr(auth, "TOKEN_FILE", ambiente / "no-token.json")
+    key, data = {
+        "session": (auth.KEYRING_MOODLE_SESSION, {"cookies": {"MoodleSession": "test"}}),
+        "token": (auth.KEYRING_MOODLE_TOKEN, {"token": "test"}),
+    }[credential]
+    monkeypatch.setattr(auth, "_keyring_get", lambda service, name: json.dumps(data) if name == key else None)
+
+    result = client.get("/api/setup")
+    assert result.status_code == 200
+    login = next(check for check in result.json()["checks"] if check["id"] == "login")
+    assert login["ok"] and not login["fix"]
+    assert not auth.SESSION_FILE.exists() and not auth.TOKEN_FILE.exists()
 
 
 def test_checks_include_i_nuovi_controlli_con_i_campi_attesi(ambiente, monkeypatch):

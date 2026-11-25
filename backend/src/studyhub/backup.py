@@ -277,7 +277,10 @@ def verify_restore(db_path: Path) -> Dict[str, Any]:
     import sqlite3
     try:
         with sqlite3.connect(db_path) as conn:
-            conn.execute("PRAGMA integrity_check")
+            integrity = conn.execute("PRAGMA integrity_check").fetchall()
+            if integrity != [("ok",)]:
+                return {"ok": False, "error": "SQLite integrity_check failed",
+                        "integrity": [row[0] for row in integrity]}
             ver = conn.execute("PRAGMA user_version").fetchone()[0]
             tables = conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
             courses = conn.execute("SELECT count(*) FROM courses").fetchone()[0]

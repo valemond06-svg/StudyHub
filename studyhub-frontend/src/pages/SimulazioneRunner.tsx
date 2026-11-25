@@ -127,7 +127,8 @@ export function SimulazioneRunner() {
           immagini: a.immagini || [],
         }
       })
-      return api.submitSimulation(id, formattedAnswers, elapsedMinutes(d))
+      saveDraft(id, d)
+      return api.submitSimulation(id, formattedAnswers, elapsedMinutes(d), d.submissionId)
     },
     onSuccess: (data: SimulationGrading, d) => {
       setSubmittedElapsed(Math.round(Math.min(Date.now(), d.deadline) - d.startedAt) / 1000)

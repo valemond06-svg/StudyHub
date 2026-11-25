@@ -6,6 +6,7 @@ import { CommandPalette } from "@/components/command-palette"
 import { MainLayout } from "@/components/layout/MainLayout"
 import { useUIStore } from "@/store/ui"
 import { api } from "@/lib/api"
+import { toSearchResponse } from "@/lib/search"
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api")
@@ -58,8 +59,8 @@ describe("Ricerca globale", () => {
     vi.mocked(api.search).mockResolvedValue({
       semantic: true,
       results: [
-        { id: 11, kind: "transcript", group: "lezioni", title: "Lezione 12", snippet: "la [[trasformata]] di Laplace", course: "Analisi", courseId: 25782, docId: 5, lectureId: 190, page: null, tStart: 754.2, heading: null, score: 1 },
-        { id: 12, kind: "pdf", group: "documenti", title: "dispense.pdf", snippet: "", course: "Analisi", courseId: 25782, docId: 8, lectureId: null, page: 7, tStart: null, heading: null, score: 0.5 },
+        { id: 11, kind: "transcript", group: "lezioni", title: "Lezione 12", snippet: "la [[trasformata]] di Laplace", course: "Analisi", courseId: 25782, docId: 5, noteId: null, lectureId: 190, page: null, tStart: 754.2, heading: null, score: 1 },
+        { id: 12, kind: "pdf", group: "documenti", title: "dispense.pdf", snippet: "", course: "Analisi", courseId: 25782, docId: 8, noteId: null, lectureId: null, page: 7, tStart: null, heading: null, score: 0.5 },
       ],
     })
     renderApp()
@@ -76,15 +77,26 @@ describe("Ricerca globale", () => {
   it("apre il PDF alla pagina del risultato nel visore dell'app", async () => {
     vi.mocked(api.search).mockResolvedValue({
       semantic: false,
-      results: [{ id: 12, kind: "pdf", group: "documenti", title: "dispense.pdf", snippet: "", course: null, courseId: null, docId: 8, lectureId: null, page: 7, tStart: null, heading: null, score: 1 }],
+      results: [{ id: 12, kind: "pdf", group: "documenti", title: "dispense.pdf", snippet: "", course: null, courseId: null, docId: 8, noteId: null, lectureId: null, page: 7, tStart: null, heading: null, score: 1 }],
     })
     renderApp()
     act(() => useUIStore.getState().setCommandPaletteOpen(true))
     fireEvent.change(await screen.findByRole("textbox", { name: "Cerca nel materiale" }), { target: { value: "teorema" } })
     const hit = await screen.findByText("dispense.pdf")
-    expect(screen.getByText(/solo per parole/)).toBeDefined()
+    expect(screen.getByText("Risultati della ricerca per parole.")).toBeDefined()
     fireEvent.click(hit)
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/documento/8?pagina=7"))
+  })
+
+  it("apre una nota priva di documento nel Quaderno anche quando è collegata a una lezione", async () => {
+    vi.mocked(api.search).mockResolvedValue(toSearchResponse({
+      results: [{ id: 12, kind: "note", title: "Mia nota", note_id: 12, doc_id: null, lecture_id: 4, t_start: 22 }],
+    }))
+    renderApp()
+    act(() => useUIStore.getState().setCommandPaletteOpen(true))
+    fireEvent.change(await screen.findByRole("textbox", { name: "Cerca nel materiale" }), { target: { value: "teorema" } })
+    fireEvent.click(await screen.findByText("Mia nota"))
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/quaderno?nota=12"))
   })
 
   it("mostra in italiano il detail di errore del backend", async () => {

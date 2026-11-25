@@ -33,6 +33,21 @@ def _committed_wal(path):
     return conn
 
 
+def test_verify_restore_rejects_integrity_errors_even_when_selects_work(tmp_path):
+    path = tmp_path / "snapshot.db"
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("CREATE TABLE courses (id INTEGER CHECK(id > 0))")
+        assert backup.verify_restore(path)["ok"]
+        conn.execute("PRAGMA ignore_check_constraints=ON")
+        conn.execute("INSERT INTO courses VALUES (-1)")
+        conn.commit()
+        assert conn.execute("SELECT count(*) FROM courses").fetchone()[0] == 1
+
+    result = backup.verify_restore(path)
+    assert not result["ok"]
+    assert result["integrity"] == ["CHECK constraint failed in courses"]
+
+
 def test_connect_copies_legacy_wal_once_and_keeps_original(tmp_path, monkeypatch):
     old_dir = tmp_path / "old"
     old_dir.mkdir()

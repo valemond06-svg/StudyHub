@@ -61,33 +61,31 @@ def _keyring_set(service: str, username: str, value: str) -> bool:
 def get_local_llm_key() -> str:
     """Ottiene la chiave LLM locale con priorità:
     1. Variabile d'ambiente STUDYHUB_LOCAL_LLM_KEY
-    2. Variabile d'ambiente LOCAL_LLM_API_KEY (legacy)
-    3. File ~/.config/brain-llm/api-key (Linux) o %APPDATA%\\brain-llm\\api-key (Windows)
+    2. Variabili d'ambiente LOCAL_LLM_API_KEY e STUDYHUB_LLM_KEY (legacy)
+    3. File %APPDATA%/brain-llm/api-key su Windows, poi ~/.config/brain-llm/api-key su tutti i sistemi
     4. config.yaml (deprecated, log warning)
     5. settings.extra["local_llm_key"] (in-memory override for tests)
     Returns empty string if not configured.
     """
-    # 1. Variabile d'ambiente principale
-    key = os.environ.get("STUDYHUB_LOCAL_LLM_KEY")
-    if key:
-        return key
-
-    # 2. Variabile d'ambiente legacy
-    key = os.environ.get("LOCAL_LLM_API_KEY")
-    if key:
-        return key
+    for name in ("STUDYHUB_LOCAL_LLM_KEY", "LOCAL_LLM_API_KEY", "STUDYHUB_LLM_KEY"):
+        if key := os.environ.get(name):
+            return key
 
     # 3. File di configurazione locale
+    config_files = []
     if sys.platform == "win32":
-        config_file = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "brain-llm" / "api-key"
-    else:
-        config_file = Path.home() / ".config" / "brain-llm" / "api-key"
+        appdata = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+        config_files.append(appdata / "brain-llm" / "api-key")
+    config_files.append(Path.home() / ".config" / "brain-llm" / "api-key")
 
-    if config_file.exists():
+    for config_file in config_files:
         try:
-            return config_file.read_text(encoding="utf-8").strip()
-        except Exception as e:
-            log.warning("Errore lettura %s: %s", config_file, e)
+            if key := config_file.read_text(encoding="utf-8").strip():
+                return key
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeError):
+            log.warning("Impossibile leggere %s", config_file)
 
     # 4. config.yaml (deprecated)
     if CONFIG_FILE.exists():

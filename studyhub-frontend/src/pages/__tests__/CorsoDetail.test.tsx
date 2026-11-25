@@ -79,7 +79,7 @@ beforeEach(() => {
   vi.mocked(api.getStudyCourseStats).mockResolvedValue({ topics: [], ready_exam: 0.003, n_items: 100, tried_items: 20, coverage: 0.2 })
   vi.mocked(api.getStudyChapters).mockResolvedValue([])
   vi.mocked(api.getExcludedChapters).mockResolvedValue([])
-  vi.mocked(api.getCourseDocuments).mockResolvedValue({ categories: [], documents: [] })
+  vi.mocked(api.getCourseDocuments).mockResolvedValue({ categories: [], documents: [], next_offset: null })
   vi.mocked(api.getCourseAnnouncements).mockResolvedValue({ items: [] })
   vi.mocked(api.getFlashcardStats).mockResolvedValue({})
   vi.mocked(api.getPlan).mockResolvedValue({
@@ -127,12 +127,17 @@ describe("Dettaglio corso", () => {
         { id: 32, name: "Trasformata Z", chapter: "Fourier", weight: 1, m: 0, m_exam: 0, n_items: 2, tried: 0, level: 0, level_name: "Mai provato", hidden: 0 },
       ],
     })
-    vi.mocked(api.getCourseDocuments).mockResolvedValue({
-      categories: [{ category: "slide", count: 1 }, { category: "appello", count: 1 }],
-      documents: [
-        { id: 40, title: null, name: "Appello_gennaio.pdf", kind: "pdf", n_pages: 3, category: "appello", exam_date: "2026-01-20" },
-        { id: 41, title: "Slide 1", name: "s1.pdf", kind: "pdf", n_pages: 20, category: "slide", exam_date: null },
-      ],
+    const categories = [{ category: "slide", count: 501 }, { category: "appello", count: 1 }]
+    vi.mocked(api.getCourseDocuments).mockImplementation(async (_, category, _limit, offset) => {
+      if (category === "appello") return { categories, documents: [
+        { id: 40, title: null, name: "Appello_gennaio.pdf", kind: "pdf", n_pages: 3, category, exam_date: "2026-01-20" },
+      ], next_offset: null }
+      if (category === "slide") {
+        const doc = offset === 0 ? { id: 41, title: "Slide 1" } : { id: 91, title: "Slide 51" }
+        return { categories, documents: [{ ...doc, name: "s.pdf", kind: "pdf", n_pages: 20, category, exam_date: null }],
+          next_offset: offset === 0 ? 50 : null }
+      }
+      return { categories, documents: [], next_offset: null }
     })
     vi.mocked(api.getCourseAnnouncements).mockResolvedValue({ items: ["## Aula cambiata\nDa lunedì aula B."] })
     renderCourse()
@@ -144,8 +149,18 @@ describe("Dettaglio corso", () => {
     await openTab("Materiali")
     // Gli esami passati vengono prima delle slide
     expect((await screen.findByRole("button", { name: "Esami passati (1)" })).getAttribute("aria-pressed")).toBe("true")
-    expect(screen.getByRole("link", { name: "Appello_gennaio.pdf" }).getAttribute("href")).toBe("/documento/40")
+    expect((await screen.findByRole("link", { name: "Appello_gennaio.pdf" })).getAttribute("href")).toBe("/documento/40")
     expect(await screen.findByText("Aula cambiata")).toBeDefined()
+    fireEvent.click(screen.getByRole("button", { name: "Slide (501)" }))
+    expect(await screen.findByRole("link", { name: "Slide 1" })).toBeDefined()
+    expect(screen.queryByRole("link", { name: "Appello_gennaio.pdf" })).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Carica altri documenti" }))
+    expect(await screen.findByRole("link", { name: "Slide 51" })).toBeDefined()
+    expect(screen.getByRole("link", { name: "Slide 1" })).toBeDefined()
+    expect(screen.queryByRole("button", { name: "Carica altri documenti" })).toBeNull()
+    expect(vi.mocked(api.getCourseDocuments).mock.calls).toEqual([
+      [7, undefined, 0], [7, "appello", 50, 0], [7, "slide", 50, 0], [7, "slide", 50, 50],
+    ])
   })
 
   it("genera e rigenera il profilo con il flag corretto; durata 0 = non indicata, pesi senza %", async () => {

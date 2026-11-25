@@ -18,6 +18,7 @@ from datetime import datetime
 
 from ..ai.claude_runner import ClaudeError
 from ..ai.llm import run_json
+from ..ai.privacy import scope
 from ..db import session
 from .archetype import get_course_archetype
 from .bank import _unit_text
@@ -208,9 +209,13 @@ def _sources(db, topic_id: int) -> tuple[dict, str]:
     texts, total = [], 0
     for u in units:
         try:
-            text = _unit_text(db, u)[0]
+            text, _, _, used_ocr = _unit_text(db, u)
         except Exception:
             continue
+        if used_ocr and not u["ocr_source"]:
+            db.execute("UPDATE study_units SET ocr_source=1 WHERE id=?", (u["id"],))
+        if used_ocr or u["ocr_source"]:
+            t["ocr_source"] = 1
         texts.append(text[:MAX_SOURCE_CHARS - total])
         total += len(texts[-1])
         if total >= MAX_SOURCE_CHARS:
@@ -231,16 +236,19 @@ def generate(topic_id: int) -> dict:
     with session() as db:
         t, material = _sources(db, topic_id)
         course = db.execute("SELECT fullname FROM courses WHERE id=?", (t["course_id"],)).fetchone()[0]
+        if t["ocr_source"]:
+            db.execute("UPDATE study_topics SET ocr_source=1 WHERE id=?", (topic_id,))
         siblings = [r[0] for r in db.execute(
-            """SELECT name FROM study_topics WHERE course_id=? AND id!=? AND hidden=0
-               ORDER BY COALESCE(position, 1000000), day, id""", (t["course_id"], topic_id))]
+            """SELECT name FROM study_topics WHERE course_id=? AND id!=? AND hidden=0 AND (ocr_source=0 OR ?)
+               ORDER BY COALESCE(position, 1000000), day, id""", (t["course_id"], topic_id, t["ocr_source"]))]
     prompt = (f"Corso: {course}\nARGOMENTO DA INSEGNARE: {t['name']}\n\nScheda di partenza:\n{t['summary_md'] or ''}\n\n"
               f"Altri argomenti del corso (NON spiegarli qui, al massimo richiamali):\n"
               + "\n".join(f"- {s}" for s in siblings[:80])
               + f"\n\n=== Materiale del corso ===\n{material}\n\nScrivi la lezione interattiva su «{t['name']}».")
     arch = get_course_archetype(t["course_id"], course)
     sys_prompt = build_system_prompt(t["course_id"], course)
-    res = run_json(sys_prompt, prompt, SCHEMA, quality="accurato")
+    with scope(private=bool(t["ocr_source"])):
+        res = run_json(sys_prompt, prompt, SCHEMA, quality="accurato")
     data = res.data
     if not isinstance(data, dict):
         raise ClaudeError("Il modello non ha restituito una lezione valida.")
@@ -404,13 +412,14 @@ def complete(topic_id: int) -> None:
 def ask(topic_id: int, question: str, context: str = "", mode: str = "domanda") -> str:
     """Domanda libera o "spiegamelo in un altro modo" sul passo che stai leggendo (chiamata veloce)."""
     with session() as db:
-        t = dict(db.execute("SELECT name, summary_md FROM study_topics WHERE id=?", (topic_id,)).fetchone())
+        t = dict(db.execute("SELECT name, summary_md, ocr_source FROM study_topics WHERE id=?", (topic_id,)).fetchone())
     if mode == "altro_modo":
         question = ("Non ho capito bene questo passo. Rispiegamelo in modo diverso e più semplice: parti da un esempio "
                     "concreto con numeri, poi generalizza.")
     text = (f"Argomento: {t['name']}\nScheda:\n{t['summary_md'] or ''}\n\nPasso che lo studente sta leggendo:\n{context}\n\n"
             f"Domanda dello studente: {question}")
-    data = run_json(ASK_SYSTEM, text, ASK_SCHEMA, quality="veloce").data
+    with scope(private=bool(t["ocr_source"])):
+        data = run_json(ASK_SYSTEM, text, ASK_SCHEMA, quality="veloce").data
     risposta = data.get("risposta_md") if isinstance(data, dict) else None
     if not isinstance(risposta, str) or not risposta.strip():
         raise ClaudeError("Il modello non ha restituito una risposta valida.")

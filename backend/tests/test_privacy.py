@@ -19,7 +19,7 @@ class TestAnalyzeSensitivity:
 
     def test_low_university_content(self):
         sens, reasons = analyze_sensitivity("L'esame di Analisi 2 è difficile")
-        assert sens == "medium"  # university keywords -> medium
+        assert sens == "low"
         assert "Contenuto didattico universitario" in reasons
 
     def test_medium_student_id(self):
@@ -80,7 +80,7 @@ class TestCheckExternalAllowed:
         assert "Codice fiscale" in decision.reason
 
     def test_strict_blocks_medium_sensitivity(self):
-        decision = check_external_allowed("gemini", "La mia matricola è 1234567")
+        decision = check_external_allowed("gemini", "Per l'esame la mia matricola è 1234567")
         assert decision.allowed is False
         assert decision.sensitivity == "medium"
         assert "strict" in decision.reason.lower()
@@ -100,6 +100,12 @@ class TestCheckExternalAllowed:
         decision = check_external_allowed("gemini", "Cos'è la derivata?")
         assert decision.allowed is True
         assert decision.sensitivity == "none"
+
+    @pytest.mark.parametrize("provider", ["gemini", "claude"])
+    def test_strict_allows_generic_exam_material(self, provider):
+        decision = check_external_allowed(provider, "L'esame di Analisi 2 verte sulle serie.")
+        assert decision.allowed
+        assert decision.sensitivity == "low"
 
     def test_private_job_blocks(self):
         decision = check_external_allowed("gemini", "Cos'è la derivata?", kind="exam_answers")

@@ -68,15 +68,8 @@ function ExamForm({ exam, courses, today, close, refresh }: {
   const [date, setDate] = useState(exam?.date ?? "")
   const [kind, setKind] = useState(exam?.kind ?? "scritto")
   const [note, setNote] = useState(exam?.note ?? "")
-  const [replacementCreated, setReplacementCreated] = useState(false)
   const save = useMutation({
-    mutationFn: async (body: ExamInput) => {
-      if (!replacementCreated) {
-        await studyApi.createExam(body)
-        if (exam) setReplacementCreated(true)
-      }
-      if (exam) await studyApi.deleteExam(exam.id)
-    },
+    mutationFn: (body: ExamInput) => exam ? studyApi.updateExam(exam.id, body) : studyApi.createExam(body),
     onSuccess: async () => { await refresh(); close() },
     onError: () => refresh(),
   })
@@ -87,17 +80,16 @@ function ExamForm({ exam, courses, today, close, refresh }: {
   return (
     <form className="space-y-3 rounded-xl border border-neutral-200 p-4 dark:border-neutral-800" onSubmit={submit}>
       <h3 className="font-medium">{exam ? "Modifica appello" : "Nuovo appello"}</h3>
-      <fieldset disabled={save.isPending || replacementCreated} className="grid gap-3 sm:grid-cols-2">
+      <fieldset disabled={save.isPending} className="grid gap-3 sm:grid-cols-2">
         <Field name="Corso dell’appello"><CoursePicker required courses={courses} value={courseId} onChange={setCourseId} /></Field>
         <Field name="Data dell’appello"><Input type="date" required min={today} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
         <Field name="Tipo di appello"><Input required list="tipi-appello" value={kind} onChange={(e) => setKind(e.target.value)} /><datalist id="tipi-appello"><option value="scritto" /><option value="orale" /><option value="scritto e orale" /></datalist></Field>
         <Field name="Nota sull’appello"><Input value={note} onChange={(e) => setNote(e.target.value)} /></Field>
       </fieldset>
       <StudyError error={save.error} />
-      {replacementCreated && save.isError && <p className={studyMuted}>Il nuovo appello è stato salvato. Riprova a rimuovere quello precedente.</p>}
       <div className="flex flex-wrap gap-2">
-        <Button disabled={save.isPending || !courseId || !date || !kind.trim()}>{replacementCreated ? "Riprova rimozione" : "Salva appello"}</Button>
-        <Button type="button" variant="ghost" disabled={save.isPending} onClick={close}>{replacementCreated ? "Chiudi" : "Annulla"}</Button>
+        <Button disabled={save.isPending || !courseId || !date || !kind.trim()}>Salva appello</Button>
+        <Button type="button" variant="ghost" disabled={save.isPending} onClick={close}>Annulla</Button>
       </div>
     </form>
   )

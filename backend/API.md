@@ -40,7 +40,7 @@ Le sessioni aperte da più di 12 ore vengono abbandonate all'avvio del server e 
 
 ## Ricerca globale
 
-`GET /api/search?q=laplace&course_id=1&limit=20` cerca per parole e risponde con `{results, semantic: false}`. `POST /api/search` accetta gli stessi campi nel JSON e calcola anche gli embedding per la ricerca semantica. Sono facoltativi `course_id` e `year`. Se vengono passati entrambi, prevale `course_id`. Il limite massimo è 50.
+`GET /api/search?q=laplace&course_id=1&limit=20` cerca per parole e risponde con `{results, semantic: false}`. `POST /api/search` accetta gli stessi campi nel JSON e calcola anche gli embedding per la ricerca semantica. Se gli embedding sono indisponibili, il POST restituisce i risultati per parole con `semantic: false`. La palette usa il POST e ripiega sul GET se il POST fallisce. Sono facoltativi `course_id` e `year`. Se vengono passati entrambi, prevale `course_id`. Il limite massimo è 50.
 
 Ogni voce conserva i campi esistenti, tra cui `kind`, `snippet`, `doc_id`, `lecture_id`, `page` e `t_start`. Gli evidenziatori nello snippet sono `[[...]]`.
 
@@ -48,7 +48,7 @@ Ogni voce conserva i campi esistenti, tra cui `kind`, `snippet`, `doc_id`, `lect
 | --- | --- |
 | `lecture` | `/api/lectures/10?t=125.5`. Il client usa `t` come posizione nel player, in secondi. |
 | `document` | `/api/docs/31/file#page=7`. Le pagine iniziano da 1. |
-| `note` | Puntatore alla fonte, se disponibile, oppure `/api/notes/8`. `note_id` identifica la nota anche quando il puntatore apre una fonte. |
+| `note` | Puntatore alla fonte, se disponibile, oppure `/api/notes/8`. La palette apre `/quaderno?nota=8` usando `note_id`, anche con `doc_id: null` o con una lezione collegata. |
 
 Quando la fonte è conosciuta senza posizione, il puntatore include il solo ID. Corpo e tag delle note entrano nella ricerca testuale locale.
 
@@ -98,12 +98,19 @@ La sessione contiene `id`, `course_id`, `task`, `kind`, `status` (`running` o `s
 | `PUT /api/settings/availability` | Sostituisce la disponibilità. Inviare sette valori tra 0 e 24 ore e, facoltativamente, `days_off`. Le ore frazionarie vengono arrotondate al minuto. |
 | `GET /api/plan/week` | Restituisce la finestra di sette giorni a partire da `start`, il cui valore predefinito è oggi. Accetta anche `missed_day` per riprodurre un ricalcolo. |
 | `POST /api/plan/recompute` | Accetta `{"missed_day": "2026-11-25", "start": "2026-11-25"}`, con `start` facoltativo. Ricalcola i blocchi del giorno saltato negli spazi successivi prima dell'appello. La disponibilità salvata resta quella di `/api/settings/availability`. |
+| `PUT /api/exams/{exam_id}` | Aggiorna in una sola operazione `course_id`, `date`, `kind` e `note`. Richiede `course_id` e `date`, usa `"scritto"` e `null` come valori predefiniti per gli altri due campi e restituisce `{id}` con lo stesso ID. Restituisce `400` per una data non valida e `404` se l'appello o il corso è assente. |
 
 Entrambi gli endpoint del piano restituiscono `{start, days, exams, unscheduled, changes}`. Ogni giorno contiene `day`, `available_minutes`, `planned_minutes` e `blocks`. Un blocco contiene un ID stabile, `kind` (`theory`, `exercises`, `simulation`, `fsrs`), `minutes`, `exam_id`, `exam_date`, `course_id`, `course`, `topic_id`, `topic`, `mastery` e `day`. I blocchi FSRS indicano il carico stimato con `due_count`.
 
 Il piano parte dagli appelli futuri aperti, usa i minuti disponibili una volta sola anche tra corsi diversi e dimensiona teoria ed esercizi in base al peso e alla padronanza proiettata al giorno d'esame. I blocchi rispettano la capienza giornaliera e il giorno d'appello è escluso. Il calcolo è locale e deterministico.
 
 `changes[]` elenca i blocchi del giorno saltato con `block_id`, `kind`, `exam_id`, `course_id`, `topic_id`, `minutes`, `from_day`, `to_day` e `reason`. `to_day: null` e `reason: "no_slot_before_exam"` indicano un blocco senza spazio. Questi blocchi compaiono anche in `unscheduled`.
+
+## Consegna delle simulazioni
+
+`POST /api/sims/{sim_id}/submit` accetta `answers` e i campi facoltativi `elapsed_min` e `submission_id`. Ogni risposta può contenere `testo`, `scelta` e `immagini`. La risposta include `attempt_id`, la correzione, `foto`, `soluzioni` e `utilization`.
+
+`submission_id` è una stringa da 1 a 128 caratteri. Il client la salva nella bozza e la riusa per ogni consegna della stessa prova. Per la coppia `(sim_id, submission_id)`, il server esegue una sola correzione alla volta e restituisce il primo esito salvato alle richieste ripetute, incluse quelle concorrenti. Se la correzione fallisce prima del salvataggio, la consegna può essere ripetuta con lo stesso ID. Le richieste prive di ID continuano a creare un tentativo a ogni invio riuscito.
 
 ## Ripasso di oggi
 
@@ -128,14 +135,20 @@ Il payload contiene solo dati diagnostici ammessi e omette credenziali, token, c
 
 `GET /api/ai/pannello` espone gli stessi dati in `providers`. `cluster` mantiene lo stato usato dal pannello e riporta URL e modello del provider locale.
 
+`GET /api/setup` segnala il login Moodle salvato usando sessione e token dal keyring o dai file di ripiego. Il controllo di primo avvio rileva la presenza delle credenziali senza contattare Moodle.
+
 ## Corsi: stato, materiali e avvisi
 
 | Metodo e percorso | Contratto |
 | --- | --- |
 | `GET /api/courses`, `GET /api/courses/{id}` | Includono `stage` da `corsi.yaml` (`corrente`, `arretrato`, `futuro`, `archivio`). |
 | `GET /api/study` | Ogni corso include anche `stage`, `coverage` (quota di domande provate) e `tried_items` (domande provate almeno una volta): sotto 10 la UI mostra «dati insufficienti» invece della percentuale. |
-| `GET /api/courses/{id}/documents` | `{categories: [{category, count}], documents: [{id, title, name, kind, n_pages, category, exam_date}]}` dalla classificazione `doc_tags`, senza duplicati. Filtro facoltativo `category` (i conteggi restano di tutto il corso). `404` se il corso non esiste. |
+| `GET /api/courses/{id}/documents` | Restituisce `{categories, documents, next_offset}` dalla classificazione `doc_tags`, senza duplicati. Filtro facoltativo `category`. `limit` va da 0 a 500 e vale 500 per impostazione predefinita. `offset` parte da 0. `limit=0` restituisce solo i conteggi. `next_offset` vale `null` a fine elenco. `404` se il corso non esiste. |
 | `GET /api/courses/{id}/announcements` | `{items: [markdown]}` con gli ultimi avvisi Moodle (dal più recente), letti da `moodle/_avvisi.md`. `last` da 1 a 30, predefinito 10. |
+
+`categories` contiene `{category, count}` per l'intero corso anche quando `category` è impostato. Ogni documento contiene `id`, `title`, `name`, `kind`, `n_pages`, `category` ed `exam_date`. Per caricare la pagina successiva, mantieni la categoria e passa `next_offset` come `offset`.
+
+La provenienza OCR delle unità e degli argomenti viene salvata nel database. Le richieste che usano quel materiale per generare domande, generare lezioni o ordinare gli argomenti usano il provider locale.
 
 ## Interfaccia
 

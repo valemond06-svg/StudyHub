@@ -95,7 +95,7 @@ def check_cartelle_corsi() -> tuple[bool, str]:
 def checks() -> list[dict]:
     """[{id, ok, required, label, detail, fix}] nell'ordine in cui conviene sistemarli."""
     from .ai.llm import _agy_exe
-    from .sync.auth import SESSION_FILE, TOKEN_FILE
+    from .sync.auth import has_saved_login
 
     out = []
 
@@ -111,7 +111,7 @@ def checks() -> list[dict]:
     add("cartella", root.is_dir(), True, "Cartella dei corsi", str(root),
         fix=f"Crea la cartella {root} o correggi uni_root in config.yaml.")
 
-    logged = SESSION_FILE.exists() or TOKEN_FILE.exists()
+    logged = has_saved_login()
     add("login", logged, True, "Login a Moodle UniVR",
         fix="Premi «Accedi a Moodle» (o doppio clic su accedi_moodle.bat) e fai il login d'ateneo.")
 

@@ -8,9 +8,9 @@ import pymupdf
 import pytest
 
 from studyhub.ai import claude_runner, jobs, llm
-from studyhub.ai.privacy import scope
+from studyhub.ai.privacy import current_scope, scope
 from studyhub.ingest import indexer, ocr
-from studyhub.study import bank
+from studyhub.study import bank, lesson, syllabus
 
 from conftest import inserisci_corso
 
@@ -156,12 +156,76 @@ def test_unita_con_testo_ocr_e_hash_che_cambia(db, ambiente, monkeypatch):
     r = bank.sync_units(1)
     assert r["added"] == 1
     unit = dict(db.execute("SELECT * FROM study_units WHERE ref_id=?", (d["id"],)).fetchone())
-    testo, h_dopo, refs = bank._unit_text(db, unit)
+    testo, h_dopo, refs, used_ocr = bank._unit_text(db, unit)
     assert "Turing" in testo and h_dopo.endswith(":ocr") and refs == {"doc_id": d["id"]}
+    assert used_ocr and unit["ocr_source"] == 1
     # senza cache l'hash è quello di prima, senza suffisso
     ocr.cache_path(d["sha256"]).unlink()
-    _, h_prima, _ = bank._unit_text(db, unit)
+    _, h_prima, _, used_ocr = bank._unit_text(db, unit)
     assert not h_prima.endswith(":ocr") and h_prima != h_dopo
+    assert not used_ocr
+
+
+def test_ocr_units_keep_bank_and_lesson_prompts_local(db, ambiente, monkeypatch):
+    _corso_con_pdf(db, ambiente, testo=False)
+    d = _doc(db, "scansione.pdf")
+    _finto_transcribe(monkeypatch, [])
+    ocr.process_doc(d)
+    monkeypatch.setattr(bank, "PART_MAX_PAGES", 1)
+    assert bank.sync_units(1)["added"] == 3
+    units = db.execute("SELECT id, ocr_source FROM study_units ORDER BY part").fetchall()
+    assert all(u["ocr_source"] for u in units)
+
+    def external(*args, **kwargs):
+        pytest.fail("Prompt OCR inoltrato a un provider esterno")
+
+    def local(system, text, schema, quality):
+        assert current_scope()["private"]
+        if schema is bank.SCHEMA:
+            assert "Turing" in text
+            data = {"argomenti": [{"nome": "Argomento privato A"}],
+                    "domande": [{"argomento": "Argomento privato A", "tipo": "richiamo",
+                                 "testo_md": text.splitlines()[-3], "risposta_md": "Esempio"}]}
+        elif schema is lesson.SCHEMA:
+            assert "Turing" in text
+            data = {"passi": []}
+        elif schema is syllabus.SCHEMA:
+            assert "Argomento privato A" in text
+            data = {"capitoli": [], "esclusi": []}
+        else:
+            data = {"risposta_md": "Risposta locale"}
+        return llm.LLMResult(data, "local", "test", 0)
+
+    monkeypatch.setenv("STUDYHUB_PRIVACY_MODE", "permissive")
+    monkeypatch.setattr(llm, "provider_order", lambda: ["gemini", "claude"])
+    monkeypatch.setattr(llm, "_gemini", external)
+    monkeypatch.setattr(llm, "claude_run", external)
+    monkeypatch.setattr(llm, "_local", local)
+    for u in units:
+        assert bank.prepare_unit(u["id"])["provider"] == "local"
+    topic = db.execute("SELECT id, ocr_source FROM study_topics").fetchone()
+    assert topic["ocr_source"] == 1
+    lesson.generate(topic["id"])
+    ocr.cache_path(d["sha256"]).unlink()
+    assert lesson.ask(topic["id"], "Come funziona?") == "Risposta locale"
+    assert syllabus.order_course(1)["cached"] is False
+
+
+def test_only_parts_with_ocr_are_marked(db, ambiente, monkeypatch):
+    _corso_con_pdf(db, ambiente, scan=False)
+    path = ambiente / "uni" / "corso1" / "moodle" / "testo.pdf"
+    with pymupdf.open(path) as pdf:
+        pdf.delete_page(1)
+        pdf.new_page(pno=1)
+        pdf.saveIncr()
+    indexer.index_course(dict(db.execute("SELECT * FROM courses WHERE id=1").fetchone()))
+    d = _doc(db, "testo.pdf")
+    _finto_transcribe(monkeypatch, [])
+    ocr.process_doc(d)
+    monkeypatch.setattr(bank, "PART_MAX_PAGES", 1)
+    assert bank.sync_units(1)["added"] == 3
+    rows = db.execute("SELECT page_from, ocr_source FROM study_units ORDER BY part").fetchall()
+    assert [tuple(row) for row in rows] == [(1, 0), (2, 1), (3, 0)]
 
 
 def test_ocr_solo_sulle_pagine_scarse(db, ambiente, monkeypatch):

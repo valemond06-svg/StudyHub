@@ -83,26 +83,36 @@ describe("Oggi e piano", () => {
     expect(useStudyPlan.getState().missedDay).toBe(f.day)
   })
 
-  it("crea prima l’appello sostitutivo e riprova soltanto la rimozione se fallisce", async () => {
+  it("modifica con un solo PUT e ripete la stessa operazione in caso di errore", async () => {
     let failures = 1
     backend((route) => {
-      if (route === "POST /api/exams") return Response.json({ id: 44 })
-      if (route === "DELETE /api/exams/3") return failures-- > 0
-        ? Response.json({ detail: "Errore temporaneo" }, { status: 500 }) : Response.json({ ok: true })
+      if (route === "PUT /api/exams/3") return failures-- > 0
+        ? Response.json({ detail: "Errore temporaneo" }, { status: 500 }) : Response.json({ id: 3 })
     })
     mount(<Piano />, "/piano")
     fireEvent.click(await screen.findByRole("button", { name: "Modifica" }))
     fireEvent.change(screen.getByLabelText("Data dell’appello"), { target: { value: "2026-12-02" } })
     fireEvent.click(screen.getByRole("button", { name: "Salva appello" }))
-    expect(await screen.findByText(/Il nuovo appello è stato salvato/)).toBeDefined()
-    fireEvent.click(screen.getByRole("button", { name: "Riprova rimozione" }))
+    expect(await screen.findByText("Errore temporaneo")).toBeDefined()
+    fireEvent.click(screen.getByRole("button", { name: "Salva appello" }))
     await waitFor(() => expect(screen.queryByText("Modifica appello")).toBeNull())
-    expect(calls.filter(({ route }) => route === "POST /api/exams")).toEqual([{ route: "POST /api/exams", body: { course_id: 7, date: "2026-12-02", kind: "orale", note: null } }])
-    expect(calls.filter(({ route }) => route === "DELETE /api/exams/3")).toHaveLength(2)
+    const edit = { route: "PUT /api/exams/3", body: { course_id: 7, date: "2026-12-02", kind: "orale", note: null } }
+    expect(calls.filter(({ route }) => route.includes("/api/exams"))).toEqual([edit, edit])
   })
 })
 
 describe("Quaderno e flashcard", () => {
+  it("apre direttamente la nota cercata anche se non è nella prima pagina", async () => {
+    backend((route) => {
+      if (route === "GET /api/notes/4") return Response.json(f.note)
+      if (route.startsWith("GET /api/notes?")) return Response.json({ notes: [] })
+    })
+    mount(<Quaderno />, "/quaderno?nota=4")
+    expect(await screen.findByText(/La matrice è invertibile/)).toBeDefined()
+    expect(calls.filter(({ route }) => route.includes("/api/notes"))).toEqual([{ route: "GET /api/notes/4", body: undefined }])
+    fireEvent.click(screen.getByRole("button", { name: "Tutte le note" }))
+    expect(await screen.findByText("Nessuna nota corrisponde ai filtri.")).toBeDefined()
+  })
   it("precompila la fonte dal player, mostra LaTeX e salva la nota", async () => {
     backend((route) => {
       if (route.startsWith("GET /api/notes?")) return Response.json({ notes: [f.note] })

@@ -10,6 +10,7 @@ export interface SimAnswer {
 }
 
 export interface SimDraft {
+  submissionId: string
   startedAt: number
   deadline: number
   answers: Record<number, SimAnswer>
@@ -26,7 +27,9 @@ export function loadDraft(simId: string): SimDraft | null {
     if (!raw) return null
     const d = JSON.parse(raw) as SimDraft
     if (typeof d?.deadline !== "number" || typeof d?.startedAt !== "number" || !d.answers) return null
-    return { ...d, selected: typeof d.selected === "number" ? d.selected : 0 }
+    const submissionId = typeof d.submissionId === "string" && d.submissionId
+      ? d.submissionId : `legacy-${d.startedAt}`
+    return { ...d, submissionId, selected: typeof d.selected === "number" ? d.selected : 0 }
   } catch {
     return null
   }
@@ -57,7 +60,9 @@ export function clearDraft(simId: string) {
 }
 
 export function newDraft(totalSeconds: number, now = Date.now()): SimDraft {
-  return { startedAt: now, deadline: now + totalSeconds * 1000, answers: {}, selected: 0 }
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  const submissionId = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+  return { submissionId, startedAt: now, deadline: now + totalSeconds * 1000, answers: {}, selected: 0 }
 }
 
 export function remainingSeconds(deadline: number, now = Date.now()): number {

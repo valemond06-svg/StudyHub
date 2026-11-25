@@ -1,5 +1,7 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -68,6 +70,30 @@ def test_data_appello_non_valida_rifiutata(ambiente, db):
             exam.add_exam(1, brutta)
 
 
+def test_put_appello_keeps_identity_and_rejects_invalid_changes(client, db):
+    inserisci_corso(db, 1)
+    inserisci_corso(db, 2, "Fisica")
+    db.commit()
+    start = date.today()
+    old_day, new_day = ((start + timedelta(days=n)).isoformat() for n in (3, 5))
+    eid = exam.add_exam(1, old_day)
+    url = f"/api/exams/{eid}"
+    new = {"course_id": 2, "date": new_day, "kind": "orale", "note": "aula B"}
+
+    assert client.put(url, json={**new, "date": "data errata"}).status_code == 400
+    assert client.put(url, json={**new, "date": new_day.replace("-", "")}).status_code == 400
+    assert client.put(url, json={**new, "course_id": 999}).status_code == 404
+    assert [(e["id"], e["date"]) for e in exam.upcoming_exams()] == [(eid, old_day)]
+
+    for _ in range(2):
+        response = client.put(url, json=new)
+        assert response.status_code == 200 and response.json() == {"id": eid}
+    row, = exam.upcoming_exams()
+    assert row["id"] == eid
+    assert {key: row[key] for key in new} == new
+    assert client.put("/api/exams/999", json=new).status_code == 404
+
+
 def test_simulazione_richiede_il_profilo(ambiente, db):
     inserisci_corso(db)
     db.commit()
@@ -122,3 +148,69 @@ def test_valutazioni_come_stringa_json_vengono_decodificate(corso, monkeypatch):
                                                   "voto_30": 18, "superato": True, "commento_md": "", "da_ripassare": []})))
     r = exam.grade_sim(sid, [{"scelta": 1}, {}])
     assert r["valutazioni"][0]["punti"] == 2
+
+
+def test_sim_submission_is_idempotent_for_concurrent_requests_and_replay(corso, client, monkeypatch):
+    monkeypatch.setattr(exam, "run_json", _falso(SIM))
+    sid = exam.generate_sim(corso)["id"]
+    url = f"/api/sims/{sid}/submit"
+    body = {"answers": [{"scelta": 1}], "elapsed_min": 90, "submission_id": "draft-123"}
+    started, duplicate_entered, release = Event(), Event(), Event()
+    calls = []
+    grade = {"valutazioni": [], "voto_30": 24, "superato": True, "commento_md": "bene", "da_ripassare": []}
+
+    def correct(*args, **kwargs):
+        calls.append("graded")
+        started.set()
+        assert release.wait(10)
+        return SimpleNamespace(data={**grade}, images_sent=0, utilization=0.3)
+
+    file_lock = exam.file_lock
+
+    def track_lock(*args, **kwargs):
+        if started.is_set():
+            duplicate_entered.set()
+        return file_lock(*args, **kwargs)
+
+    monkeypatch.setattr(exam, "run_json_content", correct)
+    monkeypatch.setattr(exam, "file_lock", track_lock)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(client.post, url, json=body)
+        try:
+            assert started.wait(10)
+            second = pool.submit(client.post, url, json=body)
+            assert duplicate_entered.wait(10)
+        finally:
+            release.set()
+        response, duplicate = first.result(timeout=10), second.result(timeout=10)
+
+    assert response.status_code == duplicate.status_code == 200
+    result = response.json()
+    assert result["foto"] and result["soluzioni"] and result["utilization"] == 0.3
+    assert duplicate.json() == result
+    assert client.post(url, json={**body, "elapsed_min": 89}).json() == result
+    assert [a["id"] for a in exam.get_sim(sid)["attempts"]] == [result["attempt_id"]]
+    assert calls == ["graded"]
+
+    other = client.post(url, json={**body, "submission_id": "draft-456"}).json()
+    assert other["attempt_id"] != result["attempt_id"]
+    assert len(calls) == 2
+
+
+def test_failed_correction_can_retry_with_the_same_submission_id(corso, monkeypatch):
+    from studyhub.ai.claude_runner import ClaudeError
+
+    monkeypatch.setattr(exam, "run_json", _falso(SIM))
+    sid = exam.generate_sim(corso)["id"]
+
+    def unavailable(*args, **kwargs):
+        raise ClaudeError("Modello momentaneamente indisponibile")
+
+    monkeypatch.setattr(exam, "run_json_content", unavailable)
+    with pytest.raises(ClaudeError):
+        exam.grade_sim(sid, [], submission_id="draft")
+    assert exam.get_sim(sid)["attempts"] == []
+
+    data = {"valutazioni": [], "voto_30": 0, "superato": False, "commento_md": "", "da_ripassare": []}
+    monkeypatch.setattr(exam, "run_json_content", _contenuto(_falso(data)))
+    assert exam.grade_sim(sid, [], submission_id="draft")["attempt_id"]

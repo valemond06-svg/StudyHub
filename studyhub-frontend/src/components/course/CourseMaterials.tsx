@@ -1,22 +1,34 @@
 import { Link, useSearchParams } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { FileText, Megaphone } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { MathMarkdown } from "@/components/ui/math-markdown"
 import { api, describeError } from "@/lib/api"
-import { categoryLabel, documentHref, sortCategories, type CourseDocuments } from "@/lib/documents"
+import { categoryLabel, documentHref, sortCategories } from "@/lib/documents"
+
+const PAGE_SIZE = 50
 
 /** Materiale del corso per categoria (prima esami passati, soluzioni, formulari) e avvisi del docente. */
 export function CourseMaterials({ courseId }: { courseId: number }) {
   const [params, setParams] = useSearchParams()
-  const docs = useQuery<CourseDocuments>({ queryKey: ["courseDocs", courseId], queryFn: () => api.getCourseDocuments(courseId) })
+  const docs = useQuery({
+    queryKey: ["courseDocs", courseId],
+    queryFn: () => api.getCourseDocuments(courseId, undefined, 0),
+  })
   const news = useQuery({ queryKey: ["courseNews", courseId], queryFn: () => api.getCourseAnnouncements(courseId, 10) })
 
   const categories = sortCategories(docs.data?.categories ?? [])
   const requested = params.get("categoria")
   const active = requested && categories.some((c) => c.category === requested) ? requested : categories[0]?.category ?? null
-  const list = (docs.data?.documents ?? []).filter((d) => d.category === active)
+  const pages = useInfiniteQuery({
+    queryKey: ["courseDocs", courseId, active],
+    queryFn: ({ pageParam }) => api.getCourseDocuments(courseId, active!, PAGE_SIZE, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (page) => page.next_offset ?? undefined,
+    enabled: active !== null,
+  })
+  const list = pages.data?.pages.flatMap((page) => page.documents) ?? []
   const choose = (category: string) => {
     const next = new URLSearchParams(params)
     next.set("tab", "materiali")
@@ -45,6 +57,8 @@ export function CourseMaterials({ courseId }: { courseId: number }) {
               ))}
             </div>
           )}
+          {active && pages.isPending && !pages.error && <p className="text-sm text-neutral-500">Caricamento documenti...</p>}
+          {pages.error && <p role="alert" className="text-sm text-error-600">{describeError(pages.error)}</p>}
           {list.length > 0 && (
             <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {list.map((d) => (
@@ -61,6 +75,11 @@ export function CourseMaterials({ courseId }: { courseId: number }) {
                 </li>
               ))}
             </ul>
+          )}
+          {pages.hasNextPage && (
+            <Button type="button" variant="outline" disabled={pages.isFetchingNextPage} onClick={() => pages.fetchNextPage()}>
+              {pages.isFetchingNextPage ? "Caricamento documenti..." : "Carica altri documenti"}
+            </Button>
           )}
         </CardContent>
       </Card>

@@ -243,6 +243,7 @@ export function toReviewCard(card: StudyCard): Flashcard {
 export const studyApi = {
   notes: (filters: { course_id?: number; lecture_id?: number; q?: string; tag?: string; limit?: number; offset?: number }) =>
     request<{ notes: StudyNote[] }>(`/notes${query(filters)}`),
+  getNote: (id: number) => request<StudyNote>(`/notes/${id}`),
   createNote: (body: NoteEdit & { course_id: number }) => request<StudyNote>("/notes", "POST", body),
   editNote: (id: number, body: Partial<NoteEdit>) => request<StudyNote>(`/notes/${id}`, "PATCH", body),
   deleteNote: (id: number) => request<void>(`/notes/${id}`, "DELETE"),
@@ -256,6 +257,7 @@ export const studyApi = {
   availability: () => request<Availability>("/settings/availability"),
   saveAvailability: (body: Availability) => request<Availability>("/settings/availability", "PUT", body),
   createExam: (body: ExamInput) => request<{ id: number }>("/exams", "POST", body),
+  updateExam: (id: number, body: ExamInput) => request<{ id: number }>(`/exams/${id}`, "PUT", body),
   deleteExam: (id: number) => request<{ ok: boolean }>(`/exams/${id}`, "DELETE"),
   focus: () => request<{ sessions: FocusSession[] }>("/focus?limit=1"),
   startFocus: (body: FocusStart) => request<FocusSession>("/focus/start", "POST", body),

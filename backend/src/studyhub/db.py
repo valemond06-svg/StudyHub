@@ -1,6 +1,7 @@
 """Schema SQLite. Le fasi successive aggiungono tabelle con nuove migrazioni in MIGRATIONS."""
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from contextlib import closing, contextmanager
 from pathlib import Path
@@ -499,6 +500,24 @@ MIGRATIONS = [
     CREATE INDEX study_sessions_open_age ON study_sessions(started_at) WHERE ended_at IS NULL;
     ALTER TABLE study_attempts ADD COLUMN review_seconds REAL;
     """,
+    """
+    ALTER TABLE study_units ADD COLUMN ocr_source INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE study_topics ADD COLUMN ocr_source INTEGER NOT NULL DEFAULT 0;
+    UPDATE study_units AS u SET ocr_source=1
+        FROM documents AS d
+        WHERE u.kind='documento' AND u.ref_id=d.id
+          AND u.source_hash=studyhub_sha256('bank-v1|' || d.sha256 || ':' ||
+              COALESCE(NULLIF(u.page_from, 0), 1) || '-' ||
+              COALESCE(NULLIF(u.page_to, 0), d.n_pages) || ':ocr');
+    UPDATE study_topics SET ocr_source=1
+        WHERE unit_id IN (SELECT id FROM study_units WHERE ocr_source=1)
+           OR id IN (SELECT i.topic_id FROM study_items i
+                     JOIN study_units u ON u.id=i.unit_id WHERE u.ocr_source=1);
+
+    ALTER TABLE exam_attempts ADD COLUMN submission_id TEXT;
+    CREATE UNIQUE INDEX exam_attempts_submission ON exam_attempts(sim_id, submission_id)
+        WHERE submission_id IS NOT NULL;
+    """,
 ]
 
 # Versione storica che aggiunge priority e tenta di creare lo stesso indice.
@@ -569,6 +588,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # Sui database ancora precedenti a priority, evita che l'indice storico
         # fallisca prima che si possa raggiungere la nuova migrazione.
         before = _CANCEL_DUPLICATE_AI_JOBS if i == _AI_JOB_PRIORITY_VERSION else ""
+        if "studyhub_sha256(" in sql:
+            conn.create_function("studyhub_sha256", 1,
+                                 lambda text: hashlib.sha256(text.encode()).hexdigest() if text is not None else None)
         conn.executescript(f"BEGIN IMMEDIATE;\n{before}{sql}\nPRAGMA user_version = {i};\nCOMMIT;")
 
 

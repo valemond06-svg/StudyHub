@@ -19,7 +19,9 @@ import pymupdf
 from ..ai.llm import run_json, run_json_content
 from ..ai.vision import MAX_GRADE_PHOTOS, MAX_PHOTOS_PER_ANSWER, photo_notice, prepare_images
 from ..ai.lecture_notes import _exam_rules
+from ..config import settings
 from ..db import session
+from ..filelock import file_lock
 from ..paths import uni_path
 
 MODEL = "sonnet"
@@ -47,6 +49,14 @@ def add_exam(course_id: int, day: str, kind: str = "scritto", note: str | None =
     with session() as db:
         return db.execute("INSERT INTO exams (course_id, date, kind, note, created_at) VALUES (?,?,?,?,?)",
                           (course_id, day, kind, note, _now())).lastrowid
+
+
+def update_exam(exam_id: int, course_id: int, day: str, kind: str, note: str | None) -> bool:
+    if date.fromisoformat(day).isoformat() != day:
+        raise ValueError("Data non valida (AAAA-MM-GG)")
+    with session() as db:
+        return db.execute("UPDATE exams SET course_id=?, date=?, kind=?, note=? WHERE id=?",
+                          (course_id, day, kind, note, exam_id)).rowcount == 1
 
 
 def delete_exam(exam_id: int) -> None:
@@ -325,8 +335,24 @@ GRADE_SCHEMA = {
 _photo_notice = photo_notice  # condivisa con le sessioni di studio (ai/vision.py)
 
 
-def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None) -> dict:
+def grade_sim(
+    sim_id: int, answers: list[dict], elapsed_min: float | None = None, submission_id: str | None = None,
+) -> dict:
     """answers[i] = {"testo": str|None, "scelta": int|None, "immagini": [dataURL base64, …]}"""
+    if submission_id is None:
+        return _grade_sim(sim_id, answers, elapsed_min, None)
+    # Il lock è condiviso dai processi che servono lo stesso database. La correzione non blocca SQLite.
+    path = settings.db_path.parent / "sim-submissions" / f"{settings.db_path.name}-{sim_id}.lock"
+    with file_lock(path, "correzione simulazione", poll_s=0.2):
+        with session() as db:
+            saved = db.execute("SELECT id, grading FROM exam_attempts WHERE sim_id=? AND submission_id=?",
+                               (sim_id, submission_id)).fetchone()
+        if saved is not None:
+            return {**json.loads(saved["grading"]), "attempt_id": saved["id"]}
+        return _grade_sim(sim_id, answers, elapsed_min, submission_id)
+
+
+def _grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None, submission_id: str | None) -> dict:
     sim = get_sim(sim_id, with_solutions=True)
     with session() as db:
         rules = _exam_rules(db, sim["course_id"])
@@ -374,10 +400,11 @@ def grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None = None
     stored = [{k: v for k, v in (answers[i] if i < len(answers) else {}).items() if k != "immagini"}
               | {"n_immagini": len((answers[i] if i < len(answers) else {}).get("immagini") or [])}
               for i in range(len(sim["domande"]))]
-    with session() as db:
-        aid = db.execute("""INSERT INTO exam_attempts (sim_id, answers, grading, grade, passed, elapsed_min, created_at)
-                            VALUES (?,?,?,?,?,?,?)""",
-                         (sim_id, json.dumps(stored, ensure_ascii=False), json.dumps(g, ensure_ascii=False),
-                          g["voto_30"], int(g["superato"]), elapsed_min, _now())).lastrowid
     sol = [{"soluzione_md": q["soluzione_md"], "corretta": q["corretta"], "punti_max": q["punti"]} for q in sim["domande"]]
-    return {"attempt_id": aid, **g, "foto": foto_info, "soluzioni": sol, "utilization": getattr(res, "utilization", 1.0)}
+    result = {**g, "foto": foto_info, "soluzioni": sol, "utilization": getattr(res, "utilization", 1.0)}
+    with session() as db:
+        aid = db.execute("""INSERT INTO exam_attempts (sim_id, answers, grading, grade, passed, elapsed_min,
+                                                      created_at, submission_id) VALUES (?,?,?,?,?,?,?,?)""",
+                         (sim_id, json.dumps(stored, ensure_ascii=False), json.dumps(result, ensure_ascii=False),
+                          g["voto_30"], int(g["superato"]), elapsed_min, _now(), submission_id)).lastrowid
+    return {**result, "attempt_id": aid}

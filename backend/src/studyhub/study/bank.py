@@ -26,6 +26,7 @@ import pymupdf
 from ..ai.claude_runner import RateLimited
 from ..ai.lecture_notes import _exam_rules, existing
 from ..ai.llm import effective_workers, run_json
+from ..ai.privacy import scope
 from ..config import settings
 from ..db import session
 from ..ingest.extract import extract
@@ -124,41 +125,46 @@ def _lecture_pdf_ids(db, course_id: int) -> set[int]:
     return ids
 
 
-def _with_ocr(texts: list[str], sha256: str | None) -> tuple[list[str], bool]:
+def _with_ocr(texts: list[str], sha256: str | None) -> tuple[list[str], frozenset[int]]:
     """Sostituisce con il testo OCR (se in cache) solo le pagine con poco testo estratto: dove il PDF ha testo
-    vero resta quello (più fedele), dove è una scansione serve l'OCR. Ritorna (testi, usato_ocr)."""
+    vero resta quello (più fedele). Ritorna i testi e i numeri delle pagine sostituite."""
     from ..ingest import ocr
     pages = ocr.cached_pages(sha256)
     if pages is None:
-        return texts, False
-    out, used = list(texts), False
+        return texts, frozenset()
+    out, used = list(texts), set()
     for i, t in enumerate(out):
         if len(t) < ocr.MIN_CHARS_PER_PAGE and i < len(pages) and len(pages[i].strip()) > len(t):
-            out[i], used = pages[i].strip(), True
-    return out, used
+            out[i] = pages[i].strip()
+            used.add(i + 1)
+    return out, frozenset(used)
 
 
 def page_texts(path: Path, sha256: str | None = None) -> list[str]:
     """Solo il testo, pagina per pagina (più veloce di extract(), che analizza anche formule e figure).
     Con `sha256` di un PDF già passato in OCR, le pagine scarse prendono il testo OCR."""
+    return _page_texts(path, sha256)[0]
+
+
+def _page_texts(path: Path, sha256: str | None) -> tuple[list[str], frozenset[int]]:
     if path.suffix.lower() == ".pdf":
         with pymupdf.open(path) as doc:
             texts = [p.get_text("text").strip() for p in doc]
-        return _with_ocr(texts, sha256)[0]
-    return [p.text for p in extract(path).pages]
+        return _with_ocr(texts, sha256)
+    return [p.text for p in extract(path).pages], frozenset()
 
 
-_sig_cache: dict[str, tuple[list[int], frozenset]] = {}
+_sig_cache: dict[str, tuple[list[int], frozenset[str], frozenset[int]]] = {}
 
 
-def _signature(doc: dict) -> tuple[list[int], frozenset]:
+def _signature(doc: dict) -> tuple[list[int], frozenset[str], frozenset[int]]:
     """Caratteri per pagina e insieme delle parole: serve a riconoscere versioni diverse delle stesse slide."""
     from ..ingest import ocr
     key = doc["sha256"] + (":ocr" if ocr.cached_pages(doc["sha256"]) is not None else "")  # l'OCR cambia la firma
     if key not in _sig_cache:
-        texts = page_texts(uni_path(doc["path"]), doc["sha256"])
+        texts, ocr_pages = _page_texts(uni_path(doc["path"]), doc["sha256"])
         words = frozenset(w for t in texts for w in re.findall(r"\w{4,}", t.lower()))
-        _sig_cache[key] = ([len(t) for t in texts], words)
+        _sig_cache[key] = ([len(t) for t in texts], words, ocr_pages)
     return _sig_cache[key]
 
 
@@ -184,13 +190,13 @@ def sync_units(course_id: int) -> dict:
         course = dict(db.execute("SELECT * FROM courses WHERE id=?", (course_id,)).fetchone())
         finished = course_finished(course)
         lecture_pdfs = _lecture_pdf_ids(db, course_id)
-        known = {(r["kind"], r["ref_id"], r["part"]) for r in db.execute(
-            "SELECT kind, ref_id, part FROM study_units WHERE course_id=?", (course_id,))}
+        known = {(r["kind"], r["ref_id"], r["part"]): r for r in db.execute(
+            "SELECT * FROM study_units WHERE course_id=?", (course_id,))}
         wanted = []
         for lec in db.execute("""SELECT * FROM lectures WHERE course_id=? AND status IN ('media_ok','trascritta')
                                  AND (date IS NULL OR date <= ?) ORDER BY date, number""", (course_id, today)):
             if (uni_path(lec["folder"]) / "transcript.json").exists():
-                wanted.append(("lezione", lec["id"], 0, None, None, lec["title"], lec["date"]))
+                wanted.append(("lezione", lec["id"], 0, None, None, lec["title"], lec["date"], frozenset()))
         docs = []
         for d in map(dict, db.execute("""SELECT * FROM documents WHERE course_id=? AND duplicate_of IS NULL
                                          AND kind IN ('pdf','md','docx','pptx','text') ORDER BY path""", (course_id,))):
@@ -208,17 +214,17 @@ def sync_units(course_id: int) -> dict:
         if (d["n_pages"] or 1) > BOOK_PAGES:
             skipped.append({"path": p, "motivo": "libro di riferimento"})
             continue
-        chars, words = _signature(d)
+        chars, words, ocr_pages = _signature(d)
         if sum(chars) < MIN_CHARS:
             skipped.append({"path": p, "motivo": "troppo poco testo"})
         elif sum(chars) / max(1, len(chars)) < MIN_CHARS_PER_PAGE:
             skipped.append({"path": p, "motivo": "scansione senza testo"})
         else:
-            candidates.append((d, chars, words))
+            candidates.append((d, chars, words, ocr_pages))
     # Versioni della stessa dispensa (slide ricaricate, testo e chiave dello stesso appello):
     # resta la più recente, a parità di data la più completa.
-    kept: list[tuple[dict, list[int], frozenset]] = []
-    for d, chars, words in sorted(candidates, key=lambda c: (c[0]["day"], sum(c[1])), reverse=True):
+    kept = []
+    for d, chars, words, ocr_pages in sorted(candidates, key=lambda c: (c[0]["day"], sum(c[1])), reverse=True):
         if EXAM_PATH.search(d["path"]):  # gli appelli si somigliano tutti: doppione = stesso giorno
             twin = next((k for k in kept if EXAM_PATH.search(k[0]["path"]) and k[0]["day"] == d["day"]), None)
         else:
@@ -226,20 +232,25 @@ def sync_units(course_id: int) -> dict:
         if twin:
             skipped.append({"path": d["path"], "motivo": f"altra versione di {Path(twin[0]['path']).name}"})
             continue
-        kept.append((d, chars, words))
-    for d, chars, _ in kept:
+        kept.append((d, chars, words, ocr_pages))
+    for d, chars, _, ocr_pages in kept:
         title = d["title"] or Path(d["path"]).stem
         parts = _doc_parts(chars)
         for i, (a, b) in enumerate(parts):
             label = title if len(parts) == 1 else f"{title} (pp. {a}-{b})"
-            wanted.append(("documento", d["id"], i, a, b, label, d["day"]))
+            wanted.append(("documento", d["id"], i, a, b, label, d["day"], ocr_pages))
     added = 0
     with session() as db:
-        for kind, ref, part, a, b, title, day in wanted:
-            if (kind, ref, part) in known:
+        for kind, ref, part, a, b, title, day, ocr_pages in wanted:
+            old = known.get((kind, ref, part))
+            if old is not None:
+                if not old["ocr_source"] and any((old["page_from"] or 1) <= p <= (old["page_to"] or b)
+                                                 for p in ocr_pages):
+                    db.execute("UPDATE study_units SET ocr_source=1 WHERE id=?", (old["id"],))
                 continue
-            db.execute("""INSERT INTO study_units (course_id, kind, ref_id, part, page_from, page_to, title, day)
-                          VALUES (?,?,?,?,?,?,?,?)""", (course_id, kind, ref, part, a, b, title, day))
+            used_ocr = any(a <= p <= b for p in ocr_pages)
+            db.execute("""INSERT INTO study_units (course_id, kind, ref_id, part, page_from, page_to, title, day, ocr_source)
+                          VALUES (?,?,?,?,?,?,?,?,?)""", (course_id, kind, ref, part, a, b, title, day, used_ocr))
             added += 1
     return {"added": added, "skipped": skipped}
 
@@ -255,25 +266,27 @@ def _profile_topics(course: dict) -> str:
     return "Profilo d'esame (argomenti ricorrenti negli appelli):\n" + "\n".join(rows) if rows else ""
 
 
-def _unit_text(db, unit: dict) -> tuple[str, str, dict]:
-    """Testo dell'unità, hash della fonte e riferimenti (lezione/documento) per le domande."""
+def _unit_text(db, unit: dict) -> tuple[str, str, dict, bool]:
+    """Testo, hash della fonte, riferimenti e indicatore di testo OCR incluso nell'unità."""
     if unit["kind"] == "lezione":
         out = existing(unit["ref_id"])
         if not out or not uni_path(out["md_path"]).exists():
             raise LookupError("appunti mancanti")
         md = uni_path(out["md_path"]).read_text(encoding="utf-8")
         return f"=== Appunti della lezione (▶ mm:ss = minuto della registrazione) ===\n{md}", out["input_hash"], \
-            {"lecture_id": unit["ref_id"]}
+            {"lecture_id": unit["ref_id"]}, False
     doc = dict(db.execute("SELECT * FROM documents WHERE id=?", (unit["ref_id"],)).fetchone())
     ex = extract(uni_path(doc["path"]))
-    texts, used_ocr = ([p.text for p in ex.pages], False)
+    texts, ocr_pages = ([p.text for p in ex.pages], frozenset())
     if ex.kind == "pdf":
-        texts, used_ocr = _with_ocr(texts, doc["sha256"])
+        texts, ocr_pages = _with_ocr(texts, doc["sha256"])
     a, b = unit["page_from"] or 1, unit["page_to"] or len(ex.pages)
+    used_ocr = any(a <= p <= b for p in ocr_pages)
     body = "\n".join(f"--- pagina {p.number} ---\n{t}" for p, t in zip(ex.pages, texts)
                      if a <= p.number <= b and t.strip())
     kind = "Appello d'esame passato" if EXAM_PATH.search(doc["path"]) else "Documento del corso"
-    return f"=== {kind}: {Path(doc['path']).name} ===\n{body}", f"{doc['sha256']}:{a}-{b}{':ocr' if used_ocr else ''}", {"doc_id": doc["id"]}
+    return (f"=== {kind}: {Path(doc['path']).name} ===\n{body}",
+            f"{doc['sha256']}:{a}-{b}{':ocr' if used_ocr else ''}", {"doc_id": doc["id"]}, used_ocr)
 
 
 def prepare_unit(unit_id: int) -> dict:
@@ -284,9 +297,14 @@ def prepare_unit(unit_id: int) -> dict:
         from ..ai.lecture_notes import process
         process(unit["ref_id"])  # una chiamata a Claude alla volta: lock tra processi in claude_runner.run
     with session() as db:
-        text, src_hash, refs = _unit_text(db, unit)
+        text, src_hash, refs, used_ocr = _unit_text(db, unit)
+        if used_ocr and not unit["ocr_source"]:
+            db.execute("UPDATE study_units SET ocr_source=1 WHERE id=?", (unit_id,))
+            unit["ocr_source"] = 1
         rules = _exam_rules(db, course["id"])
-        topics = [r[0] for r in db.execute("SELECT name FROM study_topics WHERE course_id=? ORDER BY id", (course["id"],))]
+        topics = [r[0] for r in db.execute(
+            "SELECT name FROM study_topics WHERE course_id=? AND (ocr_source=0 OR ?) ORDER BY id",
+            (course["id"], unit["ocr_source"]))]
     h = hashlib.sha256(f"{BANK_VERSION}|{src_hash}".encode()).hexdigest()
     if unit["source_hash"] == h and unit["status"] == "pronta":
         return {"cached": True}
@@ -301,7 +319,8 @@ def prepare_unit(unit_id: int) -> dict:
         prompt.append("Argomenti GIÀ ESISTENTI nel corso (riusa il nome esatto se è lo stesso):\n"
                       + "\n".join(f"- {t}" for t in topics[-120:]))
     prompt += [text, f"Scrivi circa {n_q} domande in totale, di tutti i tipi adatti a questo materiale."]
-    res = run_json(SYSTEM, "\n\n".join(prompt), SCHEMA, quality="accurato")
+    with scope(private=bool(unit["ocr_source"])):
+        res = run_json(SYSTEM, "\n\n".join(prompt), SCHEMA, quality="accurato")
     added = _store(unit, course["id"], res.data, refs)
     with session() as db:
         db.execute("UPDATE study_units SET status=?, source_hash=?, provider=?, message=?, done_at=? WHERE id=?",
@@ -321,11 +340,14 @@ def _store(unit: dict, course_id: int, data: dict, refs: dict) -> int:
                    (unit["id"],))
         db.execute("UPDATE study_items SET suspended=1 WHERE unit_id=?", (unit["id"],))
         ids: dict[str, int] = {}
+        ocr_source = bool(unit.get("ocr_source"))
         for t in data.get("argomenti", []):
             name = t["nome"].strip()[:160]
             row = db.execute("SELECT id FROM study_topics WHERE course_id=? AND name=?", (course_id, name)).fetchone()
             if row:
                 ids[name.lower()] = row[0]
+                if ocr_source:
+                    db.execute("UPDATE study_topics SET ocr_source=1 WHERE id=?", (row[0],))
                 # l'argomento era già comparso più avanti: lo sposto alla prima volta in cui lo vedi
                 db.execute("""UPDATE study_topics SET day=?, unit_id=?, lecture_id=COALESCE(?, lecture_id),
                               t_start=COALESCE(?, t_start) WHERE id=? AND (day IS NULL OR day > ?)""",
@@ -333,9 +355,9 @@ def _store(unit: dict, course_id: int, data: dict, refs: dict) -> int:
                 continue
             ids[name.lower()] = db.execute(
                 """INSERT INTO study_topics (course_id, name, weight, summary_md, unit_id, day, lecture_id, t_start,
-                                             doc_id, page) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                                             doc_id, page, ocr_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (course_id, name, WEIGHT.get(t.get("peso"), 2), t.get("scheda_md"), unit["id"], unit["day"],
-                 refs.get("lecture_id"), t.get("inizio_s"), refs.get("doc_id"), t.get("pagina"))).lastrowid
+                 refs.get("lecture_id"), t.get("inizio_s"), refs.get("doc_id"), t.get("pagina"), ocr_source)).lastrowid
         fallback = next(iter(ids.values()), None)
         for q in data.get("domande", []):
             # una domanda malformata (es. il 35B locale che dimentica "criteri") si scarta, non fa fallire l'unità

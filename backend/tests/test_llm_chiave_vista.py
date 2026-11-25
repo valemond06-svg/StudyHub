@@ -81,6 +81,23 @@ def test_ordine_di_lettura_della_chiave(ambiente, monkeypatch):
     assert llm.get_local_llm_key() == "env-studyhub"
 
 
+def test_chiave_legacy_env_e_file_home_su_windows(ambiente, monkeypatch):
+    from studyhub import config
+
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    monkeypatch.setattr(config.Path, "home", lambda: ambiente)
+    monkeypatch.setenv("APPDATA", str(ambiente / "appdata"))
+    fallback = ambiente / ".config" / "brain-llm" / "api-key"
+    fallback.parent.mkdir(parents=True)
+    fallback.write_text("  chiave-di-test \n", encoding="utf-8")
+    assert config.get_local_llm_key() == "chiave-di-test"
+
+    monkeypatch.setenv("STUDYHUB_LLM_KEY", "legacy-di-test")
+    assert config.get_local_llm_key() == "legacy-di-test"
+    monkeypatch.setenv("STUDYHUB_LOCAL_LLM_KEY", "nuova-di-test")
+    assert config.get_local_llm_key() == "nuova-di-test"
+
+
 def test_istanza_senza_chiave_non_manda_authorization(rete):
     rete.su(LAPTOP)
     llm._local("s", "t", SCHEMA, "veloce")

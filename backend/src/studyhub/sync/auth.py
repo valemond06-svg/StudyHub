@@ -140,7 +140,10 @@ def _load_token() -> str | None:
         except Exception:
             pass
     if TOKEN_FILE.exists():
-        return json.loads(TOKEN_FILE.read_text(encoding="utf-8")).get("token")
+        try:
+            return json.loads(TOKEN_FILE.read_text(encoding="utf-8")).get("token")
+        except (OSError, ValueError, AttributeError):
+            pass
     return None
 
 
@@ -187,6 +190,12 @@ def _load_session() -> dict | None:
         except Exception:
             pass
     return None
+
+
+def has_saved_login() -> bool:
+    """Verifica la presenza delle credenziali senza richieste a Moodle."""
+    data = _load_session()
+    return (isinstance(data, dict) and bool(data.get("cookies"))) or bool(_load_token())
 
 
 def login_status() -> str:
