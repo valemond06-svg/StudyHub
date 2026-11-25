@@ -325,7 +325,7 @@ describe("Studio: risposte", () => {
       expect(screen.queryByText("Non devo comparire")).toBeNull()
       expect(api.answerSession).not.toHaveBeenCalled()
       expect(api.finishSession).not.toHaveBeenCalled()
-      expect(screen.getByText(/oltre il tempo previsto/)).toBeDefined()
+      expect(await screen.findByText(/oltre il tempo previsto/)).toBeDefined()
     } finally {
       vi.useRealTimers()
     }
