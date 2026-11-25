@@ -518,6 +518,23 @@ MIGRATIONS = [
     CREATE UNIQUE INDEX exam_attempts_submission ON exam_attempts(sim_id, submission_id)
         WHERE submission_id IS NOT NULL;
     """,
+    """
+    ALTER TABLE chunks ADD COLUMN ocr_source INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE ai_outputs ADD COLUMN ocr_source INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE exam_sims ADD COLUMN ocr_source INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE quizzes ADD COLUMN ocr_source INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE tutor_messages ADD COLUMN ocr_source INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE flashcards ADD COLUMN ocr_source INTEGER NOT NULL DEFAULT 0;
+
+    -- Provenienza ricostruita con precisione: un documento è passato dall'OCR se ne esiste la cache
+    -- (LOCAL_DIR/ocr/<sha256>.json). Gli artefatti storici (quiz, simulazioni, tutor, appunti) non si
+    -- marcano in blocco: l'OCR storico era già eseguito da Claude, quindi bloccarli ora degraderebbe
+    -- la qualità senza proteggere nulla. Da qui in avanti la provenienza è tracciata alla creazione.
+    -- Seconda prova, se la cache è stata cancellata: un'unità di studio con hash ':ocr' (migrazione precedente).
+    UPDATE chunks SET ocr_source=1 WHERE doc_id IN (
+        SELECT id FROM documents WHERE studyhub_ocr_cached(sha256)
+        UNION SELECT ref_id FROM study_units WHERE kind='documento' AND ocr_source=1);
+    """,
 ]
 
 # Versione storica che aggiunge priority e tenta di creare lo stesso indice.
@@ -582,6 +599,12 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def _ocr_cached(sha256: str | None) -> int:
+    """1 se il documento con questo sha256 ha una cache OCR (stesso percorso di ingest.ocr.cache_path)."""
+    from .config import LOCAL_DIR  # import locale: ingest.ocr importa db
+    return int(bool(sha256) and (LOCAL_DIR / "ocr" / f"{sha256}.json").exists())
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     for i, sql in enumerate(MIGRATIONS[version:], start=version + 1):
@@ -591,6 +614,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if "studyhub_sha256(" in sql:
             conn.create_function("studyhub_sha256", 1,
                                  lambda text: hashlib.sha256(text.encode()).hexdigest() if text is not None else None)
+        if "studyhub_ocr_cached(" in sql:
+            conn.create_function("studyhub_ocr_cached", 1, _ocr_cached)
         conn.executescript(f"BEGIN IMMEDIATE;\n{before}{sql}\nPRAGMA user_version = {i};\nCOMMIT;")
 
 

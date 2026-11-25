@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 
 from ..ai.llm import run_json
-from ..ai.privacy import scope
+from ..ai.prompt import Prompt
 from ..db import session
 from .exam import _syllabus
 
@@ -57,12 +57,14 @@ def order_course(course_id: int, force: bool = False) -> dict:
         units = [f"{r[0] or '?'} · {r[1]}" for r in db.execute(
             "SELECT day, title FROM study_units WHERE course_id=? ORDER BY day, id", (course_id,))]
         program = _syllabus(db, course_id)
-    text = (f"Corso: {course}\n\n=== Programma / diario del corso ===\n{program or '(non disponibile)'}\n\n"
-            f"=== Materiali (data · titolo) ===\n" + "\n".join(units[:250]) +
-            "\n\n=== Argomenti da ordinare (data di prima comparsa · nome · materiale) ===\n" +
-            "\n".join(f"{t['day']} · {t['name']} · {t['unit']}" for t in topics))
-    with scope(private=any(t["ocr_source"] for t in topics)):
-        res = run_json(SYSTEM, text, SCHEMA, quality="accurato")
+    prompt = Prompt.join([
+        f"Corso: {course}\n\n=== Programma / diario del corso ===\n{program or '(non disponibile)'}\n\n"
+        f"=== Materiali (data · titolo) ===\n" + "\n".join(units[:250]),
+        Prompt.join(["=== Argomenti da ordinare (data di prima comparsa · nome · materiale) ===",
+                     *(Prompt(f"{t['day']} · {t['name']} · {t['unit']}", bool(t["ocr_source"])) for t in topics)],
+                    separator="\n"),
+    ])
+    res = run_json(SYSTEM, prompt, SCHEMA, quality="accurato")
     by_name = {t["name"].strip().lower(): t for t in topics}
     placed: set[int] = set()
     rows: list[tuple] = []

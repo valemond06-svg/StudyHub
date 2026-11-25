@@ -24,10 +24,11 @@ import { MathMarkdown } from "@/components/ui/math-markdown"
 import { PhotoUpload } from "@/components/camera/PhotoUpload"
 import { api, describeError } from "@/lib/api"
 import {
-  clearDraft,
+  clearSubmission,
   elapsedMinutes,
   loadDraft,
   newDraft,
+  persistSubmission,
   remainingSeconds as remainingSeconds_,
   saveDraft,
   type SimDraft,
@@ -45,6 +46,10 @@ const EMPTY_ANSWER: StudentAnswerState = { testo: "", scelta: null, immagini: []
 
 export function SimulazioneRunner() {
   const { id } = useParams<{ id: string }>()
+  return <SimulationAttempt key={id} id={id} />
+}
+
+function SimulationAttempt({ id }: { id?: string }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -85,15 +90,37 @@ export function SimulazioneRunner() {
   const [storageWarning, setStorageWarning] = useState<string | null>(null)
   const answers = useMemo(() => draft?.answers ?? {}, [draft])
   const selectedQuestionIndex = draft?.selected ?? 0
-  const remainingSeconds = draft ? remainingSeconds_(draft.deadline, now) : totalSeconds
+  const remainingSeconds = draft ? remainingSeconds_(draft.deadline, draft.submittedAt ?? now) : totalSeconds
+  const locked = draft?.submittedAt !== undefined
   const [showConfirmModal, setShowConfirmModal] = useState(false)
   const [gradingResult, setGradingResult] = useState<SimulationGrading | null>(null)
   const [submittedElapsed, setSubmittedElapsed] = useState<number | null>(null)
   const autoSubmitted = useRef(false)
+  const submissionInFlight = useRef(false)
+
+  useEffect(() => {
+    const syncSubmission = () => {
+      const stored = loadDraft(simKey)
+      if (stored?.submittedAt === undefined) return
+      setDraft((current) => current?.submissionId === stored.submissionId && current.submittedAt === undefined
+        ? stored : current)
+    }
+    window.addEventListener("storage", syncSubmission)
+    return () => window.removeEventListener("storage", syncSubmission)
+  }, [simKey])
 
   const updateDraft = useCallback((fn: (d: SimDraft) => SimDraft) => {
     if (!draft) return
     const next = fn(draft)
+    if (draft.submittedAt !== undefined || submissionInFlight.current) {
+      setDraft(next)
+      return
+    }
+    const stored = loadDraft(simKey)
+    if (stored?.submissionId === draft.submissionId && stored.submittedAt !== undefined) {
+      setDraft(stored)
+      return
+    }
     const saved = saveDraft(simKey, next)
     setStorageWarning(!saved.ok
       ? "Il browser non riesce a salvare la bozza: non ricaricare la pagina."
@@ -109,7 +136,7 @@ export function SimulazioneRunner() {
     setNow(Date.now())
   }
 
-  const running = Boolean(draft) && !gradingResult
+  const running = Boolean(draft) && !locked && !gradingResult
   useEffect(() => {
     if (!running) return
     const interval = window.setInterval(() => setNow(Date.now()), 1000)
@@ -117,8 +144,11 @@ export function SimulazioneRunner() {
   }, [running])
 
   const submitMutation = useMutation({
-    mutationFn: async (d: SimDraft) => {
+    mutationFn: async (snapshot: SimDraft) => {
       if (!id) throw new Error("ID simulazione mancante")
+      const d = await persistSubmission(id, snapshot)
+      setDraft(d)
+      setStorageWarning(null)
       const formattedAnswers = rawQuestions.map((q, idx) => {
         const a = d.answers[idx] || { testo: "", scelta: null, immagini: [] }
         return {
@@ -127,32 +157,44 @@ export function SimulazioneRunner() {
           immagini: a.immagini || [],
         }
       })
-      saveDraft(id, d)
-      return api.submitSimulation(id, formattedAnswers, elapsedMinutes(d), d.submissionId)
+      const data = await api.submitSimulation(id, formattedAnswers, elapsedMinutes(d), d.submissionId)
+      return { data, draft: d }
     },
-    onSuccess: (data: SimulationGrading, d) => {
-      setSubmittedElapsed(Math.round(Math.min(Date.now(), d.deadline) - d.startedAt) / 1000)
+    onSuccess: ({ data, draft: d }) => {
+      setSubmittedElapsed(Math.round(Math.min(d.submittedAt ?? d.deadline, d.deadline) - d.startedAt) / 1000)
       setGradingResult(data)
       setShowConfirmModal(false)
-      clearDraft(simKey)
+      clearSubmission(simKey, d.submissionId)
       queryClient.invalidateQueries({ queryKey: ["examProfile", simData?.course_id] })
       queryClient.invalidateQueries({ queryKey: ["simulation", id] })
     },
+    onSettled: () => { submissionInFlight.current = false },
   })
 
   // Consegna automatica allo zero (anche se riapri la pagina dopo la scadenza).
   const { mutate: submitDraft, isPending: submitting } = submitMutation
+  const submit = useCallback((d: SimDraft) => {
+    if (submissionInFlight.current) return
+    submissionInFlight.current = true
+    autoSubmitted.current = true
+    const snapshot = { ...d, submittedAt: d.submittedAt ?? Math.min(Date.now(), d.deadline) }
+    setDraft(snapshot)
+    setShowConfirmModal(false)
+    submitDraft(snapshot)
+  }, [submitDraft])
   useEffect(() => {
     if (!draft || gradingResult || submitting || autoSubmitted.current || !rawQuestions.length) return
     if (remainingSeconds > 0) return
-    autoSubmitted.current = true
-    submitDraft(draft)
-  }, [draft, gradingResult, submitting, remainingSeconds, rawQuestions.length, submitDraft])
+    submit(draft)
+  }, [draft, gradingResult, submitting, remainingSeconds, rawQuestions.length, submit])
 
-  const setAnswer = (idx: number, patch: Partial<StudentAnswerState>) => updateDraft((d) => ({
-    ...d,
-    answers: { ...d.answers, [idx]: { ...(d.answers[idx] ?? EMPTY_ANSWER), ...patch } },
-  }))
+  const setAnswer = (idx: number, patch: Partial<StudentAnswerState>) => {
+    if (locked || submissionInFlight.current) return
+    updateDraft((d) => ({
+      ...d,
+      answers: { ...d.answers, [idx]: { ...(d.answers[idx] ?? EMPTY_ANSWER), ...patch } },
+    }))
+  }
   const handleTextChange = (idx: number, val: string) => setAnswer(idx, { testo: val })
   const handleChoiceChange = (idx: number, optIdx: number) => setAnswer(idx, { scelta: optIdx })
   const handlePhotosChange = (idx: number, photos: string[]) => setAnswer(idx, { immagini: photos })
@@ -573,8 +615,8 @@ export function SimulazioneRunner() {
             size="sm"
             onClick={() => navigate(`/corsi/${simData.course_id}?tab=esame#simulazioni`)}
             className="h-8 px-2 rounded-lg text-neutral-500 hover:text-neutral-900"
-            title="Esci: la bozza resta salvata e il tempo continua a scorrere"
-            aria-label="Esci dalla simulazione (la bozza resta salvata, il tempo continua)"
+            title={locked ? "Esci dalla simulazione" : "Esci: la bozza resta salvata e il tempo continua a scorrere"}
+            aria-label={locked ? "Esci dalla simulazione" : "Esci dalla simulazione (la bozza resta salvata, il tempo continua)"}
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
@@ -606,6 +648,7 @@ export function SimulazioneRunner() {
 
           <Button
             type="button"
+            disabled={locked}
             onClick={() => setShowConfirmModal(true)}
             className="gap-1.5 text-xs font-semibold rounded-xl bg-accent-600 hover:bg-accent-700 text-white shadow-sm"
           >
@@ -616,11 +659,14 @@ export function SimulazioneRunner() {
         </div>
       </div>
 
-      {submitMutation.error && (
-        <div role="alert" className="rounded-2xl border border-error-300 bg-error-50 p-4 text-sm dark:border-error-800 dark:bg-error-900/20">
-          <p className="font-medium">{remainingSeconds === 0 ? "Tempo scaduto, ma la consegna non è riuscita." : "Consegna non riuscita."}</p>
-          <p className="mt-1">{describeError(submitMutation.error)} La bozza è salvata.</p>
-          <Button size="sm" className="mt-2" onClick={() => submitMutation.mutate(draft)}>Riprova la consegna</Button>
+      {locked && (
+        <div role={submitMutation.error ? "alert" : "status"} className="rounded-2xl border border-neutral-200 p-4 text-sm dark:border-neutral-800">
+          <p className="font-medium">{submitMutation.error
+            ? remainingSeconds === 0 ? "Tempo scaduto, ma la consegna non è riuscita." : "Consegna non riuscita."
+            : "Consegna in attesa di conferma."}</p>
+          {submitMutation.error && <p className="mt-1">{describeError(submitMutation.error)}</p>}
+          <p className="mt-1">Le risposte sono bloccate. Puoi riprovare la stessa consegna.</p>
+          <Button size="sm" className="mt-2" onClick={() => submit(draft)}>Riprova la consegna</Button>
         </div>
       )}
       {storageWarning && <p role="status" className="text-sm text-warning-700 dark:text-warning-300">{storageWarning}</p>}
@@ -710,7 +756,7 @@ export function SimulazioneRunner() {
                       <button
                         key={optIdx}
                         type="button"
-                        disabled={remainingSeconds === 0}
+                        disabled={locked || remainingSeconds === 0}
                         onClick={() => handleChoiceChange(selectedQuestionIndex, optIdx)}
                         className={cn(
                           "w-full text-left p-4 rounded-2xl border transition-all flex items-start gap-3",
@@ -751,7 +797,7 @@ export function SimulazioneRunner() {
                   </div>
                   <textarea
                     rows={5}
-                    disabled={remainingSeconds === 0}
+                    disabled={locked || remainingSeconds === 0}
                     aria-label="Risposta digitata"
                     value={activeAnswer.testo || ""}
                     onChange={(e) =>
@@ -770,7 +816,7 @@ export function SimulazioneRunner() {
                       handlePhotosChange(selectedQuestionIndex, photos)
                     }
                     maxPhotos={4}
-                    disabled={remainingSeconds === 0}
+                    disabled={locked || remainingSeconds === 0}
                     label="Foto dei calcoli su quaderno (OCR & Vision AI)"
                   />
                 </div>
@@ -805,6 +851,7 @@ export function SimulazioneRunner() {
                   <Button
                     type="button"
                     size="sm"
+                    disabled={locked}
                     onClick={() => setShowConfirmModal(true)}
                     className="rounded-xl text-xs gap-1.5 bg-accent-600 hover:bg-accent-700 text-white font-semibold"
                   >
@@ -819,7 +866,7 @@ export function SimulazioneRunner() {
       )}
 
       {/* Confirmation Submit Modal */}
-      {showConfirmModal && remainingSeconds > 0 && (
+      {showConfirmModal && !locked && remainingSeconds > 0 && (
         <div
           role="dialog"
           aria-modal="true"
@@ -860,7 +907,7 @@ export function SimulazioneRunner() {
 
               <Button
                 type="button"
-                onClick={() => draft && submitMutation.mutate(draft)}
+                onClick={() => submit(draft)}
                 disabled={submitMutation.isPending}
                 className="flex-1 rounded-xl h-10 text-xs font-semibold bg-accent-600 hover:bg-accent-700 text-white shadow-md gap-1.5"
               >

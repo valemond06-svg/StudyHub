@@ -4,13 +4,17 @@ Niente rete e niente Claude: `ocr._transcribe` e i provider di `llm` sono sostit
 """
 from __future__ import annotations
 
+import json
+
 import pymupdf
 import pytest
 
-from studyhub.ai import claude_runner, jobs, llm
-from studyhub.ai.privacy import current_scope, scope
+from studyhub import mcp_server, search
+from studyhub.ai import claude_runner, jobs, lecture_notes, llm
+from studyhub.ai.privacy import scope
 from studyhub.ingest import indexer, ocr
-from studyhub.study import bank, lesson, syllabus
+from studyhub.ingest.embed import EmbeddingError
+from studyhub.study import bank, exam, lesson, quiz, syllabus, tutor
 
 from conftest import inserisci_corso
 
@@ -180,7 +184,6 @@ def test_ocr_units_keep_bank_and_lesson_prompts_local(db, ambiente, monkeypatch)
         pytest.fail("Prompt OCR inoltrato a un provider esterno")
 
     def local(system, text, schema, quality):
-        assert current_scope()["private"]
         if schema is bank.SCHEMA:
             assert "Turing" in text
             data = {"argomenti": [{"nome": "Argomento privato A"}],
@@ -209,6 +212,147 @@ def test_ocr_units_keep_bank_and_lesson_prompts_local(db, ambiente, monkeypatch)
     ocr.cache_path(d["sha256"]).unlink()
     assert lesson.ask(topic["id"], "Come funziona?") == "Risposta locale"
     assert syllabus.order_course(1)["cached"] is False
+
+
+@pytest.fixture(params=["strict", "permissive"])
+def ocr_rules_course(db, ambiente, monkeypatch, request):
+    _corso_con_pdf(db, ambiente)
+    scanned = _doc(db, "scansione.pdf")
+    _finto_transcribe(monkeypatch, [])
+    assert ocr.process_doc(scanned) > 0
+    # A cache rimossa, l'indice deve continuare a conservare la provenienza.
+    ocr.cache_path(scanned["sha256"]).unlink()
+    db.execute("INSERT INTO doc_tags (doc_id, category) VALUES (?, 'regole_esame')", (scanned["id"],))
+    db.commit()
+    assert {tuple(r) for r in db.execute("SELECT DISTINCT doc_id, ocr_source FROM chunks")} == {
+        (scanned["id"], 1), (_doc(db, "testo.pdf")["id"], 0),
+    }
+
+    def external(*args, **kwargs):
+        pytest.fail("Un prompt con testo OCR ha raggiunto un provider esterno")
+
+    def offline(_):
+        raise EmbeddingError("Ollama non disponibile")
+
+    monkeypatch.setenv("STUDYHUB_PRIVACY_MODE", request.param)
+    monkeypatch.setattr(search, "embed_query", offline)
+    monkeypatch.setattr(llm, "provider_order", lambda: ["gemini", "claude"])
+    monkeypatch.setattr(llm, "_gemini", external)
+    monkeypatch.setattr(llm, "claude_run", external)
+    return scanned["id"]
+
+
+def test_ocr_rules_make_native_unit_and_derived_lesson_local(db, monkeypatch, ocr_rules_course):
+    bank.sync_units(1)
+    native = _doc(db, "testo.pdf")
+    unit = db.execute("SELECT id, ocr_source FROM study_units WHERE ref_id=?", (native["id"],)).fetchone()
+    assert unit["ocr_source"] == 0
+
+    def local(system, text, schema, quality):
+        assert "Turing" in text
+        if schema is bank.SCHEMA:
+            assert "Il teorema del limite centrale" in text
+            data = {"argomenti": [{"nome": "Turing", "scheda_md": "Scheda Turing"}],
+                    "domande": [{"argomento": "Turing", "tipo": "richiamo",
+                                 "testo_md": "Come funziona?", "risposta_md": "Esempio"}]}
+        else:
+            assert schema is lesson.SCHEMA
+            data = {"passi": []}
+        return llm.LLMResult(data, "local", "test", 0)
+
+    monkeypatch.setattr(llm, "_local", local)
+    assert bank.prepare_unit(unit["id"])["provider"] == "local"
+    topic = db.execute("SELECT id, ocr_source FROM study_topics").fetchone()
+    assert topic["ocr_source"] == 1
+    db.execute("DELETE FROM chunks WHERE doc_id=?", (ocr_rules_course,))
+    db.commit()
+    lesson.generate(topic["id"])
+
+
+def test_ocr_rules_and_profile_keep_simulations_local(db, monkeypatch, ocr_rules_course):
+    seen = []
+
+    def local(system, text, schema, quality):
+        assert "Turing" in text
+        seen.append(schema)
+        if schema is exam.PROFILE_SCHEMA:
+            data = {"sintesi_md": "Turing", "argomenti": [], "esercizi_tipo": [], "teoria_richiesta": ["Turing"],
+                    "consigli_md": "", "formato": {"durata_min": 60, "materiale_consentito": "Turing", "orale": "",
+                                                  "regole_voto": "", "parti": []}}
+        elif schema is exam.SIM_SCHEMA:
+            data = {"titolo": "Simulazione Turing", "durata_min": 60, "istruzioni_md": "Turing", "domande": []}
+        else:
+            assert schema is exam.GRADE_SCHEMA
+            data = {"valutazioni": [], "voto_30": 30, "superato": True, "commento_md": "", "da_ripassare": []}
+        return llm.LLMResult(data, "local", "test", 0)
+
+    monkeypatch.setattr(llm, "_local", local)
+    assert exam.build_profile(1)["ocr_source"] is True
+    assert "Turing" not in mcp_server.get_exam_profile("1")
+    sim_id = exam.generate_sim(1)["id"]
+    assert exam.grade_sim(sim_id, [])["superato"]
+    db.execute("DELETE FROM chunks WHERE doc_id=?", (ocr_rules_course,))
+    db.commit()
+    sim_id = exam.generate_sim(1)["id"]
+    assert db.execute("SELECT ocr_source FROM exam_sims WHERE id=?", (sim_id,)).fetchone()[0] == 1
+    assert exam.grade_sim(sim_id, [])["superato"]
+    assert seen == [exam.PROFILE_SCHEMA, exam.SIM_SCHEMA, exam.GRADE_SCHEMA, exam.SIM_SCHEMA, exam.GRADE_SCHEMA]
+
+
+def test_tutor_ocr_chunk_and_conversation_history_stay_local(db, monkeypatch, ocr_rules_course):
+    seen = []
+
+    def local(system, text, schema, quality):
+        seen.append(text)
+        assert "Turing" in text
+        return llm.LLMResult({"risposta_md": "La macchina di Turing", "fonti_usate": [1]}, "local", "test", 0)
+
+    monkeypatch.setattr(llm, "_local", local)
+    thread = tutor.new_thread(1)
+    assert not mcp_server.search_material("Turing", "1")
+    assert "Turing" not in mcp_server.get_document_page(ocr_rules_course, 1)
+    assert tutor.ask(thread, "Turing")["cited"] == [1]
+    db.execute("DELETE FROM chunks WHERE doc_id=?", (ocr_rules_course,))
+    db.commit()
+    assert tutor.ask(thread, "Come funziona?")["sources"] == []
+    assert "Tutor: La macchina di Turing" in seen[-1]
+
+
+def test_ocr_syllabus_hint_and_derived_notes_quiz_stay_local(db, ambiente, monkeypatch, ocr_rules_course):
+    db.execute("DELETE FROM doc_tags WHERE doc_id=?", (ocr_rules_course,))
+    db.execute("UPDATE documents SET title='Diario del corso' WHERE id=?", (ocr_rules_course,))
+    db.execute("INSERT INTO lectures (id, course_id, number, title, folder, status) "
+               "VALUES (7,1,7,'Lezione 7','corso1/lezioni/7','trascritta')")
+    db.execute("UPDATE chunks SET text='Lezione 7. Macchina di Turing' WHERE doc_id=?", (ocr_rules_course,))
+    db.commit()
+    folder = ambiente / "uni" / "corso1" / "lezioni" / "7"
+    folder.mkdir(parents=True)
+    (folder / "transcript.json").write_text(json.dumps({
+        "segments": [{"start": 0, "end": 8, "text": "Spiegazione del docente."}],
+    }), encoding="utf-8")
+
+    def local(system, text, schema, quality):
+        assert "Turing" in text
+        if schema is lecture_notes.SCHEMA:
+            data = {key: [] for key in schema["properties"]}
+            data.update(titolo="Turing", riassunto="Macchina di Turing",
+                        flashcard=[{"fronte": "Turing", "retro": "Macchina"}])
+        elif schema is quiz.GEN_SCHEMA:
+            data = {"titolo": "Quiz", "domande": [
+                {"tipo": "aperta", "testo_md": "Turing?", "soluzione_md": "Macchina", "corretta": -1}]}
+        else:
+            assert schema is quiz.GRADE_SCHEMA
+            data = {"valutazioni": [{"indice": 0, "punteggio": 1}]}
+        return llm.LLMResult(data, "local", "test", 0)
+
+    monkeypatch.setattr(llm, "_local", local)
+    assert lecture_notes.process(7)["ocr_source"] is True
+    assert "Turing" not in mcp_server.get_lecture_notes(7)
+    assert not mcp_server.due_flashcards("1")
+    assert db.execute("SELECT ocr_source FROM flashcards WHERE front='Turing'").fetchone()[0] == 1
+    db.execute("DELETE FROM chunks WHERE doc_id=?", (ocr_rules_course,))
+    db.commit()
+    assert quiz.submit(quiz.generate(7)["id"], ["Risposta"])["score"] == 1
 
 
 def test_only_parts_with_ocr_are_marked(db, ambiente, monkeypatch):

@@ -421,7 +421,7 @@ def test_submit_corregge_crocette_in_locale_e_aperte_con_ai(ambiente, db, monkey
     visto = {}
 
     def correttore(system, text, schema, quality="accurato"):
-        visto["testo"] = text
+        visto["testo"] = text.text
         return SimpleNamespace(data={"valutazioni": [{"indice": indice_aperta, "punteggio": 0.5, "feedback_md": "manca"}]},
                                provider="l", model="m", duration_s=0)
     monkeypatch.setattr(quizmod, "run_json", correttore)

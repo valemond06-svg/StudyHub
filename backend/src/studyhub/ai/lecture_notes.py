@@ -23,6 +23,7 @@ from ..db import session
 from ..ingest.extract import render_page
 from ..paths import rel_to_uni, uni_path
 from .claude_runner import image_block
+from .prompt import Prompt, is_generated_material
 from .llm import run_json_content
 
 PROMPT_VERSION = "lecture-v2"  # v2: regole d'esame ufficiali nel contesto
@@ -135,19 +136,19 @@ def _lecture_pdf(db, lec: dict) -> dict | None:
     return None
 
 
-def _syllabus_hint(db, lec: dict) -> str:
+def _syllabus_hint(db, lec: dict) -> Prompt:
     if not lec["number"]:
-        return ""
+        return Prompt("")
     rows = db.execute(
-        """SELECT c.text FROM chunks c JOIN documents d ON d.id=c.doc_id
+        """SELECT c.text, c.ocr_source FROM chunks c JOIN documents d ON d.id=c.doc_id
            WHERE c.course_id=? AND (lower(d.title) LIKE '%diario%' OR lower(d.title) LIKE '%programma%'
                  OR lower(d.title) LIKE '%registro%')""", (lec["course_id"],)).fetchall()
     pat = re.compile(rf"Lezione\s+{lec['number']}\b[^\n]*(?:\n(?!\s*Lezione\s+\d)[^\n]*){{0,6}}", re.I)
     for r in rows:
         m = pat.search(r[0])
         if m:
-            return m.group(0).strip()[:900]
-    return ""
+            return Prompt(m.group(0).strip()[:900], bool(r["ocr_source"]))
+    return Prompt("")
 
 
 EXAM_SECTION = re.compile(r"esam|verific|valutazion|prov[ae]\b|appell", re.I)
@@ -155,10 +156,10 @@ EXAM_LINE = re.compile(r"esam|appell|formulari|dimostrazion\w* richiest|asterisc
 MAX_RULES_CHARS = 3000
 
 
-def _exam_rules(db, course_id: int) -> str:
+def _exam_rules(db, course_id: int) -> Prompt:
     """Regole d'esame ufficiali: sezioni Moodle sull'esame, avvisi e righe del diario che ne parlano.
     Servono a Claude per non fidarsi di una trascrizione sbagliata (es. "a quattro" invece di "A4")."""
-    parts: list[str] = []
+    parts: list[str | Prompt] = []
     for s in db.execute("SELECT name, folder FROM sections WHERE course_id=? ORDER BY number", (course_id,)):
         if EXAM_SECTION.search(s["name"] or "") and s["folder"]:
             f = uni_path(s["folder"]) / "_sezione.md"
@@ -166,9 +167,9 @@ def _exam_rules(db, course_id: int) -> str:
                 parts.append(f.read_text(encoding="utf-8").strip())
     # PDF con le regole (Course Info, regole d'esame, promemoria): prima pagine, dove stanno formato e voto.
     for r in db.execute(
-            """SELECT c.text FROM chunks c JOIN doc_tags t ON t.doc_id=c.doc_id
+            """SELECT c.text, c.ocr_source FROM chunks c JOIN doc_tags t ON t.doc_id=c.doc_id
                WHERE c.course_id=? AND t.category='regole_esame' ORDER BY c.doc_id, c.page LIMIT 12""", (course_id,)):
-        parts.append(r[0])
+        parts.append(Prompt(r["text"], bool(r["ocr_source"])))
     course = db.execute("SELECT folder FROM courses WHERE id=?", (course_id,)).fetchone()
     avvisi =uni_path(course["folder"]) / "moodle" / "_avvisi.md" if course and course["folder"] else None
     if avvisi and avvisi.exists():
@@ -176,14 +177,14 @@ def _exam_rules(db, course_id: int) -> str:
         if lines:
             parts.append("Avvisi del docente sull'esame:\n" + "\n\n".join(lines)[:1200])
     for r in db.execute(
-            """SELECT c.text FROM chunks c JOIN documents d ON d.id=c.doc_id
+            """SELECT c.text, c.ocr_source FROM chunks c JOIN documents d ON d.id=c.doc_id
                WHERE c.course_id=? AND (lower(d.title) LIKE '%diario%' OR lower(d.title) LIKE '%programma%'
                      OR lower(d.title) LIKE '%registro%') ORDER BY c.page LIMIT 3""", (course_id,)):
         hits = [ln.strip() for ln in re.split(r"(?<=[.:])\s+|\n", r[0]) if EXAM_LINE.search(ln)]
         if hits:
-            parts.append("Dal diario/programma: " + " ".join(dict.fromkeys(hits)))
+            parts.append(Prompt("Dal diario/programma: " + " ".join(dict.fromkeys(hits)), bool(r["ocr_source"])))
             break
-    return "\n\n".join(parts)[:MAX_RULES_CHARS]
+    return Prompt.join(parts, limit=MAX_RULES_CHARS)
 
 
 def _render(pdf: Path, page_no: int, sha: str) -> Path:
@@ -208,22 +209,23 @@ def build_input(lecture_id: int) -> tuple[dict, list[dict], list[dict], str]:
 
     content: list[dict] = []
     sources: list[dict] = [{"tipo": "trascrizione", "fonte": tr.get("source")}]
-    intro = (f"Corso: {course['fullname']}\nLezione: {lec['title']} ({lec['date'] or ''})\n"
-             f"Durata: {_mmss(lec['duration'] or 0)}\n")
-    if hint:
-        intro += f"\nDal diario/programma del corso:\n{hint}\n"
-    if rules:
-        intro += ("\n=== Regole d'esame UFFICIALI del corso (da Moodle) ===\n"
-                  f"{rules}\n=== fine regole d'esame ===\n")
-        sources.append({"tipo": "regole_esame", "caratteri": len(rules)})
-    content.append({"type": "text", "text": intro})
-    hash_parts = [PROMPT_VERSION, CACHE_MODEL, transcript, hint, rules]
+    intro: list[str | Prompt] = [f"Corso: {course['fullname']}\nLezione: {lec['title']} ({lec['date'] or ''})\n"
+                                 f"Durata: {_mmss(lec['duration'] or 0)}\n"]
+    if hint.text:
+        intro.append(hint.with_text(f"\nDal diario/programma del corso:\n{hint.text}\n"))
+    if rules.text:
+        intro.append(rules.with_text("\n=== Regole d'esame UFFICIALI del corso (da Moodle) ===\n"
+                                     f"{rules.text}\n=== fine regole d'esame ===\n"))
+        sources.append({"tipo": "regole_esame", "caratteri": len(rules.text)})
+    content.append(Prompt.join(intro, separator="").block())
+    hash_parts = [PROMPT_VERSION, CACHE_MODEL, transcript, hint.text, rules.text]
 
     n_img = 0
     if pdf:
         pdf_path = uni_path(pdf["path"])
         doc = pymupdf.open(pdf_path)
-        content.append({"type": "text", "text": f"\n=== Appunti/slide della lezione: {Path(pdf['path']).name} ==="})
+        content.append(Prompt(f"\n=== Appunti/slide della lezione: {Path(pdf['path']).name} ===",
+                              is_generated_material(pdf["path"])).block())
         for p in pages:
             if (p["is_scan"] or p["is_visual"]) and n_img < MAX_IMAGES:
                 content.append({"type": "text", "text": f"--- pagina {p['page']} (immagine) ---"})
@@ -313,23 +315,24 @@ def process(lecture_id: int, force: bool = False) -> dict:
         for block in content
     ]
     res = run_json_content(SYSTEM, blocks, SCHEMA, kind="transcript")
+    ocr_source = Prompt.from_blocks(blocks).ocr_source
     with session() as db:
         course = dict(db.execute("SELECT * FROM courses WHERE id=?", (lec["course_id"],)).fetchone())
     out_dir = uni_path(course["folder"]) / "studio_ai" / "lezioni"
     out_dir.mkdir(parents=True, exist_ok=True)
     base = Path(lec["folder"]).name
-    payload = {"lecture_id": lecture_id, "prompt_version": PROMPT_VERSION, "model": res.model,
-               "created_at": datetime.now().isoformat(timespec="seconds"), "sources": sources, **res.data}
+    payload = {**res.data, "lecture_id": lecture_id, "prompt_version": PROMPT_VERSION, "model": res.model,
+               "created_at": datetime.now().isoformat(timespec="seconds"), "sources": sources, "ocr_source": ocr_source}
     json_path, md_path = out_dir / f"{base}.json", out_dir / f"{base}.md"
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-    md_path.write_text(to_markdown(res.data, lec), encoding="utf-8")
+    Prompt(to_markdown(res.data, lec), ocr_source).write_markdown(md_path)
     usage = res.usage or {}
     row = {"kind": "lecture_notes", "target_id": lecture_id, "course_id": lec["course_id"], "input_hash": input_hash,
            "prompt_version": PROMPT_VERSION, "model": res.model, "json_path": rel_to_uni(json_path),
            "md_path": rel_to_uni(md_path), "sources": json.dumps(sources, ensure_ascii=False),
            "input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens"),
            "cost_usd": 0.0, "duration_s": res.duration_s,
-           "created_at": payload["created_at"]}
+           "created_at": payload["created_at"], "ocr_source": ocr_source}
     with session() as db:
         db.execute(f"INSERT INTO ai_outputs ({','.join(row)}) VALUES ({','.join('?' * len(row))})", list(row.values()))
     from ..study.flashcards import import_from_notes

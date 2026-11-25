@@ -1,8 +1,9 @@
+import httpx
 import pytest
 
 from conftest import inserisci_corso
 from studyhub import paths, search
-from studyhub.ingest import chunking
+from studyhub.ingest import chunking, embed
 from studyhub.ingest.embed import EmbeddingError
 
 
@@ -59,6 +60,26 @@ def test_se_gli_embedding_non_ci_sono_la_ricerca_testuale_funziona_lo_stesso(amb
     monkeypatch.setattr(search, "embed_query", giu)
     r = search.search("Taylor")
     assert r["semantic"] is False and len(r["results"]) == 1
+
+
+def test_timeout_breve_solo_per_embedding_query_e_ripiego_lessicale(ambiente, db, monkeypatch):
+    inserisci_corso(db, 1)
+    _indicizza(db, 1, 1, "teorema di Taylor")
+    db.commit()
+    calls = []
+
+    def ollama(url, *, timeout, json):
+        calls.append((timeout, json["options"]))
+        raise httpx.ReadTimeout("Ollama occupato")
+
+    monkeypatch.setattr(embed.httpx, "post", ollama)
+    assert search.search("Taylor", semantic=False)["results"]
+    assert not calls
+    response = search.search("Taylor", semantic=True)
+    assert not response["semantic"] and len(response["results"]) == 1
+    with pytest.raises(EmbeddingError):
+        embed._embed(["testo del documento"], {}, keep_alive=0)
+    assert calls == [(8, {"num_gpu": 0}), (600, {})]
 
 
 def test_fusione_rrf_premia_chi_compare_in_entrambe_le_liste(ambiente, db, monkeypatch):

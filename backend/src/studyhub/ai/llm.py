@@ -31,6 +31,7 @@ from ..config import LOCAL_DIR, settings, get_local_llm_key
 from ..filelock import LockTimeout, file_lock
 from .claude_runner import ClaudeError, RateLimited, run as claude_run
 from .privacy import check_external_allowed, log_provider_selection
+from .prompt import Prompt
 
 AGY_CWD = LOCAL_DIR / "agy-cwd"
 AGY_TIMEOUT_S = 8 * 60
@@ -610,13 +611,17 @@ def _gemini_request(exe: str, system: str, text: str, schema: dict, quality: str
     return LLMResult(data, "gemini", model, round(time.time() - t0, 1))
 
 
-def run_json(system: str, text: str, schema: dict, quality: str = "accurato", kind: str | None = None, private: bool = False) -> LLMResult:
+def run_json(system: str, text: str | Prompt, schema: dict, quality: str = "accurato",
+             kind: str | None = None, private: bool = False) -> LLMResult:
     """Chiamata con output JSON (schema). quality: veloce (correzioni) | accurato (generazione).
 
     Args:
         kind: Tipo di job per privacy (es. "exam_answers", "transcript", "personal_notes")
         private: Forza modalità privata (solo provider locali)
     """
+    if isinstance(text, Prompt):
+        private = private or text.ocr_source
+        text = text.text
     decision = check_external_allowed("claude", text, kind=kind, private=private)
     providers = provider_order() if decision.allowed else ["local"]
     errors = [] if decision.allowed else [decision.reason]
@@ -645,11 +650,14 @@ def run_json_content(system: str, content: list[dict], schema: dict, quality: st
     testo e `images_sent` resta 0: chi chiama DEVE dirlo all'utente, le foto non sono state lette.
     Con `require_images` l'ultimo errore di visione risale al chiamante senza ripiegare sul testo."""
     images = [b for b in content if b.get("type") == "image"]
-    text = "\n\n".join(b["text"] for b in content if b.get("type") == "text")
+    prompt = Prompt.from_blocks(content)
     if not images:
         if require_images:
             raise NoVision("Nessuna immagine da leggere.")
-        return run_json(system, text, schema, quality, kind=kind, private=private)
+        return run_json(system, prompt, schema, quality, kind=kind, private=private)
+    text = prompt.text
+    private = private or prompt.ocr_source
+    content = [{k: v for k, v in block.items() if k != "ocr_source"} for block in content]
     content = _validated_vision_content(content)
     decision = check_external_allowed("claude", text, kind=kind, private=private)
     providers = provider_order() if decision.allowed else ["local"]

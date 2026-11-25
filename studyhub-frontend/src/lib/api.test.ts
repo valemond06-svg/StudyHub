@@ -111,7 +111,7 @@ describe("API: errori e contratti", () => {
     ] }))
     vi.stubGlobal("fetch", fetch)
     setCsrfToken("t")
-    const res = await api.search("laplace transform", { courseId: 3 })
+    const res = await api.searchSemantic("laplace transform", { courseId: 3 })
     expect(fetch).toHaveBeenCalledExactlyOnceWith("/api/search", expect.objectContaining({
       method: "POST", body: JSON.stringify({ q: "laplace transform", course_id: 3, limit: 20 }),
       headers: expect.objectContaining({ "X-CSRF-Token": "t" }),
@@ -120,16 +120,14 @@ describe("API: errori e contratti", () => {
     expect(res.results[0]).toMatchObject({ docId: 4, page: 2, group: "documenti" })
   })
 
-  it("usa GET con gli stessi filtri se il POST fallisce", async () => {
-    const fetch = vi.fn()
-      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
-      .mockResolvedValueOnce(Response.json({ semantic: false, results: [
+  it("cerca per parole direttamente con GET e passa il segnale di annullamento", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ semantic: false, results: [
         { id: 12, kind: "note", note_id: 12, doc_id: null, lecture_id: 4, snippet: "Laplace" },
       ] }))
     vi.stubGlobal("fetch", fetch)
-    setCsrfToken("t")
-    const res = await api.search("laplace", { year: 2, limit: 8 })
-    expect(fetch.mock.calls.map(([url]) => url)).toEqual(["/api/search", "/api/search?q=laplace&year=2&limit=8"])
+    const { signal } = new AbortController()
+    const res = await api.search("laplace", { year: 2, limit: 8, signal })
+    expect(fetch).toHaveBeenCalledExactlyOnceWith("/api/search?q=laplace&year=2&limit=8", expect.objectContaining({ signal }))
     expect(res.semantic).toBe(false)
     expect(res.results[0]).toMatchObject({ noteId: 12, docId: null, lectureId: 4, group: "appunti" })
   })
@@ -138,7 +136,7 @@ describe("API: errori e contratti", () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ semantic: false, results: [] }))
     vi.stubGlobal("fetch", fetch)
     setCsrfToken("t")
-    await expect(api.search("laplace")).resolves.toEqual({ semantic: false, results: [] })
+    await expect(api.searchSemantic("laplace")).resolves.toEqual({ semantic: false, results: [] })
     expect(fetch).toHaveBeenCalledOnce()
   })
 

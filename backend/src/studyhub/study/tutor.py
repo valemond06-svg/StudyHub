@@ -12,6 +12,7 @@ from datetime import datetime
 
 from ..ai.claude_runner import ClaudeError
 from ..ai.llm import run_json
+from ..ai.prompt import Prompt
 from ..db import session
 from ..search import search
 
@@ -100,22 +101,27 @@ def ask(thread_id: int, question: str) -> dict:
     hits = search(f"{question} {prev_q}"[:500], [th["course_id"]] if th["course_id"] is not None else None,
                   limit=CONTEXT_CHUNKS)["results"]
     with session() as db:
-        texts = {r["id"]: r["text"] for r in db.execute(
-            f"SELECT id, text FROM chunks WHERE id IN ({','.join('?' * len(hits)) or 'NULL'})", [h["id"] for h in hits])}
+        texts = {r["id"]: Prompt(r["text"][:MAX_CHUNK_CHARS], bool(r["ocr_source"])) for r in db.execute(
+            f"SELECT id, text, ocr_source FROM chunks WHERE id IN ({','.join('?' * len(hits)) or 'NULL'})",
+            [h["id"] for h in hits])}
     sources = []
     blocks = []
     for n, h in enumerate(hits, start=1):
         sources.append({"n": n, "chunk_id": h["id"], "doc_id": h["doc_id"], "title": h["title"], "kind": h["kind"],
                         "page": h["page"], "t_start": h["t_start"], "lecture_id": h["lecture_id"],
                         "course": h["course"], "where": _where(h)})
-        blocks.append(f"[{n}] {h['title']} ({_where(h)})\n{texts.get(h['id'], '')[:MAX_CHUNK_CHARS]}")
-    conv = "\n".join(f"{'Studente' if m['role'] == 'user' else 'Tutor'}: {m['content'][:1500]}" for m in history)
-    content = [{"type": "text", "text":
-                "=== Fonti ===\n" + ("\n\n".join(blocks) or "(nessuna fonte trovata)") +
-                (f"\n\n=== Conversazione finora ===\n{conv}" if conv else "") +
-                f"\n\n=== Domanda dello studente ===\n{question}"}]
+        chunk = texts.get(h["id"], Prompt(""))
+        blocks.append(chunk.with_text(f"[{n}] {h['title']} ({_where(h)})\n{chunk.text}"))
+    conv = Prompt.join((Prompt(f"{'Studente' if m['role'] == 'user' else 'Tutor'}: {m['content'][:1500]}",
+                               bool(m["ocr_source"])) for m in history), separator="\n")
+    parts: list[str | Prompt] = [Prompt.join(["=== Fonti ===", Prompt.join(blocks) if blocks else "(nessuna fonte trovata)"],
+                                            separator="\n")]
+    if conv.text:
+        parts.append(conv.with_text(f"=== Conversazione finora ===\n{conv.text}"))
+    parts.append(f"=== Domanda dello studente ===\n{question}")
+    prompt = Prompt.join(parts)
     system = SYSTEM + (SOCRATIC if th["mode"] == "socratico" else "")
-    res = run_json(system, content[0]["text"], SCHEMA, quality="accurato")
+    res = run_json(system, prompt, SCHEMA, quality="accurato")
     data = res.data
     if not isinstance(data, dict) or not isinstance(data.get("risposta_md"), str) or not data["risposta_md"].strip():
         raise ClaudeError("Il tutor non ha restituito una risposta valida.")
@@ -129,10 +135,10 @@ def ask(thread_id: int, question: str) -> dict:
     with session() as db:
         db.execute("INSERT INTO tutor_messages (thread_id, role, content, created_at) VALUES (?,?,?,?)",
                    (thread_id, "user", question, _now()))
-        db.execute("""INSERT INTO tutor_messages (thread_id, role, content, citations, tokens_in, tokens_out, created_at)
-                      VALUES (?,?,?,?,?,?,?)""",
+        db.execute("""INSERT INTO tutor_messages (thread_id, role, content, citations, tokens_in, tokens_out, created_at,
+                                                  ocr_source) VALUES (?,?,?,?,?,?,?,?)""",
                    (thread_id, "assistant", data["risposta_md"], json.dumps(sources, ensure_ascii=False), tin,
-                    tout, _now()))
+                    tout, _now(), prompt.ocr_source))
         if not th.get("title"):
             db.execute("UPDATE tutor_threads SET title=? WHERE id=?", (question[:80], thread_id))
     return {"answer": data["risposta_md"], "sources": sources, "cited": [s["n"] for s in cited],

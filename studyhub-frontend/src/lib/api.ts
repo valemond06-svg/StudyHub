@@ -381,13 +381,15 @@ export const api = {
   markNotificationsRead: () => request<{ ok: boolean }>(`/api/notifications/read`, { method: "POST" }),
 
   // Search: il backend risponde {results, semantic}
-  search: async (text: string, opts: { courseId?: number; year?: number; limit?: number } = {}): Promise<SearchResponse> => {
+  search: async (text: string, opts: { courseId?: number; year?: number; limit?: number; signal?: AbortSignal } = {}): Promise<SearchResponse> => {
     const filters = { q: text, course_id: opts.courseId, year: opts.year, limit: opts.limit ?? 20 }
-    try {
-      return toSearchResponse(await request<unknown>("/api/search", { method: "POST", body: JSON.stringify(filters) }))
-    } catch {
-      return toSearchResponse(await request<unknown>(`/api/search${q(filters)}`))
-    }
+    return toSearchResponse(await request<unknown>(`/api/search${q(filters)}`, { signal: opts.signal }))
+  },
+  searchSemantic: async (text: string, opts: { courseId?: number; year?: number; limit?: number; signal?: AbortSignal } = {}): Promise<SearchResponse> => {
+    const filters = { q: text, course_id: opts.courseId, year: opts.year, limit: opts.limit ?? 20 }
+    return toSearchResponse(await request<unknown>("/api/search", {
+      method: "POST", body: JSON.stringify(filters), signal: opts.signal,
+    }))
   },
 
   // Storage

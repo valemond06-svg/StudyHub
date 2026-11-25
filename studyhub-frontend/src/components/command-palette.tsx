@@ -100,6 +100,7 @@ function PaletteDialog({ onClose, navigate }: { onClose: () => void; navigate: R
   const [semantic, setSemantic] = useState(true)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
+  const [semanticPending, setSemanticPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const itemsRef = useRef<Array<HTMLDivElement | null>>([])
   const seqRef = useRef(0)
@@ -145,33 +146,55 @@ function PaletteDialog({ onClose, navigate }: { onClose: () => void; navigate: R
   const trimmed = query.trim()
   const searching = trimmed.length >= MIN_QUERY
 
-  // Ricerca con debounce; le risposte vecchie vengono scartate
   const onQueryChange = (value: string) => {
-    seqRef.current++
     setQuery(value)
+    if (value.trim() === trimmed) return
+    seqRef.current++
+    setHits([])
     setError(null)
     setIsLoading(value.trim().length >= MIN_QUERY)
+    setSemanticPending(value.trim().length >= MIN_QUERY)
+    setSelectedIndex(0)
   }
 
   useEffect(() => {
     if (!searching) return
     const seq = seqRef.current
-    const timer = setTimeout(async () => {
-      try {
-        const res = await api.search(trimmed, { limit: 20 })
-        if (seq !== seqRef.current) return
-        setHits(res.results)
-        setSemantic(res.semantic)
-        setSelectedIndex(0)
-      } catch (err) {
-        if (seq !== seqRef.current) return
-        setHits([])
-        setError(describeError(err, "Errore durante la ricerca."))
-      } finally {
-        if (seq === seqRef.current) setIsLoading(false)
-      }
+    const controller = new AbortController()
+    const opts = { limit: 20, signal: controller.signal }
+    let lexical: SearchHit[] | undefined
+    let hybrid: SearchHit[] | undefined
+    let lexicalError: string | null = null
+    let pending = true
+    const publish = () => {
+      if (seq !== seqRef.current || controller.signal.aborted) return
+      const seen = new Set(lexical?.map((hit) => `${hit.kind}:${hit.id}`))
+      const added = hybrid?.filter((hit) => !seen.has(`${hit.kind}:${hit.id}`)) ?? []
+      setHits(lexical ? [...lexical, ...added] : added)
+      setSemantic(hybrid !== undefined)
+      setError(!pending && hybrid === undefined ? lexicalError : null)
+      setIsLoading(lexical === undefined && hybrid === undefined && lexicalError === null)
+      setSemanticPending(pending)
+    }
+    const timer = setTimeout(() => {
+      void api.search(trimmed, opts).then((res) => {
+        lexical = res.results
+      }, (err) => {
+        lexicalError = describeError(err, "Errore durante la ricerca.")
+      }).finally(publish)
+      void api.searchSemantic(trimmed, opts).then((res) => {
+        if (res.semantic) hybrid = res.results
+      }, () => {
+        // I risultati lessicali restano disponibili anche se il POST fallisce.
+      }).finally(() => {
+        pending = false
+        publish()
+      })
     }, 250)
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
   }, [trimmed, searching])
 
   const filteredQuickActions = trimmed
@@ -349,7 +372,13 @@ function PaletteDialog({ onClose, navigate }: { onClose: () => void; navigate: R
                 </div>
               )}
 
-              {!isLoading && searching && !error && shownHits.length === 0 && (
+              {!isLoading && searching && semanticPending && shownHits.length === 0 && (
+                <p className="py-6 text-center text-sm text-neutral-500" role="status">
+                  Ricerca per significato in corso…
+                </p>
+              )}
+
+              {!isLoading && searching && !semanticPending && !error && shownHits.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-10 text-center">
                   <Search className="h-10 w-10 text-neutral-300 dark:text-neutral-600 mb-3" />
                   <p className="text-neutral-600 dark:text-neutral-400">

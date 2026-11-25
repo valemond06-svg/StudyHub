@@ -12,6 +12,7 @@ from datetime import datetime
 from random import Random
 
 from ..ai.llm import run_json
+from ..ai.prompt import Prompt
 from ..ai.lecture_notes import existing
 from ..db import session
 from ..paths import uni_path
@@ -67,20 +68,20 @@ def generate(lecture_id: int, n_questions: int = 10) -> dict:
     out = existing(lecture_id)
     if not out:
         raise ValueError("Prima genera gli appunti AI della lezione.")
-    notes = uni_path(out["md_path"]).read_text(encoding="utf-8")
-    h = hashlib.sha256(f"quiz-v1|{n_questions}|{notes}".encode()).hexdigest()
+    notes = Prompt.read_markdown(uni_path(out["md_path"]), bool(out["ocr_source"]))
+    h = hashlib.sha256(f"quiz-v1|{n_questions}|{notes.text}".encode()).hexdigest()
     with session() as db:
         row = db.execute("SELECT * FROM quizzes WHERE lecture_id=? AND input_hash=? ORDER BY id DESC LIMIT 1",
                          (lecture_id, h)).fetchone()
         if row:
             return {"id": row["id"], "cached": True}
-    res = run_json(GEN_SYSTEM, f"=== Appunti della lezione ===\n{notes}\n\nPrepara un quiz di {n_questions} domande.",
-                   GEN_SCHEMA, quality="accurato")
+    prompt = notes.with_text(f"=== Appunti della lezione ===\n{notes.text}\n\nPrepara un quiz di {n_questions} domande.")
+    res = run_json(GEN_SYSTEM, prompt, GEN_SCHEMA, quality="accurato")
     with session() as db:
-        qid = db.execute("INSERT INTO quizzes (course_id, lecture_id, title, questions, input_hash, created_at) "
-                         "VALUES (?,?,?,?,?,?)",
+        qid = db.execute("INSERT INTO quizzes (course_id, lecture_id, title, questions, input_hash, created_at, ocr_source) "
+                         "VALUES (?,?,?,?,?,?,?)",
                          (out["course_id"], lecture_id, res.data["titolo"],
-                          json.dumps(res.data["domande"], ensure_ascii=False), h, _now())).lastrowid
+                          json.dumps(res.data["domande"], ensure_ascii=False), h, _now(), prompt.ocr_source)).lastrowid
     return {"id": qid, "cached": False, "utilization": getattr(res, "utilization", 1.0)}
 
 
@@ -96,8 +97,11 @@ def get(quiz_id: int, with_solutions: bool = False) -> dict:
     Random(quiz_id).shuffle(qs)
     if not with_solutions:
         qs = [{k: v for k, v in q.items() if k not in ("corretta", "soluzione_md")} for q in qs]
-    return {**{k: row[k] for k in ("id", "course_id", "lecture_id", "title", "created_at")}, "questions": qs,
-            "attempts": attempts}
+    result = {**{k: row[k] for k in ("id", "course_id", "lecture_id", "title", "created_at")}, "questions": qs,
+              "attempts": attempts}
+    if with_solutions:
+        result["ocr_source"] = bool(row["ocr_source"])
+    return result
 
 
 def list_for_lecture(lecture_id: int) -> list[dict]:
@@ -145,7 +149,7 @@ def submit(quiz_id: int, answers: list) -> dict:
     if open_items:
         text = "\n\n".join(f"--- Domanda {i} ({q['tipo']}) ---\n{q['testo_md']}\n\nRisposta modello:\n{q['soluzione_md']}"
                            f"\n\nRisposta dello studente:\n{a}" for i, q, a in open_items)
-        res = run_json(GRADE_SYSTEM, text, GRADE_SCHEMA, quality="veloce")
+        res = run_json(GRADE_SYSTEM, Prompt(text, quiz["ocr_source"]), GRADE_SCHEMA, quality="veloce")
         utilization = getattr(res, "utilization", 1.0)
         by_idx = {}
         raw_vals = res.data.get("valutazioni", []) if isinstance(res.data, dict) else (res.data if isinstance(res.data, list) else [])

@@ -6,13 +6,13 @@ import { CommandPalette } from "@/components/command-palette"
 import { MainLayout } from "@/components/layout/MainLayout"
 import { useUIStore } from "@/store/ui"
 import { api } from "@/lib/api"
-import { toSearchResponse } from "@/lib/search"
+import { toSearchResponse, type SearchResponse } from "@/lib/search"
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api")
   return {
     ...actual,
-    api: { search: vi.fn(), getLecture: vi.fn(), getNotifications: vi.fn(), markNotificationsRead: vi.fn() },
+    api: { search: vi.fn(), searchSemantic: vi.fn(), getCourses: vi.fn(), getLecture: vi.fn(), getNotifications: vi.fn(), markNotificationsRead: vi.fn() },
   }
 })
 
@@ -42,6 +42,8 @@ beforeEach(() => {
   localStorage.clear()
   useUIStore.setState({ theme: "system", sidebarOpen: false, sidebarCollapsed: false, commandPaletteOpen: false })
   vi.mocked(api.getNotifications).mockResolvedValue([])
+  vi.mocked(api.getCourses).mockResolvedValue([])
+  vi.mocked(api.searchSemantic).mockResolvedValue({ results: [], semantic: false })
   Element.prototype.scrollIntoView = vi.fn()
 })
 
@@ -69,7 +71,7 @@ describe("Ricerca globale", () => {
     expect(await screen.findByTestId("gruppo-lezioni")).toBeDefined()
     expect(screen.getByTestId("gruppo-documenti")).toBeDefined()
     expect(screen.getByText("trasformata").tagName).toBe("MARK")
-    expect(api.search).toHaveBeenCalledWith("laplace", { limit: 20 })
+    expect(api.search).toHaveBeenCalledWith("laplace", { limit: 20, signal: expect.any(AbortSignal) })
     fireEvent.click(screen.getByText("Lezione 12"))
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/corsi/25782?lezione=190&t=754"))
   })
@@ -86,6 +88,44 @@ describe("Ricerca globale", () => {
     expect(screen.getByText("Risultati della ricerca per parole.")).toBeDefined()
     fireEvent.click(hit)
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/documento/8?pagina=7"))
+  })
+
+  it("mostra il GET mentre il POST attende e aggiunge i risultati semantici senza duplicati", async () => {
+    const lexical = { id: 1, doc_id: 1, kind: "pdf", title: "Dispensa lessicale" }
+    const semantic = { id: 2, doc_id: 2, kind: "pdf", title: "Dispensa semantica" }
+    vi.mocked(api.search).mockResolvedValue(toSearchResponse({ results: [lexical] }))
+    let finishSemantic!: (response: SearchResponse) => void
+    vi.mocked(api.searchSemantic).mockImplementation(() => new Promise((resolve) => { finishSemantic = resolve }))
+    renderApp()
+    act(() => useUIStore.getState().setCommandPaletteOpen(true))
+    fireEvent.change(await screen.findByRole("textbox", { name: "Cerca nel materiale" }), { target: { value: "matrice" } })
+    expect(await screen.findByText(lexical.title)).toBeDefined()
+    expect(api.searchSemantic).toHaveBeenCalledOnce()
+    expect(screen.queryByText("Ricerca in corso…")).toBeNull()
+    expect(screen.queryByText(semantic.title)).toBeNull()
+    await act(async () => finishSemantic(toSearchResponse({ semantic: true, results: [semantic, lexical] })))
+    expect(await screen.findByText(semantic.title)).toBeDefined()
+    expect(screen.getAllByText(lexical.title)).toHaveLength(1)
+  })
+
+  it("ignora il completamento semantico della query precedente", async () => {
+    const old = { id: 3, doc_id: 3, kind: "pdf", title: "Risultato superato" }
+    const current = { id: 4, doc_id: 4, kind: "pdf", title: "Risultato attuale" }
+    let finishOld!: (response: SearchResponse) => void
+    vi.mocked(api.search).mockResolvedValueOnce(toSearchResponse({ results: [] }))
+      .mockResolvedValueOnce(toSearchResponse({ results: [current] }))
+    vi.mocked(api.searchSemantic).mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve }))
+    renderApp()
+    act(() => useUIStore.getState().setCommandPaletteOpen(true))
+    const input = await screen.findByRole("textbox", { name: "Cerca nel materiale" })
+    fireEvent.change(input, { target: { value: "prima" } })
+    expect(await screen.findByText("Ricerca per significato in corso…")).toBeDefined()
+    const signal = vi.mocked(api.searchSemantic).mock.calls[0][1]?.signal
+    fireEvent.change(input, { target: { value: "seconda" } })
+    expect(await screen.findByText(current.title)).toBeDefined()
+    await act(async () => finishOld(toSearchResponse({ semantic: true, results: [old] })))
+    expect(signal?.aborted).toBe(true)
+    expect(screen.queryByText(old.title)).toBeNull()
   })
 
   it("apre una nota priva di documento nel Quaderno anche quando è collegata a una lezione", async () => {

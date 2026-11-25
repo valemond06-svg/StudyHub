@@ -72,7 +72,10 @@ export function Quaderno() {
   const [tag, setTag] = useState("")
   const [offset, setOffset] = useState(0)
   const [editing, setEditing] = useState<StudyNote | "new" | null>(() => params.has("nuova") ? "new" : null)
-  const [deleting, setDeleting] = useState<number | null>(null)
+  const view = noteId ? `nota:${noteId}` : JSON.stringify([courseId, lectureId, q, tag, offset])
+  const [confirmation, setConfirmation] = useState<{ view: string; id: number } | null>(null)
+  const deleting = confirmation?.view === view ? confirmation.id : null
+  if (confirmation && confirmation.view !== view) setConfirmation(null)
   const client = useQueryClient()
   const courses = useQuery({ queryKey: ["courses"], queryFn: api.getCourses })
   const lectures = useQuery({ queryKey: ["lectures", courseId], queryFn: () => api.getCourseLectures(courseId!), enabled: !!courseId })
@@ -83,7 +86,7 @@ export function Quaderno() {
   const remove = useMutation({
     mutationFn: studyApi.deleteNote,
     onSuccess: async (_, deletedId) => {
-      setDeleting(null)
+      setConfirmation((current) => current?.id === deletedId ? null : current)
       if (deletedId === noteId) showAllNotes()
       await client.invalidateQueries({ queryKey: ["study-notes"] })
     },
@@ -141,16 +144,20 @@ export function Quaderno() {
             <p className={studyMuted}>{activeCourses.find((course) => course.id === note.course_id)?.fullname ?? `Corso ${note.course_id}`}</p>
             <MathMarkdown content={note.body} className="break-words" />
             <div className="flex flex-wrap gap-2">
-              {note.tags.map((value, i) => <Button key={`${value}:${i}`} variant="secondary" size="sm" onClick={() => { setTag(value); setOffset(0) }}>{value}</Button>)}
+              {note.tags.map((value, i) => <Button key={`${value}:${i}`} variant="secondary" size="sm" onClick={() => {
+                setTag(value)
+                setOffset(0)
+                if (noteId) showAllNotes()
+              }}>{value}</Button>)}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <SourceLink courseId={note.course_id} source={note} seconds={note.timestamp_s} />
               {deleting === note.id ? <>
                 <Button variant="destructive" size="sm" disabled={remove.isPending} onClick={() => remove.mutate(note.id)}>Conferma eliminazione</Button>
-                <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => { remove.reset(); setDeleting(null) }}>Annulla</Button>
+                <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => { remove.reset(); setConfirmation(null) }}>Annulla</Button>
               </> : <>
                 <Button variant="outline" size="sm" disabled={!!editing || deleting !== null} onClick={() => { setEditing(note); window.scrollTo(0, 0) }}>Modifica</Button>
-                <Button variant="ghost" size="sm" disabled={!!editing || deleting !== null} onClick={() => setDeleting(note.id)}>Elimina</Button>
+                <Button variant="ghost" size="sm" disabled={!!editing || deleting !== null} onClick={() => setConfirmation({ view, id: note.id })}>Elimina</Button>
               </>}
             </div>
           </CardContent>

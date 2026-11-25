@@ -16,6 +16,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from ..ai.prompt import is_generated_material
 from ..config import settings
 from ..db import session
 from ..paths import rel_to_uni, uni_path
@@ -73,21 +74,22 @@ def _files(course_dir: Path):
                 yield p
 
 
-def _insert_chunks(db, doc_id: int, course_id: int, kind: str, chunks) -> int:
+def _insert_chunks(db, doc_id: int, course_id: int, kind: str, chunks, *, ocr_source: bool = False) -> int:
     db.executemany(
-        "INSERT INTO chunks (doc_id, course_id, kind, page, t_start, t_end, heading, text) VALUES (?,?,?,?,?,?,?,?)",
-        [(doc_id, course_id, kind, c.page, c.t_start, c.t_end, c.heading, c.text) for c in chunks],
+        """INSERT INTO chunks (doc_id, course_id, kind, page, t_start, t_end, heading, text, ocr_source)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        [(doc_id, course_id, kind, c.page, c.t_start, c.t_end, c.heading, c.text, ocr_source) for c in chunks],
     )
     return len(chunks)
 
 
-def replace_chunks(db, doc_id: int, course_id: int, kind: str, chunks) -> int:
+def replace_chunks(db, doc_id: int, course_id: int, kind: str, chunks, *, ocr_source: bool = False) -> int:
     """Sostituisce i chunk di un documento (e i loro vettori) senza toccare il documento. Gli embedding si rifanno."""
     vectors.ensure(db)
     ids = [r[0] for r in db.execute("SELECT id FROM chunks WHERE doc_id=?", (doc_id,))]
     vectors.delete(db, ids)
     db.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
-    return _insert_chunks(db, doc_id, course_id, kind, chunks)
+    return _insert_chunks(db, doc_id, course_id, kind, chunks, ocr_source=ocr_source)
 
 
 def _drop_doc(db, doc_id: int) -> None:
@@ -160,7 +162,9 @@ def index_course(course: dict) -> dict:
                 chunks = chunk_code(ex.pages[0].text, path.name)
             else:
                 chunks = chunk_markdown(ex.pages[0].text, path.stem)
-            stats["chunk"] += _insert_chunks(db, doc_id, course["id"], ex.kind, chunks)
+            # I file generati possono incorporare fonti OCR (anche negli export senza metadati).
+            stats["chunk"] += _insert_chunks(db, doc_id, course["id"], ex.kind, chunks,
+                                             ocr_source=is_generated_material(rel))
 
         # Trascrizioni delle lezioni
         for lec in db.execute("SELECT * FROM lectures WHERE course_id=?", (course["id"],)).fetchall():

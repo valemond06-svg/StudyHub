@@ -110,7 +110,7 @@ def process_doc(d: dict) -> int | None:
         pages = json.loads(cache_path(d["sha256"]).read_text(encoding="utf-8"))
     chunks = chunk_pages([Page(p["numero"], p["testo"], True, True) for p in pages], d["title"] or "Documento")
     with session() as db:
-        replace_chunks(db, d["id"], d["course_id"], "pdf", chunks)
+        replace_chunks(db, d["id"], d["course_id"], "pdf", chunks, ocr_source=True)
     return len(chunks)
 
 

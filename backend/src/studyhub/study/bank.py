@@ -26,7 +26,7 @@ import pymupdf
 from ..ai.claude_runner import RateLimited
 from ..ai.lecture_notes import _exam_rules, existing
 from ..ai.llm import effective_workers, run_json
-from ..ai.privacy import scope
+from ..ai.prompt import Prompt, is_generated_material
 from ..config import settings
 from ..db import session
 from ..ingest.extract import extract
@@ -257,13 +257,14 @@ def sync_units(course_id: int) -> dict:
 
 # --- Generazione ------------------------------------------------------------------
 
-def _profile_topics(course: dict) -> str:
+def _profile_topics(course: dict) -> Prompt:
     f = uni_path(course["folder"]) / "studio_ai" / "profilo_esame.json"
     if not f.exists():
-        return ""
+        return Prompt("")
     prof = json.loads(f.read_text(encoding="utf-8"))
     rows = [f"- {a['nome']} (peso {a['peso']}, {a['frequenza']})" for a in prof.get("argomenti", [])]
-    return "Profilo d'esame (argomenti ricorrenti negli appelli):\n" + "\n".join(rows) if rows else ""
+    text = "Profilo d'esame (argomenti ricorrenti negli appelli):\n" + "\n".join(rows) if rows else ""
+    return Prompt(text, bool(prof.get("ocr_source", True)))
 
 
 def _unit_text(db, unit: dict) -> tuple[str, str, dict, bool]:
@@ -272,16 +273,16 @@ def _unit_text(db, unit: dict) -> tuple[str, str, dict, bool]:
         out = existing(unit["ref_id"])
         if not out or not uni_path(out["md_path"]).exists():
             raise LookupError("appunti mancanti")
-        md = uni_path(out["md_path"]).read_text(encoding="utf-8")
-        return f"=== Appunti della lezione (▶ mm:ss = minuto della registrazione) ===\n{md}", out["input_hash"], \
-            {"lecture_id": unit["ref_id"]}, False
+        md = Prompt.read_markdown(uni_path(out["md_path"]), bool(out["ocr_source"]))
+        return f"=== Appunti della lezione (▶ mm:ss = minuto della registrazione) ===\n{md.text}", out["input_hash"], \
+            {"lecture_id": unit["ref_id"]}, md.ocr_source
     doc = dict(db.execute("SELECT * FROM documents WHERE id=?", (unit["ref_id"],)).fetchone())
     ex = extract(uni_path(doc["path"]))
     texts, ocr_pages = ([p.text for p in ex.pages], frozenset())
     if ex.kind == "pdf":
         texts, ocr_pages = _with_ocr(texts, doc["sha256"])
     a, b = unit["page_from"] or 1, unit["page_to"] or len(ex.pages)
-    used_ocr = any(a <= p <= b for p in ocr_pages)
+    used_ocr = any(a <= p <= b for p in ocr_pages) or is_generated_material(doc["path"])
     body = "\n".join(f"--- pagina {p.number} ---\n{t}" for p, t in zip(ex.pages, texts)
                      if a <= p.number <= b and t.strip())
     kind = "Appello d'esame passato" if EXAM_PATH.search(doc["path"]) else "Documento del corso"
@@ -302,25 +303,27 @@ def prepare_unit(unit_id: int) -> dict:
             db.execute("UPDATE study_units SET ocr_source=1 WHERE id=?", (unit_id,))
             unit["ocr_source"] = 1
         rules = _exam_rules(db, course["id"])
-        topics = [r[0] for r in db.execute(
-            "SELECT name FROM study_topics WHERE course_id=? AND (ocr_source=0 OR ?) ORDER BY id",
-            (course["id"], unit["ocr_source"]))]
+        topics = db.execute(
+            "SELECT name, ocr_source FROM study_topics WHERE course_id=? AND (ocr_source=0 OR ?) ORDER BY id",
+            (course["id"], unit["ocr_source"])).fetchall()
     h = hashlib.sha256(f"{BANK_VERSION}|{src_hash}".encode()).hexdigest()
     if unit["source_hash"] == h and unit["status"] == "pronta":
         return {"cached": True}
     n_q = max(8, min(25, len(text) // 1200))
-    prompt = [f"Corso: {course['fullname']}", f"Unità: {unit['title']} ({unit['day'] or ''})"]
-    if rules:
-        prompt.append(f"Regole d'esame ufficiali:\n{rules}")
+    prompt: list[str | Prompt] = [f"Corso: {course['fullname']}", f"Unità: {unit['title']} ({unit['day'] or ''})"]
+    if rules.text:
+        prompt.append(rules.with_text(f"Regole d'esame ufficiali:\n{rules.text}"))
     prof = _profile_topics(course)
-    if prof:
+    if prof.text:
         prompt.append(prof)
     if topics:
-        prompt.append("Argomenti GIÀ ESISTENTI nel corso (riusa il nome esatto se è lo stesso):\n"
-                      + "\n".join(f"- {t}" for t in topics[-120:]))
-    prompt += [text, f"Scrivi circa {n_q} domande in totale, di tutti i tipi adatti a questo materiale."]
-    with scope(private=bool(unit["ocr_source"])):
-        res = run_json(SYSTEM, "\n\n".join(prompt), SCHEMA, quality="accurato")
+        prompt.append(Prompt.join(
+            ["Argomenti GIÀ ESISTENTI nel corso (riusa il nome esatto se è lo stesso):",
+             *(Prompt(f"- {t['name']}", bool(t["ocr_source"])) for t in topics[-120:])], separator="\n"))
+    prompt += [Prompt(text, bool(unit["ocr_source"])), f"Scrivi circa {n_q} domande in totale, di tutti i tipi adatti a questo materiale."]
+    assembled = Prompt.join(prompt)
+    res = run_json(SYSTEM, assembled, SCHEMA, quality="accurato")
+    unit["ocr_source"] = assembled.ocr_source
     added = _store(unit, course["id"], res.data, refs)
     with session() as db:
         db.execute("UPDATE study_units SET status=?, source_hash=?, provider=?, message=?, done_at=? WHERE id=?",
@@ -341,6 +344,8 @@ def _store(unit: dict, course_id: int, data: dict, refs: dict) -> int:
         db.execute("UPDATE study_items SET suspended=1 WHERE unit_id=?", (unit["id"],))
         ids: dict[str, int] = {}
         ocr_source = bool(unit.get("ocr_source"))
+        if ocr_source:
+            db.execute("UPDATE study_units SET ocr_source=1 WHERE id=?", (unit["id"],))
         for t in data.get("argomenti", []):
             name = t["nome"].strip()[:160]
             row = db.execute("SELECT id FROM study_topics WHERE course_id=? AND name=?", (course_id, name)).fetchone()

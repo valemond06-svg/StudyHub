@@ -19,6 +19,7 @@ import pymupdf
 from ..ai.llm import run_json, run_json_content
 from ..ai.vision import MAX_GRADE_PHOTOS, MAX_PHOTOS_PER_ANSWER, photo_notice, prepare_images
 from ..ai.lecture_notes import _exam_rules
+from ..ai.prompt import Prompt, is_generated_material
 from ..config import settings
 from ..db import session
 from ..filelock import file_lock
@@ -154,7 +155,8 @@ def _exam_docs_content(db, docs: list[dict], max_images: int) -> tuple[list[dict
                 content.append({"type": "text", "text": f"--- pagina {p['page']} (immagine) ---"})
                 n_img += 1
             elif text:
-                content.append({"type": "text", "text": f"--- pagina {p['page']} ---\n{text}"})
+                content.append(Prompt(f"--- pagina {p['page']} ---\n{text}",
+                                      is_generated_material(d["path"])).block())
         doc.close()
         used.append(d["path"])
     return content, used
@@ -201,23 +203,29 @@ def build_profile(course_id: int, force: bool = False) -> dict:
         syllabus = _syllabus(db, course_id)
         exams = _past_exams(db, course)
         exam_content, used = _exam_docs_content(db, exams, MAX_EXAM_IMAGES)
-        notes = [r[0] for r in db.execute(
-            "SELECT md_path FROM ai_outputs WHERE kind='lecture_notes' AND course_id=? ORDER BY id", (course_id,))]
-    if not rules and not exams:
+        notes = db.execute(
+            """SELECT DISTINCT md_path, ocr_source FROM ai_outputs
+               WHERE kind='lecture_notes' AND course_id=? ORDER BY id""", (course_id,)).fetchall()
+    if not rules.text and not exams:
         raise ValueError("Nessuna regola d'esame né appello passato trovati per questo corso: "
                          "metti i testi degli appelli in appelli/ o sincronizza il corso da Moodle.")
-    note_titles = []
-    for p in dict.fromkeys(notes):
-        f = uni_path(p)
-        if f.exists():
-            note_titles.append(f.read_text(encoding="utf-8").splitlines()[0].lstrip("# "))
-    intro = (f"Corso: {course['fullname']}\n\n=== Regole d'esame ufficiali ===\n{rules or '(non disponibili)'}\n\n"
-             f"=== Programma / registro lezioni ===\n{syllabus or '(non disponibile)'}\n\n"
-             + ("=== Lezioni già studiate (appunti) ===\n" + "\n".join(f"- {t}" for t in note_titles) + "\n\n" if note_titles else "")
-             + f"Appelli passati forniti: {len(exams)}.")
-    content = [{"type": "text", "text": intro}, *exam_content,
+    note_titles = {}
+    for note in notes:
+        f = uni_path(note["md_path"])
+        if f.exists() and (f not in note_titles or note["ocr_source"]):
+            note_body = Prompt.read_markdown(f, bool(note["ocr_source"]))
+            title = note_body.text.partition("\n")[0].lstrip("# ")
+            note_titles[f] = note_body.with_text(f"- {title}")
+    intro: list[str | Prompt] = [f"Corso: {course['fullname']}", "=== Regole d'esame ufficiali ===",
+                                 rules if rules.text else "(non disponibili)",
+                                 f"=== Programma / registro lezioni ===\n{syllabus or '(non disponibile)'}"]
+    if note_titles:
+        intro.append(Prompt.join(["=== Lezioni già studiate (appunti) ===", *note_titles.values()], separator="\n"))
+    intro.append(f"Appelli passati forniti: {len(exams)}.")
+    introduction = Prompt.join(intro)
+    content = [introduction.block(), *exam_content,
                {"type": "text", "text": "\nProduci il profilo d'esame secondo lo schema."}]
-    h = hashlib.sha256(json.dumps([PROFILE_VERSION, intro, used], ensure_ascii=False).encode()).hexdigest()
+    h = hashlib.sha256(json.dumps([PROFILE_VERSION, introduction.text, used], ensure_ascii=False).encode()).hexdigest()
     jp, mp = profile_paths(course)
     if jp.exists() and not force:
         try:
@@ -226,13 +234,13 @@ def build_profile(course_id: int, force: bool = False) -> dict:
                 return {**old, "cached": True}
         except Exception:
             pass
-    text_prompt = "\n\n".join(b["text"] for b in content if b.get("type") == "text" and "text" in b)
-    res = run_json(PROFILE_SYSTEM, text_prompt, PROFILE_SCHEMA, quality="accurato")
+    prompt = Prompt.from_blocks(content)
+    res = run_json(PROFILE_SYSTEM, prompt, PROFILE_SCHEMA, quality="accurato")
     payload = {**res.data, "course_id": course_id, "input_hash": h, "sources": used, "model": res.model,
-               "created_at": _now(), "prompt_version": PROFILE_VERSION}
+               "created_at": _now(), "prompt_version": PROFILE_VERSION, "ocr_source": prompt.ocr_source}
     jp.parent.mkdir(parents=True, exist_ok=True)
     jp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-    mp.write_text(_profile_md(res.data, course), encoding="utf-8")
+    Prompt(_profile_md(res.data, course), prompt.ocr_source).write_markdown(mp)
     return {**payload, "cached": False, "utilization": getattr(res, "utilization", 1.0)}
 
 
@@ -276,15 +284,17 @@ def generate_sim(course_id: int) -> dict:
         exams = _past_exams(db, course)[:1]  # 1 appello recente come riferimento di stile
         exam_content, _ = _exam_docs_content(db, exams, 2)
     slim = {k: profile[k] for k in ("formato", "argomenti", "esercizi_tipo", "teoria_richiesta")}
-    content = [{"type": "text", "text": f"Corso: {course['fullname']}\n\n=== Regole d'esame ===\n{rules}\n\n"
-                                        f"=== Profilo d'esame ===\n{json.dumps(slim, ensure_ascii=False)}"},
+    content = [Prompt.join([f"Corso: {course['fullname']}\n\n=== Regole d'esame ===\n", rules,
+                            Prompt(f"\n\n=== Profilo d'esame ===\n{json.dumps(slim, ensure_ascii=False)}",
+                                   bool(profile.get("ocr_source", True)))], separator="").block(),
                *exam_content, {"type": "text", "text": "\nCrea una simulazione d'esame completa e bilanciata (3-4 quesiti/esercizi essenziali) secondo lo schema."}]
-    text_prompt = "\n\n".join(b["text"] for b in content if b.get("type") == "text" and "text" in b)[:10000]
-    res = run_json(SIM_SYSTEM, text_prompt, SIM_SCHEMA, quality="accurato")
+    prompt = Prompt.from_blocks(content, limit=10000)
+    res = run_json(SIM_SYSTEM, prompt, SIM_SCHEMA, quality="accurato")
     with session() as db:
-        sid = db.execute("INSERT INTO exam_sims (course_id, title, duration_min, content, created_at) VALUES (?,?,?,?,?)",
+        sid = db.execute("""INSERT INTO exam_sims (course_id, title, duration_min, content, created_at, ocr_source)
+                            VALUES (?,?,?,?,?,?)""",
                          (course_id, res.data["titolo"], res.data["durata_min"],
-                          json.dumps(res.data, ensure_ascii=False), _now())).lastrowid
+                          json.dumps(res.data, ensure_ascii=False), _now(), prompt.ocr_source)).lastrowid
     return {"id": sid, "utilization": getattr(res, "utilization", 1.0)}
 
 
@@ -307,6 +317,8 @@ def get_sim(sim_id: int, with_solutions: bool = False) -> dict:
     if not with_solutions:
         data["domande"] = [{k: v for k, v in q.items() if k not in ("corretta", "soluzione_md", "criteri_md")}
                            for q in data["domande"]]
+    else:
+        data["ocr_source"] = bool(row["ocr_source"])
     return {"id": row["id"], "course_id": row["course_id"], **data, "attempts": attempts}
 
 
@@ -356,8 +368,9 @@ def _grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None, subm
     sim = get_sim(sim_id, with_solutions=True)
     with session() as db:
         rules = _exam_rules(db, sim["course_id"])
-    content: list[dict] = [{"type": "text", "text": f"=== Regole d'esame ufficiali ===\n{rules}\n\n"
-                                                    f"=== Prova: {sim['titolo']} ===\n{sim['istruzioni_md']}"}]
+    content = [Prompt.join(["=== Regole d'esame ufficiali ===\n", rules,
+                            Prompt(f"\n\n=== Prova: {sim['titolo']} ===\n{sim['istruzioni_md']}",
+                                   sim["ocr_source"])], separator="").block()]
     n_img = n_requested = 0
     for i, q in enumerate(sim["domande"]):
         a = answers[i] if i < len(answers) else {}
@@ -375,7 +388,7 @@ def _grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None, subm
             head += (f"Opzioni: {q['opzioni']}\nRisposta dello studente: "
                      f"{'nessuna' if scelta is None else q['opzioni'][scelta]} → {'CORRETTA' if ok else 'ERRATA'}"
                      " (già verificata: assegna tutti i punti se corretta, 0 altrimenti)")
-            content.append({"type": "text", "text": head})
+            content.append(Prompt(head, sim["ocr_source"]).block())
             continue
         foto = [u for u in (a.get("immagini") or []) if isinstance(u, str)][:MAX_PHOTOS_PER_ANSWER]
         n_requested += len(foto)
@@ -384,7 +397,7 @@ def _grade_sim(sim_id: int, answers: list[dict], elapsed_min: float | None, subm
         head += f"Risposta dello studente (testo): {a.get('testo') or '(nessun testo)'}"
         if foto:
             head += f"\nFoto dello svolgimento allegate dallo studente: {len(foto)} (di cui leggibili: {len(pronte)})."
-        content.append({"type": "text", "text": head})
+        content.append(Prompt(head, sim["ocr_source"]).block())
         content.extend(pronte)
     content.append({"type": "text", "text": "\nCorreggi la prova secondo lo schema."})
     res = run_json_content(GRADE_SYSTEM, content, GRADE_SCHEMA, quality="veloce", kind="exam_answers")

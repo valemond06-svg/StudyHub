@@ -53,13 +53,15 @@ def import_from_notes(course_id: int | None = None) -> int:
             if not path.exists():
                 continue
             data = json.loads(path.read_text(encoding="utf-8"))
+            ocr_source = bool(out["ocr_source"] or data.get("ocr_source"))
             for fc in data.get("flashcard", []):
                 card = Card()
                 cur = db.execute(
                     """INSERT OR IGNORE INTO flashcards (course_id, lecture_id, front, back, t_start, origin, origin_key,
-                                                         fsrs, due, created_at) VALUES (?,?,?,?,?,'ai',?,?,?,?)""",
+                                                         fsrs, due, created_at, ocr_source)
+                       VALUES (?,?,?,?,?,'ai',?,?,?,?,?)""",
                     (out["course_id"], out["target_id"], fc["fronte"], fc["retro"], fc.get("inizio_s"),
-                     _key(out["target_id"], fc["fronte"]), card.to_json(), _iso(card.due), _now_iso()))
+                     _key(out["target_id"], fc["fronte"]), card.to_json(), _iso(card.due), _now_iso(), ocr_source))
                 added += cur.rowcount
     return added
 
@@ -67,6 +69,7 @@ def import_from_notes(course_id: int | None = None) -> int:
 def _public(row: Row) -> dict:
     card = dict(row)
     card.pop("fsrs")
+    card.pop("ocr_source")
     card["suspended"] = bool(card["suspended"])
     card["url_hint"] = sources.url_hint(card["lecture_id"], card["t_start"], card["doc_id"], card["page"])
     return card
@@ -101,10 +104,10 @@ def _insert(db: Connection, values: dict, origin: str, attempt_id: int | None = 
     card = Card()
     card_id = db.execute(
         """INSERT INTO flashcards (course_id, lecture_id, doc_id, t_start, page, front, back,
-                                   origin, attempt_id, fsrs, due, created_at)
+                                   origin, attempt_id, fsrs, due, created_at, ocr_source)
            VALUES (:course_id, :lecture_id, :doc_id, :t_start, :page, :front, :back,
-                   :origin, :attempt_id, :fsrs, :due, :created_at)""",
-        dict(values, origin=origin, attempt_id=attempt_id, fsrs=card.to_json(),
+                   :origin, :attempt_id, :fsrs, :due, :created_at, :ocr_source)""",
+        dict(values, origin=origin, attempt_id=attempt_id, fsrs=card.to_json(), ocr_source=values.get("ocr_source", 0),
              due=_iso(card.due), created_at=_now_iso()),
     ).lastrowid
     return _get(db, card_id)
@@ -120,13 +123,14 @@ def from_error(attempt_id: int) -> dict:
     with session() as db:
         db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            """SELECT a.score, i.course_id, i.prompt_md AS front, i.answer_md AS back,
+            """SELECT a.score, i.course_id, i.prompt_md AS front, i.answer_md AS back, t.ocr_source,
                       l.id AS lecture_id, d.id AS doc_id,
                       CASE WHEN l.id IS NOT NULL AND typeof(i.t_start) IN ('real', 'integer')
                                 AND i.t_start >= 0 THEN i.t_start END AS t_start,
                       CASE WHEN d.id IS NOT NULL AND typeof(i.page)='integer'
                                 AND i.page >= 1 THEN i.page END AS page
                FROM study_attempts a JOIN study_items i ON i.id=a.item_id
+               JOIN study_topics t ON t.id=i.topic_id
                JOIN study_sessions s ON s.id=a.session_id AND s.course_id=i.course_id
                LEFT JOIN lectures l ON l.id=i.lecture_id AND l.course_id=i.course_id
                LEFT JOIN documents d ON d.id=i.doc_id AND d.course_id=i.course_id
@@ -162,12 +166,14 @@ def delete(card_id: int) -> None:
             raise LookupError("Flashcard non trovata")
 
 
-def due_cards(course_id: int | None = None, limit: int = 50) -> list[dict]:
+def due_cards(course_id: int | None = None, limit: int = 50, *, include_ocr: bool = True) -> list[dict]:
     with session() as db:
         sql = """SELECT f.*, l.title AS lecture_title, c.fullname AS course FROM flashcards f
                  LEFT JOIN lectures l ON l.id=f.lecture_id LEFT JOIN courses c ON c.id=f.course_id
                  WHERE f.suspended=0 AND f.due <= ?"""
         params: list = [_now_iso()]
+        if not include_ocr:
+            sql += " AND f.ocr_source=0"
         if course_id is not None:
             sql += " AND f.course_id=?"
             params.append(course_id)

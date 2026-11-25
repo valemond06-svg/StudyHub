@@ -113,6 +113,35 @@ describe("Quaderno e flashcard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tutte le note" }))
     expect(await screen.findByText("Nessuna nota corrisponde ai filtri.")).toBeDefined()
   })
+  it("annulla la conferma pendente quando si torna dal dettaglio alla lista", async () => {
+    backend((route) => {
+      if (route === "GET /api/notes/4") return Response.json(f.note)
+      if (route.startsWith("GET /api/notes?")) return Response.json({ notes: [{ ...f.note, id: 8, body: "Altra nota" }] })
+    })
+    mount(<Quaderno />, "/quaderno?nota=4")
+    fireEvent.click(await screen.findByRole("button", { name: "Elimina" }))
+    expect(screen.getByRole("button", { name: "Conferma eliminazione" })).toBeDefined()
+    fireEvent.click(screen.getByRole("button", { name: "Tutte le note" }))
+    expect(await screen.findByText("Altra nota")).toBeDefined()
+    expect(screen.queryByRole("button", { name: "Conferma eliminazione" })).toBeNull()
+    expect((screen.getByRole("button", { name: "Elimina" }) as HTMLButtonElement).disabled).toBe(false)
+    expect((screen.getByRole("button", { name: "Modifica" }) as HTMLButtonElement).disabled).toBe(false)
+    expect(calls.every(({ route }) => !route.startsWith("DELETE"))).toBe(true)
+  })
+  it("apre la lista filtrata quando si sceglie un tag nel dettaglio", async () => {
+    const [tag] = f.note.tags
+    backend((route) => {
+      if (route === "GET /api/notes/4") return Response.json(f.note)
+      if (route.startsWith("GET /api/notes?") && route.includes(`tag=${tag}`)) {
+        return Response.json({ notes: [{ ...f.note, id: 8, body: "Nota con lo stesso tag" }] })
+      }
+    })
+    mount(<Quaderno />, "/quaderno?nota=4")
+    fireEvent.click(await screen.findByRole("button", { name: tag }))
+    expect(await screen.findByText("Nota con lo stesso tag")).toBeDefined()
+    expect((screen.getByPlaceholderText("Tutti i tag") as HTMLInputElement).value).toBe(tag)
+    expect(screen.queryByRole("button", { name: "Tutte le note" })).toBeNull()
+  })
   it("precompila la fonte dal player, mostra LaTeX e salva la nota", async () => {
     backend((route) => {
       if (route.startsWith("GET /api/notes?")) return Response.json({ notes: [f.note] })

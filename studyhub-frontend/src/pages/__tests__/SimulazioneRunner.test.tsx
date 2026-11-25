@@ -81,11 +81,14 @@ describe("SimulazioneRunner", () => {
   let queryClient: QueryClient
 
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     window.localStorage.clear()
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   })
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
 
   it("mostra le istruzioni prima: il timer parte solo da 'Inizia la prova'", async () => {
     vi.mocked(api.getSimulation).mockResolvedValueOnce(mockSimulation)
@@ -166,6 +169,36 @@ describe("SimulazioneRunner", () => {
     expect(screen.getByText("Quesito 2 di 2")).toBeDefined()
     expect((screen.getByPlaceholderText(/Scrivi qui la spiegazione/) as HTMLTextAreaElement).value).toBe("y(t) = ...")
     expect(screen.getByText(/2 di 2 risposte completate/)).toBeDefined()
+  })
+
+  it("blocca testo, foto e scelte dopo un errore HTTP e ripete la stessa consegna dopo la ricarica", async () => {
+    let now = Date.now()
+    vi.spyOn(Date, "now").mockImplementation(() => now)
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      startedAt: now - 600_000, deadline: now + 3_000_000, selected: 1, submissionId: "risposta-http-persa",
+      answers: { 0: { testo: "", scelta: 2, immagini: [] }, 1: { testo: "Prima risposta", scelta: null, immagini: ["data:image/png;base64,dGVzdA=="] } },
+    }))
+    vi.mocked(api.getSimulation).mockResolvedValue(mockSimulation)
+    vi.mocked(api.submitSimulation).mockRejectedValueOnce(new Error("Risposta HTTP persa")).mockResolvedValueOnce(grading)
+    const first = renderRunner(queryClient)
+    fireEvent.click((await screen.findAllByText("Consegna Esame"))[0])
+    fireEvent.click(screen.getByText("Conferma e Consegna"))
+    expect(await screen.findByText("Consegna non riuscita.")).toBeDefined()
+    const firstCall = vi.mocked(api.submitSimulation).mock.calls[0]
+    expect(firstCall[2]).toBe(10)
+    expect((screen.getByPlaceholderText(/Scrivi qui la spiegazione/) as HTMLTextAreaElement).disabled).toBe(true)
+    expect(first.container.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(true)
+    first.unmount()
+
+    now += 1_200_000
+    renderRunner(new QueryClient({ defaultOptions: { queries: { retry: false } } }))
+    expect(await screen.findByText("Consegna in attesa di conferma.")).toBeDefined()
+    expect((screen.getByPlaceholderText(/Scrivi qui la spiegazione/) as HTMLTextAreaElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole("button", { name: "Precedente" }))
+    expect((screen.getByRole("button", { name: /Tutti i poli/ }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole("button", { name: "Riprova la consegna" }))
+    expect(await screen.findByText("Prova Superata")).toBeDefined()
+    expect(vi.mocked(api.submitSimulation).mock.calls[1]).toEqual(firstCall)
   })
 
   it("allo zero consegna da sola, anche se riapri la pagina dopo la scadenza", async () => {

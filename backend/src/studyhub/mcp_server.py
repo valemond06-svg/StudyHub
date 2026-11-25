@@ -12,6 +12,7 @@ import json
 import pymupdf
 from mcp.server.mcpserver import MCPServer
 
+from .ai.prompt import Prompt, is_generated_material
 from .db import session
 from .paths import uni_path
 
@@ -98,10 +99,11 @@ def search_material(query: str, course: str | None = None, limit: int = 8) -> li
     res = search(query, [c["id"]] if c else None, limit=max(1, min(limit, 20)))["results"]
     with session() as db:
         texts = {r[0]: r[1] for r in db.execute(
-            f"SELECT id, text FROM chunks WHERE id IN ({','.join('?' * len(res)) or 'NULL'})", [r["id"] for r in res])}
+            f"SELECT id, text FROM chunks WHERE ocr_source=0 AND id IN ({','.join('?' * len(res)) or 'NULL'})",
+            [r["id"] for r in res])}
     return [{"fonte": r["title"], "corso": r["course"], "tipo": r["kind"], "pagina": r["page"],
              "minuto": _mmss(r["t_start"]), "lecture_id": r["lecture_id"], "doc_id": r["doc_id"],
-             "testo": texts.get(r["id"], "")[:1800]} for r in res]
+             "testo": texts[r["id"]][:1800]} for r in res if r["id"] in texts]
 
 
 @server.tool()
@@ -120,11 +122,13 @@ def list_lectures(course: str) -> list[dict]:
 def get_lecture_notes(lecture_id: int) -> str:
     """Appunti AI completi di una lezione (Markdown + LaTeX, con timestamp ▶ mm:ss)."""
     with session() as db:
-        row = db.execute("SELECT md_path FROM ai_outputs WHERE kind='lecture_notes' AND target_id=? ORDER BY id DESC LIMIT 1",
+        row = db.execute("""SELECT md_path, ocr_source FROM ai_outputs
+                            WHERE kind='lecture_notes' AND target_id=? ORDER BY id DESC LIMIT 1""",
                          (lecture_id,)).fetchone()
     if not row:
         return "Appunti non ancora generati per questa lezione: usa get_transcript."
-    return uni_path(row[0]).read_text(encoding="utf-8")
+    notes = Prompt.read_markdown(uni_path(row["md_path"]), bool(row["ocr_source"]))
+    return "Appunti disponibili in StudyHub." if notes.ocr_source else notes.text
 
 
 @server.tool()
@@ -148,6 +152,8 @@ def get_document_page(doc_id: int, page: int) -> str:
         d = db.execute("SELECT path, kind, n_pages FROM documents WHERE id=?", (doc_id,)).fetchone()
     if not d or d["kind"] != "pdf":
         raise ValueError("Documento PDF non trovato")
+    if is_generated_material(d["path"]):
+        return "Documento disponibile in StudyHub."
     doc = pymupdf.open(uni_path(d["path"]))
     try:
         text = doc[page - 1].get_text("text").strip()
@@ -156,16 +162,22 @@ def get_document_page(doc_id: int, page: int) -> str:
     if text:
         return text
     with session() as db:  # scansione: vale la trascrizione salvata nell'indice
-        rows = db.execute("SELECT text FROM chunks WHERE doc_id=? AND page=? ORDER BY id", (doc_id, page)).fetchall()
+        rows = db.execute("SELECT text FROM chunks WHERE doc_id=? AND page=? AND ocr_source=0 ORDER BY id",
+                          (doc_id, page)).fetchall()
     return "\n".join(r[0] for r in rows) or "(pagina senza testo: probabilmente una scansione o una figura)"
 
 
 @server.tool()
 def get_exam_profile(course: str) -> str:
     """Profilo d'esame del corso: formato, argomenti per frequenza, esercizi tipo, teoria richiesta."""
+    from .study.exam import get_profile, profile_paths
     c = _course(course)
-    p = uni_path(c["folder"]) / "studio_ai" / "profilo_esame.md"
-    return p.read_text(encoding="utf-8") if p.exists() else "Profilo d'esame non ancora creato (StudyHub → Oggi → corso)."
+    _, p = profile_paths(c)
+    if not p.exists():
+        return "Profilo d'esame non ancora creato (StudyHub → Oggi → corso)."
+    profile = get_profile(c["id"]) or {}
+    out = Prompt.read_markdown(p, bool(profile.get("ocr_source", True)))
+    return "Profilo d'esame disponibile in StudyHub." if out.ocr_source else out.text
 
 
 @server.tool()
@@ -181,7 +193,7 @@ def due_flashcards(course: str | None = None, limit: int = 20) -> list[dict]:
     from .study.flashcards import due_cards
     c = _course(course)
     return [{"id": x["id"], "fronte": x["front"], "retro": x["back"], "lezione": x["lecture_title"]}
-            for x in due_cards(c["id"] if c else None, max(1, min(limit, 100)))]
+            for x in due_cards(c["id"] if c else None, max(1, min(limit, 100)), include_ocr=False)]
 
 
 @server.tool()
