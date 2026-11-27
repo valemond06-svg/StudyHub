@@ -92,6 +92,7 @@ def run(max_unita: int = 0, workers: int = 0, dry_run: bool = False) -> int:
 
     with ThreadPoolExecutor(max_workers=llm.effective_workers()) as pool:
         list(pool.map(una, coda))
+    settings.extra.pop("modal_only", None)  # l'ordine del corso può contenere OCR privato: allora va al locale
     for cid in corsi:  # argomenti nuovi: si rifà l'ordine didattico del corso
         try:
             order_course(cid)
