@@ -1,4 +1,4 @@
-"""Chiave fuori dal codice e foto verso i modelli con vista (rete simulata)."""
+﻿"""Chiave fuori dal codice e foto verso i modelli con vista (rete simulata)."""
 import base64
 import io
 import json
@@ -123,7 +123,7 @@ def test_doctor_segnala_la_chiave_senza_mostrarla(rete, monkeypatch):
     monkeypatch.setenv("STUDYHUB_LOCAL_LLM_KEY", "segretissima")
     rete.su(TAILSCALE, health=401, models=401)
     ok, detail = doctor.check_modello_locale()
-    assert not ok and "chiave" in detail and "100.83.194.37" in detail and "segretissima" not in detail
+    assert not ok and "chiave" in detail and "100.69.165.69" in detail and "segretissima" not in detail
 
 
 # --- rilevazione della vista ----------------------------------------------------------------

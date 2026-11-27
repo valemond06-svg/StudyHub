@@ -255,3 +255,25 @@ def test_conta_vuoto_da_cli(turno_finto):
     r = CliRunner().invoke(app, ["notte", "--conta"])
     assert r.exit_code == 0, r.output
     assert json.loads(r.output.strip().splitlines()[-1]) == {"trascrizioni": 0, "unita": 0}
+
+
+def test_llm_risponde_manda_la_chiave(monkeypatch):
+    """Il 35B del fisso sta sulla 8080 con chiave: senza Authorization la sonda della notte prendeva 401."""
+    import urllib.request
+
+    viste = []
+
+    class _Ok:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def apri(req, timeout=0):
+        viste.append((req.full_url, req.get_header("Authorization")))
+        return _Ok()
+
+    monkeypatch.setenv("STUDYHUB_LOCAL_LLM_KEY", "segreta-x")
+    monkeypatch.setattr(urllib.request, "urlopen", apri)
+    assert notte.llm_risponde("http://100.69.165.69:8080")
+    assert viste == [("http://100.69.165.69:8080/v1/models", "Bearer segreta-x")]
+

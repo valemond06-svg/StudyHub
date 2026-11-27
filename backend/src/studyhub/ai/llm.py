@@ -1,4 +1,4 @@
-"""Un'unica funzione per le chiamate AI "da studio", con tre provider in cascata:
+﻿"""Un'unica funzione per le chiamate AI "da studio", con tre provider in cascata:
 
 - Local LLM Cluster (PC Fisso Linux Qwen3.6-35B-A3B / Laptop via Cavo Diretto, LAN, Tailscale o Proxy):
   zero costi, 100% offline, privacy totale e velocità locale (~13 tok/s).
@@ -42,7 +42,7 @@ CLAUDE_MODELS = {"veloce": "haiku", "accurato": "sonnet"}
 # Due macchine possono servire il modello:
 #  - il laptop Windows: router llama.cpp su 127.0.0.1:8080 (API OpenAI su /v1, modello "local", niente
 #    chiave; il modello si carica alla prima richiesta, quindi la prima risposta può tardare 20-30 s);
-#  - il PC fisso: 100.83.194.37 (Tailscale) o 10.10.10.1 (cavo diretto), porta 8080 con chiave
+#  - il PC fisso: 100.69.165.69 (Tailscale) o 10.10.10.1 (cavo diretto), porta 8080 con chiave
 #    e 8081 (backend senza router).
 # Ordine: l'indirizzo scelto da te (config/variabile d'ambiente), poi questa stessa macchina, poi il cavo,
 # poi Tailscale e LAN. Su ogni macchina quindi vince il modello più vicino; se cade si passa al successivo.
@@ -50,13 +50,13 @@ LOCAL_CANDIDATES = (
     "http://127.0.0.1:8080",
     "http://10.10.10.1:8080",
     "http://10.10.10.1:8081",
-    "http://100.83.194.37:8080",
-    "http://192.168.10.89:8080",
+    "http://100.69.165.69:8080",
+    "http://192.168.10.12:8080",
     "http://127.0.0.1:8081",
-    "http://100.83.194.37:8081",
-    "http://192.168.10.89:8081",
+    "http://100.69.165.69:8081",
+    "http://192.168.10.12:8081",
 )
-FALLBACK_LOCAL_URL = "http://100.83.194.37:8080"   # ultima spiaggia se nessun controllo di salute risponde
+FALLBACK_LOCAL_URL = "http://100.69.165.69:8080"   # ultima spiaggia se nessun controllo di salute risponde
 LOCAL_MODEL = "local"                              # alias del router Windows; il router Linux lo mappa su Qwen 35B
 HEALTH_TIMEOUT_S = 1.0                             # controllo di salute: breve, i candidati si provano in parallelo
 CACHE_OK_S = 300.0                                 # un candidato sano resta valido 5 minuti (o fino al primo errore)

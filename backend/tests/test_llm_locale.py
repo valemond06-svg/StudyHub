@@ -1,4 +1,4 @@
-"""Scelta e uso del modello locale, con la rete simulata (nessuna connessione vera)."""
+﻿"""Scelta e uso del modello locale, con la rete simulata (nessuna connessione vera)."""
 import io
 import json
 import threading
@@ -13,7 +13,7 @@ from studyhub.ai.claude_runner import ClaudeError
 LAPTOP = "http://127.0.0.1:8080"
 CAVO = "http://10.10.10.1:8080"
 CAVO_BACKEND = "http://10.10.10.1:8081"
-TAILSCALE = "http://100.83.194.37:8080"
+TAILSCALE = "http://100.69.165.69:8080"
 
 RISPOSTA_OK = {"model": "qwen-test", "choices": [{"message": {"content": '{"x": 1}'}}]}
 

@@ -22,6 +22,9 @@ os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(LOCAL_DIR / "ms-playwright
 log = logging.getLogger(__name__)
 
 
+_keyring_avvisato = False
+
+
 def _get_keyring():
     """Restituisce un backend keyring (Windows Credential Manager / Linux Secret Service).
     Fallback a file se keyring non disponibile (log warning)."""
@@ -29,7 +32,10 @@ def _get_keyring():
         import keyring
         return keyring
     except Exception as e:
-        log.warning("Keyring non disponibile: %s. Uso fallback file.", e)
+        global _keyring_avvisato
+        if not _keyring_avvisato:  # una volta per processo: prima era una riga a ogni lettura di segreto
+            _keyring_avvisato = True
+            log.warning("Keyring non disponibile: %s. Uso fallback file.", e)
         return None
 
 

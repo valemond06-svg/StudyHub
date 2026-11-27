@@ -6,7 +6,7 @@ FastAPI serve l'interfaccia React alla radice `/` dalla build in `studyhub-front
 
 Per un'installazione locale prepara Node.js con npm ed esegui `installa.ps1`. Lo script sincronizza il venv in `%USERPROFILE%\.studyhub\venv`, installa Chromium per Playwright, prepara la build React e crea o aggiorna `StudyHub.lnk` sul desktop. Il collegamento esegue `apri_studyhub.vbs`, che avvia `studyhub.bat serve --no-open` in background e apre `http://127.0.0.1:8765` in una finestra app. `start.bat` offre anche l'avvio nel browser. Usa `aggiorna.bat` per il pull e il setup, con una nuova build quando cambiano gli input del frontend o manca la build.
 
-Per usare il server del PC fisso dal client Windows, apri l'interfaccia tramite la connessione sulla rete privata. `collega_al_fisso.bat` prova i collegamenti configurati via cavo, Wi-Fi e Tailscale sulla porta 8765.
+Dal 27/11/2026 il server StudyHub (DB, interfaccia, Whisper su GPU) gira sul laptop Windows; il PC fisso (`100.69.165.69` su Tailscale, `10.10.10.1` sul cavo diretto) fa solo da motore AI: serve il Qwen 35B sulla porta 8080 con chiave (`LOCAL_LLM_API_KEY`). Il backend sceglie da solo il primo server sano tra i candidati di `ai/llm.py` (laptop, cavo, Tailscale, LAN); per forzarne uno usa `STUDYHUB_LOCAL_LLM` o `local_llm_url` in `config.yaml`. La sezione seguente resta valida solo se si vuole di nuovo il server sul fisso.
 
 ## PC fisso Linux come server
 

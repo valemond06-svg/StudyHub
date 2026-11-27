@@ -65,13 +65,19 @@ class Esito:
 
 def llm_url() -> str:
     from .config import settings
-    return str(os.environ.get("STUDYHUB_LOCAL_LLM_URL") or settings.extra.get("local_llm_url") or DEFAULT_LLM_URL).rstrip("/")
+    scelto = os.environ.get("STUDYHUB_LOCAL_LLM_URL") or settings.extra.get("local_llm_url")
+    if not scelto:
+        from .ai import llm
+        scelto = llm.get_local_llm_url() or DEFAULT_LLM_URL  # cavo/tailnet del fisso, poi il laptop
+    return str(scelto).rstrip("/")
 
 
 def llm_risponde(url: str) -> bool:
-    """Come notte.sh: GET {url}/v1/models deve dare 200."""
+    """Come notte.sh: GET {url}/v1/models deve dare 200 (con la chiave se il server la vuole)."""
+    from .ai import llm
     try:
-        with urllib.request.urlopen(f"{url}/v1/models", timeout=10) as r:
+        req = urllib.request.Request(f"{url}/v1/models", headers=llm._auth_headers(llm._norm(url)))
+        with urllib.request.urlopen(req, timeout=10) as r:
             return r.status == 200
     except Exception:
         return False
