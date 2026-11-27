@@ -14,9 +14,17 @@ def ffmpeg() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def run(*args: str | Path, check: bool = True) -> subprocess.CompletedProcess:
+DOWNLOAD_STALL_US = 60_000_000  # -rw_timeout: 60 s senza dati dalla rete → ffmpeg si arrende
+DOWNLOAD_MAX_S = 3 * 3600       # tetto complessivo: un flusso che scorre a goccia non blocca il giro
+
+
+def run(*args: str | Path, check: bool = True, timeout: float | None = None) -> subprocess.CompletedProcess:
     cmd = [ffmpeg(), "-hide_banner", "-nostdin", *map(str, args)]
-    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"ffmpeg fermato dopo {timeout:.0f}s senza finire") from e
     if check and res.returncode != 0:
         raise RuntimeError(f"ffmpeg fallito ({res.returncode}): {res.stderr[-800:]}")
     return res
@@ -41,6 +49,11 @@ def download(url: str, dest: Path) -> Path:
     """Copia un flusso (MP4 progressivo o HLS) in un file locale senza ricodifica."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".part" + dest.suffix)
-    run("-y", "-i", url, "-c", "copy", "-f", "mp4", tmp)
+    net = ["-rw_timeout", str(DOWNLOAD_STALL_US)] if str(url).startswith(("http://", "https://")) else []
+    try:
+        run("-y", *net, "-i", url, "-c", "copy", "-f", "mp4", tmp, timeout=DOWNLOAD_MAX_S)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     tmp.replace(dest)
     return dest
