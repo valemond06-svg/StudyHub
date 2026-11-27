@@ -73,7 +73,7 @@ MAX_LOCAL_ATTEMPTS = 3
 # `modal_in_auto: true`; di solito si usa con `studyhub turbo` (ai_provider=modal nel solo processo).
 MODAL_TIMEOUT_S = 1800                 # la risposta può arrivare dopo vari redirect 303 da 150 s di Modal
 MODAL_WORKERS_DEFAULT = 12             # vLLM regge decine di richieste insieme
-MODAL_MODEL_DEFAULT = "gptoss-120b"
+MODAL_MODEL_DEFAULT = "qwen38-27b"     # banco prova 27/11: miglior open (6,0 vs Gemini 7,8)
 
 _cache: dict = {"url": None, "at": -1e9, "ttl": 0.0, "candidates": ()}
 _cache_lock = threading.Lock()

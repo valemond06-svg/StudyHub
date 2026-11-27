@@ -74,7 +74,7 @@ def test_ocr_va_a_modal_ma_non_a_gemini(modal_on):
     assert modal_on[0]["url"] == "https://esempio.modal.run/v1/chat/completions"
     assert modal_on[0]["auth"] == "Bearer chiave-finta"
     assert corpo["response_format"]["json_schema"]["strict"] is True
-    assert corpo["reasoning_effort"] == "medium"
+    assert corpo["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 def test_trascrizioni_e_privati_restano_a_casa(modal_on, monkeypatch):
@@ -107,13 +107,13 @@ def test_troncata_due_volte_e_errore(modal_on, monkeypatch):
         llm._modal("sys", "x", SCHEMA, "accurato")
 
 
-def test_qwen_senza_ragionamento(modal_on, monkeypatch):
-    monkeypatch.setenv("STUDYHUB_MODAL_MODEL", "qwen38-27b")
+def test_gptoss_con_sforzo_di_ragionamento(modal_on, monkeypatch):
+    monkeypatch.setenv("STUDYHUB_MODAL_MODEL", "gptoss-120b")
     llm._modal("sys", "x", SCHEMA, "veloce")
     corpo = modal_on[0]["body"]
-    assert corpo["model"] == "qwen38-27b"
-    assert corpo["chat_template_kwargs"] == {"enable_thinking": False}
-    assert "reasoning_effort" not in corpo
+    assert corpo["model"] == "gptoss-120b"
+    assert corpo["reasoning_effort"] == "low"
+    assert "chat_template_kwargs" not in corpo
 
 
 def test_redirect_303_seguiti_a_lungo():
