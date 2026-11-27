@@ -66,6 +66,15 @@ _LOCAL_TIMEOUT_SENTINELLA = 600
 LOCAL_TIMEOUT_DEFAULT_S = 1200                     # generazioni lunghe: timeout di lettura (35B su 1 slot)
 MAX_LOCAL_ATTEMPTS = 3
 
+# --- GPU Modal (server vLLM nostro, decisione 27/11/2026) ----------------------------------------
+# Container nostro su GPU in affitto: nessun fornitore di modelli di mezzo, nessun log delle richieste.
+# Per la privacy vale come «GPU privata»: ammesso anche il materiale dei corsi con OCR, ma MAI i job privati
+# (trascrizioni, appunti personali, voti...) né testi con dati sensibili. Costa crediti: in «auto» entra solo con
+# `modal_in_auto: true`; di solito si usa con `studyhub turbo` (ai_provider=modal nel solo processo).
+MODAL_TIMEOUT_S = 1800                 # la risposta può arrivare dopo vari redirect 303 da 150 s di Modal
+MODAL_WORKERS_DEFAULT = 12             # vLLM regge decine di richieste insieme
+MODAL_MODEL_DEFAULT = "gptoss-120b"
+
 _cache: dict = {"url": None, "at": -1e9, "ttl": 0.0, "candidates": ()}
 _cache_lock = threading.Lock()
 _auth_failed: set[str] = set()     # server che rispondono 401/403: chiave mancante o sbagliata (per doctor)
@@ -201,10 +210,14 @@ def provider_order() -> list[str]:
         return ["claude"]
     if pref == "gemini":
         return ["gemini"]
+    if pref == "modal":
+        return ["modal"] if modal_configured() else ["local"]
 
     chain = []
     if _check_local():
         chain.append("local")
+    if settings.extra.get("modal_in_auto") and modal_configured():
+        chain.append("modal")
     if _agy_exe():
         chain.append("gemini")
     chain.append("claude")
@@ -293,7 +306,10 @@ def _server_lock_path(base: str) -> Path:
 def effective_workers(default: int = 2) -> int:
     """Il llama-server del fisso ha 1 slot: con provider locale un solo thread di studio alla volta."""
     try:
-        return 1 if provider_order()[:1] == ["local"] else default
+        first = provider_order()[:1]
+        if first == ["modal"]:
+            return int(settings.extra.get("modal_workers") or MODAL_WORKERS_DEFAULT)
+        return 1 if first == ["local"] else default
     except Exception:
         return default
 
@@ -611,6 +627,90 @@ def _gemini_request(exe: str, system: str, text: str, schema: dict, quality: str
     return LLMResult(data, "gemini", model, round(time.time() - t0, 1))
 
 
+def _modal_key() -> str:
+    k = os.environ.get("STUDYHUB_MODAL_KEY")
+    if k:
+        return k.strip()
+    f = LOCAL_DIR / "secrets" / "modal_llm_key"
+    try:
+        return f.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def modal_url() -> str | None:
+    url = os.environ.get("STUDYHUB_MODAL_URL") or settings.extra.get("modal_llm_url")
+    return url.rstrip("/") if url else None
+
+
+def modal_model() -> str:
+    return os.environ.get("STUDYHUB_MODAL_MODEL") or settings.extra.get("modal_llm_model") or MODAL_MODEL_DEFAULT
+
+
+def modal_configured() -> bool:
+    return bool(modal_url() and _modal_key())
+
+
+def _providers_for(decision, text: str, kind: str | None, private: bool) -> list[str]:
+    """Provider ammessi. Bloccati gli esterni: restano il locale e, se il motivo era solo l'OCR, Modal."""
+    order = provider_order()
+    if decision.allowed:
+        return order
+    allowed = ["local"]
+    if "modal" in order and check_external_allowed("modal", text, kind=kind, private=private).allowed:
+        allowed.append("modal")
+    kept = [p for p in order if p in allowed]
+    return kept or ["local"]
+
+
+class _Redirect303(urllib.request.HTTPRedirectHandler):
+    max_redirections = 40     # Modal risponde 303 ogni 150 s finché la generazione non finisce
+
+
+_modal_opener = urllib.request.build_opener(_Redirect303)
+
+
+def _modal_post(payload: dict) -> dict:
+    req = urllib.request.Request(f"{modal_url()}/v1/chat/completions", data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": f"Bearer {_modal_key()}"})
+    try:
+        with _modal_opener.open(req, timeout=MODAL_TIMEOUT_S) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise ClaudeError(f"Modal: HTTP {e.code}")
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise ClaudeError(f"Modal: {e}")
+
+
+def _modal(system: str, text: str, schema: dict, quality: str) -> LLMResult:
+    """Server vLLM su Modal: stesso prompt del locale, schema JSON vincolato, una ripresa se troncata."""
+    t0 = time.time()
+    model = modal_model()
+    prompt = (
+        f"{system}\n\nNON inserire tag <think> o ragionamenti preliminari. "
+        f"Rispondi ESCLUSIVAMENTE con un oggetto JSON valido conforme a questo schema:\n"
+        f"{json.dumps(schema, ensure_ascii=False)}\n\nTesto di partenza:\n{text}"
+    )
+    payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2,
+               "max_tokens": 10240,
+               "response_format": {"type": "json_schema",
+                                   "json_schema": {"name": "risposta", "schema": schema, "strict": True}}}
+    if model.startswith("qwen"):
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    else:
+        payload["reasoning_effort"] = "low" if quality == "veloce" else "medium"
+    res = _modal_post(payload)
+    if _finish_reason(res) == "length":
+        payload["max_tokens"] = MAX_TOKENS_CAP
+        res = _modal_post(payload)
+        if _finish_reason(res) == "length":
+            raise ClaudeError("Modal: risposta troncata anche con il tetto di token")
+    msg = (res.get("choices") or [{}])[0].get("message", {})
+    data = _extract_json(msg.get("content") or "")
+    return LLMResult(data, "modal", res.get("model") or model, round(time.time() - t0, 1), usage=res.get("usage"))
+
+
 def run_json(system: str, text: str | Prompt, schema: dict, quality: str = "accurato",
              kind: str | None = None, private: bool = False) -> LLMResult:
     """Chiamata con output JSON (schema). quality: veloce (correzioni) | accurato (generazione).
@@ -619,11 +719,12 @@ def run_json(system: str, text: str | Prompt, schema: dict, quality: str = "accu
         kind: Tipo di job per privacy (es. "exam_answers", "transcript", "personal_notes")
         private: Forza modalità privata (solo provider locali)
     """
+    ocr = False
     if isinstance(text, Prompt):
-        private = private or text.ocr_source
+        ocr = text.ocr_source
         text = text.text
-    decision = check_external_allowed("claude", text, kind=kind, private=private)
-    providers = provider_order() if decision.allowed else ["local"]
+    decision = check_external_allowed("claude", text, kind=kind, private=private or ocr)
+    providers = _providers_for(decision, text, kind, private)
     errors = [] if decision.allowed else [decision.reason]
     if not decision.allowed:
         log_provider_selection("claude", decision)
@@ -631,6 +732,8 @@ def run_json(system: str, text: str | Prompt, schema: dict, quality: str = "accu
         try:
             if prov == "local":
                 return _local(system, text, schema, quality)
+            if prov == "modal":
+                return _modal(system, text, schema, quality)
             if prov == "gemini":
                 return _gemini(system, text, schema, quality, kind=kind, private=private)
             log_provider_selection("claude", decision, text)

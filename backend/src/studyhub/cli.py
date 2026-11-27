@@ -303,6 +303,17 @@ def notte(
     raise typer.Exit(run(solo_locale, fino, max_unita, max_trascrizioni, fine_fase_gpu))
 
 
+@app.command("turbo")
+def turbo(
+    max_unita: int = typer.Option(0, help="Massimo di unità da elaborare (0 = tutte quelle in coda)"),
+    workers: int = typer.Option(0, help="Richieste in parallelo (0 = modal_workers o 12)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Conta le unità in coda e esce (niente GPU)"),
+):
+    """Arretrato delle unità-documento sulla GPU Modal (server vLLM nostro, si spegne da solo). Costa crediti Modal."""
+    from .turbo import run
+    raise typer.Exit(run(max_unita, workers, dry_run))
+
+
 @app.command("elabora-tutto")
 def elabora_tutto():
     """Scarica ed elabora COMPLETAMENTE tutti i corsi attivi: Moodle, tutte le registrazioni (Whisper),
