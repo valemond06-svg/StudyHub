@@ -118,3 +118,25 @@ def test_gptoss_con_sforzo_di_ragionamento(modal_on, monkeypatch):
 
 def test_redirect_303_seguiti_a_lungo():
     assert llm._Redirect303.max_redirections >= 20
+
+
+@pytest.mark.parametrize("testo", [
+    "Argomenti GIÀ ESISTENTI nel corso (riusa il nome esatto se è lo stesso):",
+    "Il registro indirizzo di memoria punta alla cella successiva.",
+    "Nome: ________  Cognome: ________  Matricola: ____",   # intestazione vuota di un appello
+    "Chiamare il telefono del laboratorio per info.",
+])
+def test_parole_anagrafiche_senza_valore_non_sono_sensibili(testo):
+    from studyhub.ai.privacy import analyze_sensitivity
+    assert "Dati anagrafici" not in analyze_sensitivity(testo)[1]
+
+
+@pytest.mark.parametrize("testo", [
+    "Nome: Mario  Cognome: Rossi",
+    "Data di nascita 01/02/2003",
+    "Residente in via Roma 12, Verona",
+    "Cellulare: +39 333 1234567",
+])
+def test_dati_anagrafici_compilati_restano_sensibili(testo):
+    from studyhub.ai.privacy import analyze_sensitivity
+    assert analyze_sensitivity(testo)[0] in ("medium", "high")
