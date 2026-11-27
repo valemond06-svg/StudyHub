@@ -73,6 +73,7 @@ MAX_LOCAL_ATTEMPTS = 3
 # `modal_in_auto: true`; di solito si usa con `studyhub turbo` (ai_provider=modal nel solo processo).
 MODAL_TIMEOUT_S = 1800                 # la risposta può arrivare dopo vari redirect 303 da 150 s di Modal
 MODAL_WORKERS_DEFAULT = 12             # vLLM regge decine di richieste insieme
+SOLO_LOCALE = "SOLO_LOCALE: "          # prefisso dell'errore con modal_only quando la privacy esclude Modal
 MODAL_MODEL_DEFAULT = "qwen38-27b"     # banco prova 27/11: miglior open (6,0 vs Gemini 7,8)
 
 _cache: dict = {"url": None, "at": -1e9, "ttl": 0.0, "candidates": ()}
@@ -725,6 +726,9 @@ def run_json(system: str, text: str | Prompt, schema: dict, quality: str = "accu
         text = text.text
     decision = check_external_allowed("claude", text, kind=kind, private=private or ocr)
     providers = _providers_for(decision, text, kind, private)
+    if settings.extra.get("modal_only") and "modal" not in providers:
+        # turbo: le unità che la privacy tiene a casa non vanno in fila al 35B, restano per il turno locale
+        raise ClaudeError(SOLO_LOCALE + (decision.reason or "privacy"))
     errors = [] if decision.allowed else [decision.reason]
     if not decision.allowed:
         log_provider_selection("claude", decision)

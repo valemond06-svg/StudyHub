@@ -140,3 +140,11 @@ def test_parole_anagrafiche_senza_valore_non_sono_sensibili(testo):
 def test_dati_anagrafici_compilati_restano_sensibili(testo):
     from studyhub.ai.privacy import analyze_sensitivity
     assert analyze_sensitivity(testo)[0] in ("medium", "high")
+
+
+def test_modal_only_non_manda_al_locale(modal_on, monkeypatch):
+    settings.extra.update(ai_provider="modal", modal_only=True)
+    monkeypatch.setattr(llm, "_local", lambda *a, **k: pytest.fail("non deve andare al locale"))
+    with pytest.raises(ClaudeError, match=llm.SOLO_LOCALE):
+        llm.run_json("sys", "testo", SCHEMA, kind="transcript")
+    assert llm.run_json("sys", Prompt("materiale OCR", True), SCHEMA).provider == "modal"
