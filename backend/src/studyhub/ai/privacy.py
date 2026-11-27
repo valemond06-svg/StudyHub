@@ -52,7 +52,14 @@ _CF = re.compile(r"\b[A-Z]{6}\d{2}[A-EHLMPRST]\d{2}[A-Z]\d{3}[A-Z]\b", re.I)  # 
 _IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b")
 _CARD = re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)")
 _KEYWORDS_FINANCIAL = re.compile(r"estratto\s+conto|seed\s+phrase|frase\s+di\s+recupero|chiave\s+privata|private\s+key|iban|carta\s+di\s+credito", re.I)
-_KEYWORDS_PERSONAL = re.compile(r"\b(nome|cognome|data\s+di\s+nascita|indirizzo|telefono|cellulare)\b", re.I)
+# Dati anagrafici solo come campo compilato: la parola da sola («riusa il nome esatto», «indirizzo di memoria»)
+# compare nei prompt di StudyHub e nel materiale didattico, e prima del 27/11 rendeva «media» ogni unità del banco.
+_KEYWORDS_PERSONAL = re.compile(
+    r"(?i:data\s+di\s+nascita|luogo\s+di\s+nascita)"
+    r"|\b(?i:nome|cognome)\s*[:=]\s*[A-ZÀ-Ý][a-zà-ÿ']+"
+    r"|\b(?i:indirizzo|residenza|residente\s+in)\s*[:=]?\s*(?i:via|viale|piazza|corso|vicolo|strada)\s+\w"
+    r"|\b(?i:telefono|cellulare|tel\.?)\s*[:=]?\s*\+?\d[\d ]{7,}"
+)
 _UNIVERSITY_KEYWORDS = re.compile(r"\b(univr|università|verona|esame|appello|voto|credito|cfu|laurea|tesi|tirocinio)\b", re.I)
 
 
@@ -115,7 +122,7 @@ def analyze_sensitivity(text: str) -> tuple[str, list[str]]:
     if _EMAIL.search(text):
         reasons.append("Email")
 
-    if _KEYWORDS_PERSONAL.search(text_lower):
+    if _KEYWORDS_PERSONAL.search(text):
         reasons.append("Dati anagrafici")
 
     if reasons:
