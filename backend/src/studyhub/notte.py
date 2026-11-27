@@ -68,7 +68,10 @@ def llm_url() -> str:
     scelto = os.environ.get("STUDYHUB_LOCAL_LLM_URL") or settings.extra.get("local_llm_url")
     if not scelto:
         from .ai import llm
-        scelto = llm.get_local_llm_url() or DEFAULT_LLM_URL  # cavo/tailnet del fisso, poi il laptop
+        # Di notte il 35B del fisso (cavo, tailnet, LAN) ha la precedenza; il laptop resta il ripiego.
+        cand = llm.local_llm_candidates()
+        cand = [c for c in cand if "127.0.0.1" not in c] + [c for c in cand if "127.0.0.1" in c]
+        scelto = next((c for c in cand if llm_risponde(c)), DEFAULT_LLM_URL)
     return str(scelto).rstrip("/")
 
 

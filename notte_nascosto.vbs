@@ -3,4 +3,5 @@
 Set sh = CreateObject("WScript.Shell")
 dir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))
 logf = sh.ExpandEnvironmentStrings("%TEMP%") & "\studyhub-notte.log"
-sh.Run "cmd /c """"" & dir & "studyhub.bat"" notte --solo-locale > """ & logf & """ 2>&1""", 0, True
+rc = sh.Run("cmd /c """"" & dir & "studyhub.bat"" notte --solo-locale > """ & logf & """ 2>&1""", 0, True)
+WScript.Quit rc
